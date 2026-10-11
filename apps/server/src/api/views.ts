@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import {
   and,
   arrayOverlaps,
@@ -23,6 +24,7 @@ import {
   itemAncestors,
   items,
   libraries,
+  libraryRoots,
   movies,
   progress,
   providerIds,
@@ -32,7 +34,10 @@ import {
   streams,
   versions,
 } from "../db/schema/index.ts";
-import { listSubtitles } from "../subtitles/store.ts";
+import {
+  listStoredSubtitles,
+  type StoredSubtitle,
+} from "../subtitles/store.ts";
 
 type ItemKind = (typeof items.kind.enumValues)[number];
 
@@ -410,65 +415,129 @@ export async function listVersionViews(
   userId: string,
   itemId: string,
 ) {
-  const viewable = await viewableLibraryIds(db, userId);
-  if (viewable.length === 0) return [];
-  const rows = await db
-    .select({
-      id: versions.id,
-      label: versions.label,
-      durationSeconds: versions.durationSeconds,
-      file: {
-        id: files.id,
-        container: files.container,
-        bytes: files.bytes,
-        durationSeconds: files.durationSeconds,
-      },
-    })
-    .from(versions)
-    .innerJoin(files, eq(files.versionId, versions.id))
-    .where(
-      and(
-        eq(versions.itemId, itemId),
-        eq(versions.origin, "imported"),
-        eq(versions.format, "video"),
-        inArray(versions.libraryId, viewable),
-      ),
-    )
-    .orderBy(asc(versions.label), asc(versions.id), asc(files.order));
-  const single = rows.filter(
-    (row) => rows.filter((other) => other.id === row.id).length === 1,
+  return (
+    (await listVersionViewsForItems(db, userId, [itemId])).get(itemId) ?? []
   );
-  if (single.length === 0) return [];
+}
+
+/**
+ * Lists each Item's imported video Versions the user may view, batched into a
+ * constant number of queries regardless of Item count. See `listVersionViews`.
+ */
+export async function listVersionViewsForItems(
+  db: Database,
+  userId: string,
+  itemIds: string[],
+): Promise<Map<string, VersionView[]>> {
+  const viewable = await viewableLibraryIds(db, userId);
+  const byItem = new Map<string, VersionView[]>();
+  if (viewable.length === 0 || itemIds.length === 0) return byItem;
+  const rows = await versionRows(db, itemIds, viewable);
+  const filesPerVersion = new Map<string, number>();
+  for (const row of rows)
+    filesPerVersion.set(row.id, (filesPerVersion.get(row.id) ?? 0) + 1);
+  const single = rows.filter((row) => filesPerVersion.get(row.id) === 1);
+  if (single.length === 0) return byItem;
   const fileStreams = await db
     .select()
     .from(streams)
     .where(
       inArray(
         streams.fileId,
-        single.map((row) => row.file.id),
+        single.map((row) => row.fileId),
       ),
     )
     .orderBy(asc(streams.index));
-  // Stored tracks belong to the Item, so every Version exposes the same indexes.
-  const firstExternalIndex = fileStreams.reduce(
-    (index, stream) => Math.max(index, stream.index + 1),
-    0,
+  const subtitles = await listStoredSubtitles(
+    db,
+    single.map((row) => row.itemId),
   );
-  const externalSubtitles = (await listSubtitles(db, itemId)).map(
-    (track, offset) => ({
-      ...track,
-      index: firstExternalIndex + offset,
-    }),
-  );
-  return single.map((row) => ({
-    ...row,
-    streams: fileStreams.filter((stream) => stream.fileId === row.file.id),
-    externalSubtitles,
-  }));
+  for (const row of single) {
+    const streamsForFile = fileStreams.filter(
+      (stream) => stream.fileId === row.fileId,
+    );
+    // Stored tracks belong to the Item, so every Version exposes the same indexes.
+    const firstExternalIndex = streamsForFile.reduce(
+      (index, stream) => Math.max(index, stream.index + 1),
+      0,
+    );
+    const externalSubtitles = (subtitles.get(row.itemId) ?? []).map(
+      (track, offset) => ({
+        ...track,
+        index: firstExternalIndex + offset,
+      }),
+    );
+    byItem.set(row.itemId, [
+      ...(byItem.get(row.itemId) ?? []),
+      {
+        id: row.id,
+        label: row.label,
+        durationSeconds: row.durationSeconds,
+        file: {
+          id: row.fileId,
+          path: resolve(row.rootPath, row.filePath),
+          container: row.container,
+          bytes: row.bytes,
+          durationSeconds: row.fileDurationSeconds,
+        },
+        streams: streamsForFile,
+        externalSubtitles,
+      },
+    ]);
+  }
+  return byItem;
+}
+
+// Versions joined to their Files and the root path each File's path is relative to.
+function versionRows(db: Database, itemIds: string[], viewable: string[]) {
+  return db
+    .select({
+      itemId: versions.itemId,
+      id: versions.id,
+      label: versions.label,
+      durationSeconds: versions.durationSeconds,
+      fileId: files.id,
+      filePath: files.path,
+      rootPath: libraryRoots.path,
+      container: files.container,
+      bytes: files.bytes,
+      fileDurationSeconds: files.durationSeconds,
+    })
+    .from(versions)
+    .innerJoin(files, eq(files.versionId, versions.id))
+    .innerJoin(libraryRoots, eq(libraryRoots.id, files.rootId))
+    .where(
+      and(
+        inArray(versions.itemId, itemIds),
+        eq(versions.origin, "imported"),
+        eq(versions.format, "video"),
+        inArray(versions.libraryId, viewable),
+      ),
+    )
+    .orderBy(
+      asc(versions.itemId),
+      asc(versions.label),
+      asc(versions.id),
+      asc(files.order),
+    );
 }
 
 /** One playable Version of an Item with its File and Streams, as a translation layer lists it. */
-export type VersionView = Awaited<ReturnType<typeof listVersionViews>>[number];
+export type VersionView = {
+  id: string;
+  label: string;
+  durationSeconds: number | null;
+  /** The File holding the Version: `path` is absolute, root plus root-relative. */
+  file: {
+    id: string;
+    path: string;
+    container: string | null;
+    bytes: bigint | number;
+    durationSeconds: number | null;
+  };
+  streams: (typeof streams.$inferSelect)[];
+  externalSubtitles: (StoredSubtitle & { index: number })[];
+};
 
 /** Lists the libraries a user may view, by name. */
 export async function viewableLibraries(db: Database, userId: string) {

@@ -1,14 +1,21 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { asc, eq } from "drizzle-orm";
 import { createHlsHandler } from "../api/hls.ts";
 import { seedBrowse } from "../api/view-fixtures.ts";
 import type { Database } from "../db/client.ts";
-import { progress } from "../db/schema/index.ts";
+import { episodes, items, progress } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
+import { scanShowDirectory } from "../libraries/scan.ts";
+import { createLibrary } from "../libraries/service.ts";
+import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
 import { createArtworkHandler } from "../metadata/artwork-http.ts";
 import { createJellyfinHandler } from "./http.ts";
 import { toGuid } from "./request.ts";
 import { jellyfinRoutes } from "./routes.ts";
-import { contractErrors } from "./testing.ts";
+import { contractErrors, jellyfinLogin, seedMovies } from "./testing.ts";
 
 const findroid =
   'MediaBrowser Client="Findroid", Version="0.15.4", DeviceId="pixel-1", Device="Pixel"';
@@ -227,5 +234,161 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
         playedAt: new Date(),
       });
       expect(conforms(await admin.get(nextUp))).toEqual([]);
+    }));
+
+  // Infuse 8.5 lists only carry `fields`; without Path and MediaSources on
+  // playable items every movie and episode screen fails with DataSourceError.
+  test("lists playable items with the Path and MediaSources Infuse asks for", () =>
+    withDatabase(async (db) => {
+      const root = await mkdtemp(join(tmpdir(), "thalia-infuse-"));
+      try {
+        const movies = join(root, "Movies");
+        const shows = join(root, "Shows");
+        await mkdir(join(movies, "Atmos (2026)"), { recursive: true });
+        await createVideoFixture(join(movies, "Atmos (2026)", "Atmos.mkv"), {
+          width: 64,
+          height: 64,
+        });
+        await mkdir(join(shows, "Example"), { recursive: true });
+        await createVideoFixture(join(shows, "Example", "Example S01E01.mkv"), {
+          width: 64,
+          height: 64,
+        });
+        await createVideoFixture(join(shows, "Example", "Example S01E02.mkv"), {
+          width: 64,
+          height: 64,
+        });
+        const seed = await seedMovies(db, movies, ["Atmos"]);
+        const tv = await createLibrary(db, seed.admin.id, {
+          name: "Shows",
+          medium: "shows",
+          roots: [shows],
+        });
+        await scanShowDirectory(db, tv.id, "Example");
+        const [show] = await db
+          .select()
+          .from(items)
+          .where(eq(items.kind, "show"));
+        const [first, second] = await db
+          .select()
+          .from(episodes)
+          .orderBy(asc(episodes.episodeNumber));
+        if (!show || !first || !second)
+          throw new Error("Expected the show and its episodes.");
+        const atmos = seed.movies.get("Atmos");
+        if (atmos === undefined) throw new Error("Expected the movie.");
+        // E1 finished makes E2 next; a started movie fills Resume.
+        await db.insert(progress).values([
+          {
+            userId: seed.viewer.id,
+            itemId: first.itemId,
+            format: "video",
+            completed: true,
+            playCount: 1,
+            playedAt: new Date(),
+          },
+          {
+            userId: seed.viewer.id,
+            itemId: atmos.itemId,
+            format: "video",
+            positionSeconds: 60,
+            playedAt: new Date(),
+          },
+        ]);
+        const handle = createJellyfinHandler(
+          db,
+          jellyfinRoutes(createArtworkHandler(db), createHlsHandler(db)),
+        );
+        const send = async (path: string, header: string) => {
+          const response = await handle(
+            new Request(`http://thalia.test${path}`, {
+              headers: { Authorization: header },
+            }),
+            "127.0.0.1",
+          );
+          if (response === undefined) throw new Error(`${path} unrouted`);
+          expect(response.status).toBe(200);
+          return (await response.json()) as QueryResult;
+        };
+        const infuse =
+          'MediaBrowser Client="Infuse-Direct", Version="8.5.6", Device="Apple TV", DeviceId="infuse-1"';
+        const token = await jellyfinLogin(
+          (request) => handle(request, "127.0.0.1"),
+          infuse,
+        );
+        const get = (path: string) => send(path, `${infuse}, Token="${token}"`);
+
+        // The exact fields Infuse sends for a playable list and for episodes.
+        const itemFields =
+          "fields=DateCreated,Etag,Genres,MediaSources,AlternateMediaSources,Overview,ParentId,Path,ProviderIds,SortName,RecursiveItemCount,ChildCount";
+        const episodeFields =
+          "fields=Etag,MediaSources,AlternateMediaSources,Genres,Overview,ParentId,ProviderIds";
+        const playable = (result: QueryResult | Dto[], names: string[]) => {
+          const resultItems = Array.isArray(result) ? result : result.Items;
+          if (!Array.isArray(result)) conforms(result);
+          const files = resultItems.filter(
+            (item) => item.Type === "Movie" || item.Type === "Episode",
+          );
+          expect(files).toHaveLength(names.length);
+          files.forEach((item, index) => {
+            const pattern = new RegExp(
+              `${names[index]?.replace(/[. ]/g, "\\$&")}$`,
+            );
+            const sources = item.MediaSources as
+              | {
+                  Path?: string;
+                  Container?: string;
+                  Size?: number;
+                  MediaStreams?: { Type: string }[];
+                }[]
+              | undefined;
+            expect(sources?.length).toBeGreaterThan(0);
+            expect(sources?.[0]).toMatchObject({
+              Container: "mkv",
+              MediaStreams: expect.arrayContaining([
+                expect.objectContaining({ Type: "Video" }),
+              ]),
+            });
+            expect(sources?.[0]?.Path).toMatch(pattern);
+            expect(sources?.[0]?.Size).toBeGreaterThan(0);
+            // An item's Path is its first source's when fields ask for it.
+            expect(item.Path ?? sources?.[0]?.Path).toMatch(pattern);
+          });
+        };
+
+        playable(
+          await get(
+            `/Items?parentId=${guid(seed.library.id)}&includeItemTypes=Movie&recursive=true&${itemFields}`,
+          ),
+          ["Atmos.mkv"],
+        );
+        playable(await get(`/Items/Latest?${itemFields}`), ["Atmos.mkv"]);
+        playable(await get(`/UserItems/Resume?${itemFields}`), ["Atmos.mkv"]);
+        playable(await get(`/Shows/NextUp?${episodeFields}`), [
+          "Example S01E02.mkv",
+        ]);
+        playable(
+          await get(`/Shows/${guid(show.id)}/Episodes?${episodeFields}`),
+          ["Example S01E01.mkv", "Example S01E02.mkv"],
+        );
+
+        // Without fields, lists stay at Jellyfin's default: no media detail.
+        for (const item of (
+          await get(
+            `/Items?parentId=${guid(seed.library.id)}&includeItemTypes=Movie&recursive=true`,
+          )
+        ).Items) {
+          expect(item.Path).toBeUndefined();
+          expect(item.MediaSources).toBeUndefined();
+        }
+        // The detail route always carries them.
+        const detail = (await send(
+          `/Items/${guid(atmos.itemId)}`,
+          `${infuse}, Token="${token}"`,
+        )) as unknown as Dto;
+        expect(detail.Path).toMatch(/Atmos\.mkv$/);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
     }));
 });

@@ -7,6 +7,7 @@ import {
   listItemViews,
   listLibraryFacets,
   listVersionViews,
+  listVersionViewsForItems,
   viewableLibraries,
 } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
@@ -150,6 +151,67 @@ export function baseItemDto(view: ItemView, serverId: string) {
     BackdropImageTags:
       view.artwork.backdrop === null ? [] : [toGuid(view.artwork.backdrop)],
   };
+}
+
+/** The `fields` parameter, lowercased and comma-separated as Jellyfin sends it. */
+function fieldsOf(query: Query) {
+  return new Set(query.list("fields").map((field) => field.toLowerCase()));
+}
+
+// The fields lists opt playable items into; MediaStreams comes with MediaSources.
+async function playableFields(
+  db: Database,
+  userId: string,
+  views: ItemView[],
+  fields: Set<string>,
+) {
+  const detail = new Map<
+    string,
+    {
+      Path?: string;
+      MediaSources?: ReturnType<typeof mediaSource>[];
+      MediaStreams?: unknown[];
+    }
+  >();
+  const playable = views.filter((view) => playableKinds.has(view.kind));
+  if (
+    playable.length === 0 ||
+    (!fields.has("path") && !fields.has("mediasources"))
+  )
+    return detail;
+  const versions = await listVersionViewsForItems(
+    db,
+    userId,
+    playable.map((view) => view.id),
+  );
+  for (const view of playable) {
+    const sources = (versions.get(view.id) ?? []).map((version) =>
+      mediaSource(view.id, version),
+    );
+    detail.set(view.id, {
+      ...(fields.has("path") ? { Path: sources[0]?.Path } : {}),
+      ...(fields.has("mediasources")
+        ? {
+            MediaSources: sources,
+            MediaStreams: sources[0]?.MediaStreams ?? [],
+          }
+        : {}),
+    });
+  }
+  return detail;
+}
+
+/** Item views as BaseItemDtos; playable ones honour `fields` for Path and MediaSources. */
+export async function itemDtos(context: UserContext, views: ItemView[]) {
+  const { db, caller, query } = context;
+  const [media, serverId] = await Promise.all([
+    playableFields(db, caller.user.id, views, fieldsOf(query)),
+    readServerId(db),
+  ]);
+  return views.map((view) => ({
+    ...baseItemDto(view, serverId),
+    ...media.get(view.id),
+  }));
 }
 
 /** Builds the CollectionFolder a library appears as in Jellyfin's user views. */
@@ -353,17 +415,11 @@ export async function browseSelection({
 }
 
 /** Serializes a paged core selection with the Jellyfin total and offset. */
-export async function viewsResult(
-  { db, caller }: UserContext,
-  query: ItemViewQuery,
-) {
-  const [page, serverId] = await Promise.all([
-    listItemViews(db, caller.user.id, query),
-    readServerId(db),
-  ]);
+export async function viewsResult(context: UserContext, query: ItemViewQuery) {
+  const page = await listItemViews(context.db, context.caller.user.id, query);
   return json(
     queryResult(
-      page.items.map((view) => baseItemDto(view, serverId)),
+      await itemDtos(context, page.items),
       page.total,
       query.offset ?? 0,
     ),
@@ -378,16 +434,13 @@ async function shelfResult(
 ) {
   const { db, caller, query } = context;
   const kinds = kindsOf(query);
-  const [found, serverId] = await Promise.all([
-    listItemViews(db, caller.user.id, { ids, kinds }),
-    readServerId(db),
-  ]);
+  const found = await listItemViews(db, caller.user.id, { ids, kinds });
   const byId = new Map(found.items.map((view) => [view.id, view]));
   const views = select(ids.flatMap((id) => byId.get(id) ?? []));
   const page = pageOf(query);
   return json(
     queryResult(
-      paged(views, page).map((view) => baseItemDto(view, serverId)),
+      await itemDtos(context, paged(views, page)),
       views.length,
       page.offset,
     ),
@@ -513,6 +566,7 @@ export const browseRoutes: Route[] = [
       );
       return json({
         ...dto,
+        Path: sources[0]?.Path,
         MediaSources: sources,
         MediaStreams: sources[0]?.MediaStreams ?? [],
       });
