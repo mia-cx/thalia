@@ -452,15 +452,24 @@ export async function listVersionViewsForItems(
     db,
     single.map((row) => row.itemId),
   );
+  // Stored tracks belong to the Item, so the first external index sits past
+  // every playable Version's embedded Streams, not one File's.
+  const fileItem = new Map(single.map((row) => [row.fileId, row.itemId]));
+  const firstExternal = new Map<string, number>();
+  for (const stream of fileStreams) {
+    const itemId =
+      stream.fileId === null ? undefined : fileItem.get(stream.fileId);
+    if (itemId !== undefined)
+      firstExternal.set(
+        itemId,
+        Math.max(firstExternal.get(itemId) ?? 0, stream.index + 1),
+      );
+  }
   for (const row of single) {
     const streamsForFile = fileStreams.filter(
       (stream) => stream.fileId === row.fileId,
     );
-    // Stored tracks belong to the Item, so every Version exposes the same indexes.
-    const firstExternalIndex = streamsForFile.reduce(
-      (index, stream) => Math.max(index, stream.index + 1),
-      0,
-    );
+    const firstExternalIndex = firstExternal.get(row.itemId) ?? 0;
     const externalSubtitles = (subtitles.get(row.itemId) ?? []).map(
       (track, offset) => ({
         ...track,

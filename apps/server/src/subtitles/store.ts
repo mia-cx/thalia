@@ -180,21 +180,23 @@ export async function listStoredSubtitles(
     .innerJoin(libraryRoots, eq(libraryRoots.libraryId, items.libraryId))
     .where(inArray(items.id, itemIds))
     .orderBy(asc(libraryRoots.position), asc(libraryRoots.id));
-  for (const row of found) {
-    const roots = all.filter((root) => root.itemId === row.id);
-    const home = homes.find((root) => root.itemId === row.id) ?? roots[0];
-    const ordered =
-      home === undefined
-        ? roots
-        : [home, ...roots.filter((root) => root.id !== home.id)];
-    const tracks = await readStoredTracks(
-      ordered.map((root) =>
-        join(root.path, row.canonicalFolder, ".thalia", "subtitles"),
-      ),
-      `${row.id}.`,
-    );
-    result.set(row.id, tracks);
-  }
+  await Promise.all(
+    found.map(async (row) => {
+      const roots = all.filter((root) => root.itemId === row.id);
+      const home = homes.find((root) => root.itemId === row.id) ?? roots[0];
+      const ordered =
+        home === undefined
+          ? roots
+          : [home, ...roots.filter((root) => root.id !== home.id)];
+      const tracks = await readStoredTracks(
+        ordered.map((root) =>
+          join(root.path, row.canonicalFolder, ".thalia", "subtitles"),
+        ),
+        `${row.id}.`,
+      );
+      result.set(row.id, tracks);
+    }),
+  );
   return result;
 }
 

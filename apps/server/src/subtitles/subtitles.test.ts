@@ -5,16 +5,26 @@ import { join } from "node:path";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
+import { eq } from "drizzle-orm";
 import type { thaliaRouter } from "../api/router.ts";
+import { listVersionViews } from "../api/views.ts";
 import { setupAdmin } from "../auth/accounts.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { items, providerIds, settings } from "../db/schema/index.ts";
+import {
+  files,
+  items,
+  providerIds,
+  settings,
+  streams,
+  versions,
+} from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { createJobQueue } from "../jobs/queue.ts";
 import { createJobRegistry } from "../jobs/registry.ts";
+import { rootsOf } from "../libraries/roots.ts";
 import { scanDirectory } from "../libraries/scan.ts";
 import { createLibrary } from "../libraries/service.ts";
 import { addRoot } from "../libraries/testing.ts";
@@ -371,4 +381,66 @@ describe.skipIf(!databaseUrl)("stored subtitle tracks", () => {
         }),
       ),
   );
+
+  test("a stored track keeps one index across Versions with different embedded Streams", () =>
+    withDatabase((db) =>
+      withScannedMovie(db, async ({ adminId, itemId }) => {
+        await writeSubtitle(db, itemId, { language: "en", format: "srt" }, cue);
+        const [item] = await db
+          .select({ libraryId: items.libraryId })
+          .from(items)
+          .where(eq(items.id, itemId));
+        if (!item) throw new Error("Item missing.");
+        const [home] = await rootsOf(db, item.libraryId);
+        if (!home) throw new Error("Library has no root.");
+        const [second] = await db
+          .insert(versions)
+          .values({
+            itemId,
+            itemKind: "movie",
+            libraryId: item.libraryId,
+            label: "720p",
+            format: "video",
+            bytes: 1n,
+          })
+          .returning();
+        if (!second) throw new Error("Version insert returned no row.");
+        const [file] = await db
+          .insert(files)
+          .values({
+            versionId: second.id,
+            itemId,
+            libraryId: item.libraryId,
+            rootId: home.id,
+            path: "Movie (2026)/Movie.720p.mkv",
+            order: 0,
+            bytes: 1n,
+            modifiedAt: new Date(),
+            container: "mkv",
+          })
+          .returning();
+        if (!file) throw new Error("File insert returned no row.");
+        // The second Version carries one more embedded Stream than the first.
+        await db.insert(streams).values(
+          [0, 1, 2].map((index) => ({
+            versionId: second.id,
+            fileId: file.id,
+            index,
+            kind: (index === 0 ? "video" : "audio") as "video" | "audio",
+            codec: index === 0 ? "h264" : "aac",
+          })),
+        );
+        const listed = await listVersionViews(db, adminId, itemId);
+        expect(listed).toHaveLength(2);
+        const indexes = listed.map(
+          (version) => version.externalSubtitles[0]?.index,
+        );
+        // Deletion resolves an advertised index against the first Version, so
+        // every Version must advertise the same one, past all embedded Streams.
+        expect(indexes[0]).toBe(indexes[1]);
+        expect(indexes[0]).toBe(
+          Math.max(...listed.flatMap((v) => v.streams.map((s) => s.index))) + 1,
+        );
+      }),
+    ));
 });
