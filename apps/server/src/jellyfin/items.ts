@@ -183,6 +183,7 @@ async function playableFields(
     db,
     userId,
     playable.map((view) => view.id),
+    { externalSubtitles: false },
   );
   for (const view of playable) {
     const sources = (versions.get(view.id) ?? []).map((version) =>

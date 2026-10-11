@@ -1,15 +1,9 @@
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
 import type { Database } from "../db/client.ts";
-import {
-  files,
-  itemAncestors,
-  items,
-  libraryRoots,
-  versions,
-} from "../db/schema/index.ts";
+import { items } from "../db/schema/index.ts";
 import { assetRoots } from "../libraries/roots.ts";
 
 /** The formats a stored subtitle track may have. */
@@ -91,18 +85,19 @@ export async function subtitleFolder(db: Database, itemId: string) {
   return home;
 }
 
-// The stored tracks under each subtitle folder's path, named `${prefix}*`.
-async function readStoredTracks(
-  folders: string[],
-  prefix: string,
+/** Lists an Item's stored tracks by language across its asset roots; a missing folder means none. */
+export async function listSubtitles(
+  db: Database,
+  itemId: string,
 ): Promise<StoredSubtitle[]> {
   const tracks = new Map<string, StoredSubtitle>();
+  const prefix = `${itemId}.`;
   let firstError: unknown;
   let answered = false;
-  for (const folder of folders) {
+  for (const folder of await subtitleFolders(db, itemId)) {
     let names: string[];
     try {
-      names = await readdir(folder);
+      names = await readdir(folder.path);
       answered = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -123,81 +118,6 @@ async function readStoredTracks(
   return [...tracks.values()].sort((a, b) =>
     trackName(a).localeCompare(trackName(b)),
   );
-}
-
-/** Lists an Item's stored tracks by language across its asset roots; a missing folder means none. */
-export async function listSubtitles(
-  db: Database,
-  itemId: string,
-): Promise<StoredSubtitle[]> {
-  return readStoredTracks(
-    (await subtitleFolders(db, itemId)).map((folder) => folder.path),
-    `${itemId}.`,
-  );
-}
-
-/**
- * Lists stored tracks for many Items at once: each Item's subtitle folders in
- * asset-root order, from a constant number of queries regardless of count.
- */
-export async function listStoredSubtitles(
-  db: Database,
-  itemIds: string[],
-): Promise<Map<string, StoredSubtitle[]>> {
-  const found = await db
-    .select({
-      id: items.id,
-      canonicalFolder: items.canonicalFolder,
-    })
-    .from(items)
-    .where(inArray(items.id, itemIds));
-  const result = new Map<string, StoredSubtitle[]>();
-  if (found.length === 0) return result;
-  // Each Item's home root is the first root holding one of its imported
-  // Files or its descendants'; the rest of its Library's roots follow.
-  const homes = await db
-    .select({
-      itemId: itemAncestors.ancestorId,
-      id: libraryRoots.id,
-      path: libraryRoots.path,
-    })
-    .from(itemAncestors)
-    .innerJoin(files, eq(files.itemId, itemAncestors.descendantId))
-    .innerJoin(
-      versions,
-      and(eq(versions.id, files.versionId), eq(versions.origin, "imported")),
-    )
-    .innerJoin(libraryRoots, eq(libraryRoots.id, files.rootId))
-    .where(inArray(itemAncestors.ancestorId, itemIds))
-    .orderBy(asc(libraryRoots.position), asc(libraryRoots.id));
-  const all = await db
-    .select({
-      itemId: items.id,
-      id: libraryRoots.id,
-      path: libraryRoots.path,
-    })
-    .from(items)
-    .innerJoin(libraryRoots, eq(libraryRoots.libraryId, items.libraryId))
-    .where(inArray(items.id, itemIds))
-    .orderBy(asc(libraryRoots.position), asc(libraryRoots.id));
-  await Promise.all(
-    found.map(async (row) => {
-      const roots = all.filter((root) => root.itemId === row.id);
-      const home = homes.find((root) => root.itemId === row.id) ?? roots[0];
-      const ordered =
-        home === undefined
-          ? roots
-          : [home, ...roots.filter((root) => root.id !== home.id)];
-      const tracks = await readStoredTracks(
-        ordered.map((root) =>
-          join(root.path, row.canonicalFolder, ".thalia", "subtitles"),
-        ),
-        `${row.id}.`,
-      );
-      result.set(row.id, tracks);
-    }),
-  );
-  return result;
 }
 
 /** Writes one track atomically. The Item folder must exist; only `.thalia/subtitles` is created. */

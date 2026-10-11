@@ -12,6 +12,7 @@ import { scanShowDirectory } from "../libraries/scan.ts";
 import { createLibrary } from "../libraries/service.ts";
 import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
 import { createArtworkHandler } from "../metadata/artwork-http.ts";
+import { writeSubtitle } from "../subtitles/store.ts";
 import { createJellyfinHandler } from "./http.ts";
 import { toGuid } from "./request.ts";
 import { jellyfinRoutes } from "./routes.ts";
@@ -277,6 +278,12 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
           throw new Error("Expected the show and its episodes.");
         const atmos = seed.movies.get("Atmos");
         if (atmos === undefined) throw new Error("Expected the movie.");
+        await writeSubtitle(
+          db,
+          atmos.itemId,
+          { language: "en", format: "srt" },
+          "1\n00:00:00,000 --> 00:00:01,000\nHello.\n",
+        );
         // E1 finished makes E2 next; a started movie fills Resume.
         await db.insert(progress).values([
           {
@@ -308,7 +315,8 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
           );
           if (response === undefined) throw new Error(`${path} unrouted`);
           expect(response.status).toBe(200);
-          return (await response.json()) as QueryResult;
+          const text = await response.text();
+          return JSON.parse(text) as QueryResult;
         };
         const infuse =
           'MediaBrowser Client="Infuse-Direct", Version="8.5.6", Device="Apple TV", DeviceId="infuse-1"';
@@ -339,16 +347,25 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
                   Path?: string;
                   Container?: string;
                   Size?: number;
-                  MediaStreams?: { Type: string }[];
+                  MediaStreams?: {
+                    Type: string;
+                    IsExternal?: boolean;
+                  }[];
                 }[]
               | undefined;
             expect(sources?.length).toBeGreaterThan(0);
-            expect(sources?.[0]).toMatchObject({
-              Container: "mkv",
-              MediaStreams: expect.arrayContaining([
-                expect.objectContaining({ Type: "Video" }),
-              ]),
-            });
+            expect(sources?.[0]?.Container).toBe("mkv");
+            expect(sources?.[0]?.MediaStreams).toContainEqual(
+              expect.objectContaining({ Type: "Video" }),
+            );
+            // List sources never read the filesystem: the movie's stored
+            // external track stays off their MediaStreams.
+            expect(
+              sources?.[0]?.MediaStreams?.filter(
+                (stream) =>
+                  stream.Type === "Subtitle" && stream.IsExternal === true,
+              ),
+            ).toEqual([]);
             expect(sources?.[0]?.Path).toMatch(pattern);
             expect(sources?.[0]?.Size).toBeGreaterThan(0);
             // An item's Path is its first source's when fields ask for it.
@@ -381,12 +398,19 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
           expect(item.Path).toBeUndefined();
           expect(item.MediaSources).toBeUndefined();
         }
-        // The detail route always carries them.
+        // The detail route always carries them — and the stored track.
         const detail = (await send(
           `/Items/${guid(atmos.itemId)}`,
           `${infuse}, Token="${token}"`,
         )) as unknown as Dto;
         expect(detail.Path).toMatch(/Atmos\.mkv$/);
+        expect(detail.MediaStreams).toContainEqual(
+          expect.objectContaining({
+            Type: "Subtitle",
+            IsExternal: true,
+            Language: "en",
+          }),
+        );
       } finally {
         await rm(root, { recursive: true, force: true });
       }

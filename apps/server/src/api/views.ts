@@ -34,10 +34,7 @@ import {
   streams,
   versions,
 } from "../db/schema/index.ts";
-import {
-  listStoredSubtitles,
-  type StoredSubtitle,
-} from "../subtitles/store.ts";
+import { listSubtitles, type StoredSubtitle } from "../subtitles/store.ts";
 
 type ItemKind = (typeof items.kind.enumValues)[number];
 
@@ -416,18 +413,25 @@ export async function listVersionViews(
   itemId: string,
 ) {
   return (
-    (await listVersionViewsForItems(db, userId, [itemId])).get(itemId) ?? []
+    (
+      await listVersionViewsForItems(db, userId, [itemId], {
+        externalSubtitles: true,
+      })
+    ).get(itemId) ?? []
   );
 }
 
 /**
  * Lists each Item's imported video Versions the user may view, batched into a
  * constant number of queries regardless of Item count. See `listVersionViews`.
+ * `externalSubtitles` reads each Item's subtitle folders; list callers pass
+ * false so a page never touches the filesystem.
  */
 export async function listVersionViewsForItems(
   db: Database,
   userId: string,
   itemIds: string[],
+  { externalSubtitles = false } = {},
 ): Promise<Map<string, VersionView[]>> {
   const viewable = await viewableLibraryIds(db, userId);
   const byItem = new Map<string, VersionView[]>();
@@ -448,9 +452,15 @@ export async function listVersionViewsForItems(
       ),
     )
     .orderBy(asc(streams.index));
-  const subtitles = await listStoredSubtitles(
-    db,
-    single.map((row) => row.itemId),
+  const subtitles = new Map(
+    externalSubtitles
+      ? await Promise.all(
+          [...new Set(single.map((row) => row.itemId))].map(
+            async (itemId) =>
+              [itemId, await listSubtitles(db, itemId)] as const,
+          ),
+        )
+      : [],
   );
   // Stored tracks belong to the Item, so the first external index sits past
   // every playable Version's embedded Streams, not one File's.
