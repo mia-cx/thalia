@@ -163,6 +163,7 @@ export function mediaSource(
   return {
     Protocol: "File",
     Id: toGuid(version.id),
+    Path: version.file.path,
     Type: "Default",
     Container: version.file.container ?? undefined,
     Size: Number(version.file.bytes),

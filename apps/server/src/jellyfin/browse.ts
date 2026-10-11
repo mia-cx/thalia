@@ -1,5 +1,6 @@
 import {
   countItemKinds,
+  type ItemView,
   type ItemViewQuery,
   listContributorCredits,
   listItemViews,
@@ -14,6 +15,7 @@ import { json, type Route, type UserContext } from "./http.ts";
 import {
   baseItemDto,
   browseSelection,
+  itemDtos,
   libraryDto,
   providerIdsDto,
   viewsResult,
@@ -209,7 +211,6 @@ export const additionalBrowseRoutes: Route[] = [
     path: "/Items/Latest",
     handle: async (context) => {
       const query = await browseSelection(context);
-      const serverId = await readServerId(context.db);
       const stored = await readClientPreference(
         context.db,
         context.caller.user.id,
@@ -229,7 +230,7 @@ export const additionalBrowseRoutes: Route[] = [
         sort: [{ by: "added", descending: true }],
         limit: query.limit ?? 20,
       });
-      return json(rows.items.map((item) => baseItemDto(item, serverId)));
+      return json(await itemDtos(context, rows.items));
     },
   },
   {
@@ -263,7 +264,10 @@ export const additionalBrowseRoutes: Route[] = [
     handle: async (context) => {
       const { db, caller, params } = context;
       const serverId = await readServerId(db);
-      const result: ReturnType<typeof baseItemDto | typeof libraryDto>[] = [];
+      const result: (
+        | Awaited<ReturnType<typeof itemDtos>>[number]
+        | ReturnType<typeof libraryDto>
+      )[] = [];
       let [item] = (
         await listItemViews(db, caller.user.id, {
           ids: [requiredGuid(params.itemId)],
@@ -271,12 +275,14 @@ export const additionalBrowseRoutes: Route[] = [
       ).items;
       if (item === undefined) throw new AuthError("NOT_FOUND");
       const libraryId = item.libraryId;
+      const ancestors: ItemView[] = [];
       while (item?.parentId != null) {
         [item] = (
           await listItemViews(db, caller.user.id, { ids: [item.parentId] })
         ).items;
-        if (item !== undefined) result.push(baseItemDto(item, serverId));
+        if (item !== undefined) ancestors.push(item);
       }
+      result.push(...(await itemDtos(context, ancestors)));
       const library = (await viewableLibraries(db, caller.user.id)).find(
         (row) => row.id === libraryId,
       );
@@ -342,7 +348,6 @@ export const additionalBrowseRoutes: Route[] = [
     handle: async (context) => {
       if (context.query.count("categoryLimit") === 0) return json([]);
       const query = await browseSelection(context);
-      const serverId = await readServerId(context.db);
       const [baseline] = (
         await listItemViews(context.db, context.caller.user.id, {
           ...query,
@@ -362,7 +367,7 @@ export const additionalBrowseRoutes: Route[] = [
         rows.items.length
           ? [
               {
-                Items: rows.items.map((item) => baseItemDto(item, serverId)),
+                Items: await itemDtos(context, rows.items),
                 RecommendationType: "SimilarToRecentlyPlayed",
                 BaselineItemName: baseline?.title ?? "",
                 CategoryId: facetId("Recommendation", baseline?.id ?? "movies"),
