@@ -9,7 +9,7 @@ Thalia's Permissions had three fixed slots: a Group's list of server-wide permis
 
 - **Subject**: a user or a Group.
 - **Object**: the server, a Library, an Item or a Playlist. An Item's chain runs up through its parent Items to its Library, then the server. A Playlist has no chain.
-- **Action**: `view`, `play`, `download`, `metadata:edit`, `subtitles:edit` on any object; `libraries:manage`, `users:manage`, `plugins:manage`, `transcoding:manage`, `server:manage` on the server only; `view` and `playlist:edit` on a Playlist.
+- **Action**: `view`, `play`, `download`, `metadata:edit` and `subtitles:edit` on the server, a Library or an Item. `libraries:manage`, `users:manage`, `plugins:manage`, `transcoding:manage` and `server:manage` on the server only. `view` and `playlist:edit` on a Playlist.
 
 No rule means unset. Thalia stores no unset rows; removing a rule unsets it.
 

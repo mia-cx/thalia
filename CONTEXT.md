@@ -125,11 +125,11 @@ A Version Thalia transcoded with the quality profile and keeps next to its sourc
 _Avoid_: pre-transcode, cache, optimized version, live transcode
 
 **Action**:
-Something a user does to an Item, a Library or the server: view, play, download, edit metadata, edit subtitles, manage users.
+Something a user does to an object: view, play, download or edit metadata or subtitles on an Item, a Library or the server; manage users, libraries, plugins, transcoding or the server, on the server only; view or edit a Playlist.
 _Avoid_: permission, right, privilege, scope
 
 **Access rule**:
-An allow or deny of one Action on one Item, Library or the server, for one user or Group. The rule on the most specific object decides. On the same object, a user's rule beats their Groups', and between Groups, deny wins.
+An allow or deny of one Action on one Item, Library, Playlist or the server, for one user or Group. The rule on the most specific object decides. On the same object, a user's rule beats their Groups', and between Groups, deny wins.
 _Avoid_: permission, ACL entry, policy, grant, override
 
 **Permission**:
