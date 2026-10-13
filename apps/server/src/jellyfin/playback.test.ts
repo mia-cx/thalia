@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { asc } from "drizzle-orm";
 import { createHlsHandler } from "../api/hls.ts";
+import { setPermissionOverride } from "../auth/permissions.ts";
 import { sessionRegistry } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
@@ -306,6 +307,51 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
         toGuid(movie.versionId),
       ]);
       expect(detailBody.MediaStreams).toHaveLength(3);
+    }));
+
+  test("gates only /Download on the download permission, not File or streams", () =>
+    withDatabase(async (db) => {
+      const { admin, viewer, movies } = await seedMovies(db, root, ["Atmos"]);
+      const movie = movies.get("Atmos");
+      if (movie === undefined) throw new Error("Expected the movie.");
+      const handle = createJellyfinHandler(
+        db,
+        jellyfinRoutes(createArtworkHandler(db), createHlsHandler(db)),
+      );
+      const send = async (request: Request) => {
+        const response = await handle(request, "127.0.0.1");
+        if (response === undefined) throw new Error("Unrouted.");
+        return response;
+      };
+      const token = await jellyfinLogin(send, infuse);
+      const paths = [
+        `/Items/${toGuid(movie.itemId)}/File`,
+        `/Videos/${toGuid(movie.itemId)}/stream`,
+        `/Videos/${toGuid(movie.itemId)}/stream.mkv`,
+      ];
+      const download = `/Items/${toGuid(movie.itemId)}/Download`;
+      const get = (path: string) =>
+        send(
+          new Request(`http://thalia.test${path}`, {
+            headers: { "X-Emby-Token": token },
+          }),
+        );
+
+      await setPermissionOverride(db, admin.id, viewer.id, "download", false);
+      expect((await get(download)).status).toBe(403);
+      for (const path of paths) {
+        const file = await get(path);
+        expect(file.status).toBe(200);
+        await file.arrayBuffer();
+      }
+
+      await setPermissionOverride(db, admin.id, viewer.id, "download", true);
+      const file = await get(download);
+      expect(file.status).toBe(200);
+      expect(file.headers.get("content-disposition")).toStartWith(
+        "attachment;",
+      );
+      expect((await file.arrayBuffer()).byteLength).toBeGreaterThan(0);
     }));
 
   test("passes AudioStreamIndex and SubtitleStreamIndex through to the session and its URLs", () =>

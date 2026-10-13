@@ -37,7 +37,11 @@ export async function migrateDatabase(database: Database) {
         .insert(groups)
         .values([
           { name: "admins", builtIn: true, permissions: [...permissions] },
-          { name: "users", builtIn: true, permissions: ["view", "play"] },
+          {
+            name: "users",
+            builtIn: true,
+            permissions: ["view", "play", "download"],
+          },
         ])
         .onConflictDoNothing({ target: groups.name });
     } finally {

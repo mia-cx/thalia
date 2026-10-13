@@ -9,13 +9,14 @@ export type Permission = Awaited<
 const displayOrder = {
   view: 1,
   play: 2,
-  "manage-libraries": 3,
-  "manage-metadata": 4,
-  "manage-subtitles": 5,
-  "manage-users": 6,
-  "manage-plugins": 7,
-  "manage-transcoding": 8,
-  "manage-server": 9,
+  download: 3,
+  "manage-libraries": 4,
+  "manage-metadata": 5,
+  "manage-subtitles": 6,
+  "manage-users": 7,
+  "manage-plugins": 8,
+  "manage-transcoding": 9,
+  "manage-server": 10,
 } satisfies Record<Permission, number>;
 
 /** Every permission name the server enforces, in the order the screens show them. */
@@ -27,6 +28,7 @@ export const permissionNames = Object.keys(
 export const permissionLabels = {
   view: "View",
   play: "Play",
+  download: "Download",
   "manage-libraries": "Manage libraries",
   "manage-metadata": "Edit metadata",
   "manage-subtitles": "Manage subtitles",

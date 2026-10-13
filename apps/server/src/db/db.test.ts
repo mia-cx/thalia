@@ -189,7 +189,11 @@ describe.skipIf(!databaseUrl)("Postgres schema", () => {
         ]);
         expect(before.groups).toMatchObject([
           { name: "admins", builtIn: true, permissions: [...permissions] },
-          { name: "users", builtIn: true, permissions: ["view", "play"] },
+          {
+            name: "users",
+            builtIn: true,
+            permissions: ["view", "play", "download"],
+          },
         ]);
         expect(
           Array.from(

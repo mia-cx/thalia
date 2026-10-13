@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { seedBrowse } from "../api/view-fixtures.ts";
 import { createIntegrationKey } from "../auth/integration-keys.ts";
+import { checkPermission } from "../auth/permissions.ts";
 import { issueSession } from "../auth/sessions.ts";
 import { users } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
@@ -277,6 +278,20 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
           RemoteClientBitrateLimit: 4_000_000,
         },
       });
+      expect(await checkPermission(db, seed.viewer.id, "download")).toBe(true);
+      for (const allowed of [false, true]) {
+        expect(
+          (
+            await call(`/Users/${seed.viewer.id}/Policy`, admin, {
+              ...policy,
+              EnableContentDownloading: allowed,
+            })
+          ).status,
+        ).toBe(204);
+        expect(await checkPermission(db, seed.viewer.id, "download")).toBe(
+          allowed,
+        );
+      }
       expect(
         (
           await call("/Users/Password", viewer, {

@@ -22,14 +22,21 @@ const passwordResetProvider =
 
 /** Builds a Jellyfin UserDto. Name is the login name, since clients sign in with it. */
 export async function userDto(db: Database, user: User, serverId: string) {
-  const [canPlay, preference, account, access, canManageSubtitles] =
-    await Promise.all([
-      checkPermission(db, user.id, "play"),
-      readClientPreference(db, user.id, user.id, "jellyfin", "configuration"),
-      readAccount(db, user.id, user.id),
-      readUserAccess(db, user.id),
-      checkPermission(db, user.id, "manage-subtitles"),
-    ]);
+  const [
+    canPlay,
+    canDownload,
+    preference,
+    account,
+    access,
+    canManageSubtitles,
+  ] = await Promise.all([
+    checkPermission(db, user.id, "play"),
+    checkPermission(db, user.id, "download"),
+    readClientPreference(db, user.id, user.id, "jellyfin", "configuration"),
+    readAccount(db, user.id, user.id),
+    readUserAccess(db, user.id),
+    checkPermission(db, user.id, "manage-subtitles"),
+  ]);
   return {
     Name: user.username,
     ServerId: toGuid(serverId),
@@ -78,7 +85,7 @@ export async function userDto(db: Database, user: User, serverId: string) {
       EnablePlaybackRemuxing: canPlay,
       ForceRemoteSourceTranscoding: false,
       EnableContentDeletion: false,
-      EnableContentDownloading: false,
+      EnableContentDownloading: canDownload,
       EnableSyncTranscoding: false,
       EnableMediaConversion: false,
       EnableAllDevices: true,

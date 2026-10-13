@@ -1,0 +1,6 @@
+ALTER TABLE "groups" DROP CONSTRAINT "groups_permissions_check";--> statement-breakpoint
+ALTER TABLE "user_permission_overrides" DROP CONSTRAINT "user_permission_overrides_permission_check";--> statement-breakpoint
+ALTER TABLE "groups" ADD CONSTRAINT "groups_permissions_check" CHECK ("groups"."permissions" <@ ARRAY['view','play','download','manage-libraries','manage-metadata','manage-subtitles','manage-users','manage-plugins','manage-transcoding','manage-server']::text[]);--> statement-breakpoint
+ALTER TABLE "user_permission_overrides" ADD CONSTRAINT "user_permission_overrides_permission_check" CHECK ("user_permission_overrides"."permission" = ANY(ARRAY['view','play','download','manage-libraries','manage-metadata','manage-subtitles','manage-users','manage-plugins','manage-transcoding','manage-server']::text[]));--> statement-breakpoint
+UPDATE "groups" SET "permissions" = array_append("permissions", 'download') WHERE 'play' = any("permissions") AND NOT 'download' = any("permissions");--> statement-breakpoint
+INSERT INTO "user_permission_overrides" ("id", "user_id", "permission", "allowed") SELECT gen_random_uuid(), "user_id", 'download', true FROM "user_permission_overrides" WHERE "permission" = 'play' AND "allowed" ON CONFLICT ("user_id", "permission") DO NOTHING;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { asc, eq } from "drizzle-orm";
 import { createHlsHandler } from "../api/hls.ts";
 import { seedBrowse } from "../api/view-fixtures.ts";
+import { setPermissionOverride } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { episodes, items, progress } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
@@ -172,6 +173,47 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
       );
       expect(hidden.TotalRecordCount).toBe(0);
       expect((await send("/Items", findroid)).status).toBe(401);
+    }));
+
+  test("marks CanDownload and EnableContentDownloading by the download permission", () =>
+    withDatabase(async (db) => {
+      const s = await seedBrowse(db);
+      const { get } = await signIn(db, "viewer", "viewer-pass");
+      const movieList = () =>
+        get(
+          `/Items?parentId=${guid(s.films.id)}&includeItemTypes=Movie&recursive=true`,
+        );
+      const me = () =>
+        get<{ Policy: { EnableContentDownloading: boolean } }>("/Users/Me");
+
+      const allowed = await movieList();
+      expect(allowed.Items.length).toBeGreaterThan(0);
+      for (const item of allowed.Items) expect(item.CanDownload).toBe(true);
+      expect((await get<Dto>(`/Items/${guid(s.matrix.id)}`)).CanDownload).toBe(
+        true,
+      );
+      const series = await get(
+        `/Items?parentId=${guid(s.tv.id)}&includeItemTypes=Series&recursive=true`,
+      );
+      expect(series.Items[0]).toMatchObject({
+        Type: "Series",
+        CanDownload: false,
+      });
+      expect((await me()).Policy.EnableContentDownloading).toBe(true);
+
+      await setPermissionOverride(
+        db,
+        s.admin.id,
+        s.viewer.id,
+        "download",
+        false,
+      );
+      for (const item of (await movieList()).Items)
+        expect(item.CanDownload).toBe(false);
+      expect((await get<Dto>(`/Items/${guid(s.matrix.id)}`)).CanDownload).toBe(
+        false,
+      );
+      expect((await me()).Policy.EnableContentDownloading).toBe(false);
     }));
 
   test("answers the library list, letter picker and home rows clients ask for", () =>
