@@ -61,8 +61,12 @@ A TV series: the parent of Seasons, which are the parents of Episodes.
 _Avoid_: series, TV series, program
 
 **Collection**:
-An ordered set of Items made by a provider or a user: a film franchise, a book series, a list. An Item may belong to many Collections.
+An ordered set of Items that belongs to the library, made by a provider or an admin: a film franchise, a book series. An Item may belong to many Collections. Anyone who can view one of its Items sees it, listing only the Items they can view.
 _Avoid_: box set, franchise, series, anthology, list
+
+**Playlist**:
+An ordered set of Items that one user owns. Private until its owner shares it with users or Groups.
+_Avoid_: list, queue, mix, user collection
 
 **Book**:
 An Item in the books medium. Its Versions are ebooks or audiobooks of the same work.

@@ -8,8 +8,8 @@ date: 2026-10-13
 Thalia's Permissions had three fixed slots: a Group's list of server-wide permissions, a per-user override of one permission, and a per-library allow or deny that only applied to viewing. That cannot express an account that sees a handful of shows, a library where some users browse but cannot download, or a person who curates one show's metadata. Thalia replaces all three with one shape, borrowed from Vesta: an Access rule allows or denies one Action on one object for one subject.
 
 - **Subject**: a user or a Group.
-- **Object**: the server, a Library, or an Item. An Item's chain runs up through its parent Items to its Library, then the server.
-- **Action**: `view`, `play`, `download`, `metadata:edit`, `subtitles:edit` on any object; `libraries:manage`, `users:manage`, `plugins:manage`, `transcoding:manage`, `server:manage` on the server only.
+- **Object**: the server, a Library, an Item or a Playlist. An Item's chain runs up through its parent Items to its Library, then the server. A Playlist has no chain.
+- **Action**: `view`, `play`, `download`, `metadata:edit`, `subtitles:edit` on any object; `libraries:manage`, `users:manage`, `plugins:manage`, `transcoding:manage`, `server:manage` on the server only; `view` and `playlist:edit` on a Playlist.
 
 No rule means unset. Thalia stores no unset rows; removing a rule unsets it.
 
@@ -26,6 +26,12 @@ Every Action except `view` also needs `view` on the same object. A user who cann
 
 A Library or Item the user cannot view still appears when browsing if it contains an Item they can view, listing only what they can see. That is how a restricted account reaches the shows it was given. Only its title and artwork show; its other Actions follow its own rules.
 
+## Collections and Playlists
+
+A Collection behaves like a show for visibility. Anyone who can view one of its Items sees it, listing only the Items they can view. Rules cannot name a Collection, because an Item can belong to many of them and would have no single chain.
+
+A Playlist is an object of its own, outside any chain. Its owner can do everything with it and decides who else sees it, by writing `view` and `playlist:edit` rules on it for users or Groups. Owners are the one exception to admins-only rule writing. Playlist rules govern only the Playlist. Someone a Playlist is shared with sees only the Items in it that they can view, so sharing never grants access to an Item.
+
 ## Alternatives
 
 - **Subject first, as Vesta does**: any user rule beats any Group rule, wherever each sits. A user denied a Library could then not be given one show in it through a Group, and a Group denied a Library could not be given back a single show. Object specificity is the order admins already know from CSS and Discord's channel overrides.
@@ -38,6 +44,6 @@ The migration turns Group permissions into Group rules on the server, overrides 
 
 Most rules sit on the server and Libraries. Item rules are for the few restricted accounts. A list query loads the caller's rules once and filters in SQL, walking the parent chain with a recursive query. Nothing checks Items one at a time. Thalia adds a closure table only if that query measures slow.
 
-Only built-in admins write rules. `users:manage` covers accounts, sessions and invites, not access.
+Only built-in admins write rules, except a Playlist's owner on that Playlist. `users:manage` covers accounts, sessions and invites, not access.
 
 The Jellyfin translation layer maps its policy onto rules: `EnableAllFolders` and `EnabledFolders` become user `view` rules on Libraries, and `EnableMediaPlayback` and `EnableContentDownloading` become user rules on the server. Item rules have no Jellyfin equivalent. Jellyfin apps see them only as Items missing from lists, and as refusals.
