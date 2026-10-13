@@ -182,6 +182,10 @@ export const accountRoutes: Route[] = [
             typeof policy.EnableMediaPlayback === "boolean"
               ? policy.EnableMediaPlayback
               : undefined,
+          download:
+            typeof policy.EnableContentDownloading === "boolean"
+              ? policy.EnableContentDownloading
+              : undefined,
           "manage-subtitles":
             typeof policy.EnableSubtitleManagement === "boolean"
               ? policy.EnableSubtitleManagement

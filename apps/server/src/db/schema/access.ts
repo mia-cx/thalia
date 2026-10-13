@@ -17,6 +17,7 @@ import { libraries } from "./core.ts";
 export const permissions = [
   "view",
   "play",
+  "download",
   "manage-libraries",
   "manage-metadata",
   "manage-subtitles",

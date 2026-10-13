@@ -11,6 +11,7 @@ import {
   viewableLibraries,
 } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
+import { checkPermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { nextUp } from "../mediums/shows.ts";
 import { continueWatching } from "../playback/marks.ts";
@@ -96,7 +97,6 @@ export function baseItemDto(view: ItemView, serverId: string) {
     Id: toGuid(view.id),
     DateCreated: view.addedAt.toISOString(),
     CanDelete: false,
-    CanDownload: false,
     SortName: view.title,
     PremiereDate: date(view.premiereDate),
     EndDate: date(view.endDate),
@@ -205,12 +205,14 @@ async function playableFields(
 /** Item views as BaseItemDtos; playable ones honour `fields` for Path and MediaSources. */
 export async function itemDtos(context: UserContext, views: ItemView[]) {
   const { db, caller, query } = context;
-  const [media, serverId] = await Promise.all([
+  const [media, serverId, canDownload] = await Promise.all([
     playableFields(db, caller.user.id, views, fieldsOf(query)),
     readServerId(db),
+    checkPermission(db, caller.user.id, "download"),
   ]);
   return views.map((view) => ({
     ...baseItemDto(view, serverId),
+    CanDownload: playableKinds.has(view.kind) && canDownload,
     ...media.get(view.id),
   }));
 }
@@ -513,10 +515,11 @@ export const browseRoutes: Route[] = [
     path: "/Items/{id}",
     handle: async ({ db, caller, params }) => {
       const id = requiredGuid(params.id);
-      const [libraries, page, serverId] = await Promise.all([
+      const [libraries, page, serverId, canDownload] = await Promise.all([
         viewableLibraries(db, caller.user.id),
         listItemViews(db, caller.user.id, { ids: [id] }),
         readServerId(db),
+        checkPermission(db, caller.user.id, "download"),
       ]);
       const library = libraries.find((candidate) => candidate.id === id);
       if (library !== undefined) return json(libraryDto(library, serverId));
@@ -551,6 +554,7 @@ export const browseRoutes: Route[] = [
       }
       const dto = {
         ...baseItemDto(view, serverId),
+        CanDownload: playableKinds.has(view.kind) && canDownload,
         People: (
           await listContributorCredits(db, caller.user.id, { ids: [id] })
         ).map((person) => ({

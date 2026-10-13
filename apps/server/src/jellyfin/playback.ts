@@ -1,6 +1,7 @@
 import type { createHlsHandler } from "../api/hls.ts";
 import { listVersionViews } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
+import { requirePermission } from "../auth/permissions.ts";
 import { verifyPlaybackToken } from "../auth/playback-tokens.ts";
 import { authenticate } from "../auth/sessions.ts";
 import { serveVersionFile } from "../playback/direct.ts";
@@ -271,6 +272,12 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
           path: `/Items/{id}/${kind}`,
           handle: async (context) => {
             const itemId = requiredGuid(context.params.id);
+            if (kind === "Download")
+              await requirePermission(
+                context.db,
+                context.caller.user.id,
+                "download",
+              );
             const version = await versionOf(
               context,
               context.caller.user.id,

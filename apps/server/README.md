@@ -195,7 +195,7 @@ POST requests reject a foreign Origin or cross-site Fetch Metadata. Native clien
 Server callers use these functions after authenticating the actor:
 
 - `accounts.ts`: `setupAdmin` and `createLocalUser`. Only setup accepts anonymous account creation; later users require `manage-users`.
-- `permissions.ts`: `checkPermission` and `requirePermission` for every later service. Group permissions form a union, then user overrides apply. Library rows override global view, and a matching library deny wins. Built-in admins bypass checks; disabled users do not.
+- `permissions.ts`: `checkPermission` and `requirePermission` for every later service. Group permissions form a union, then user overrides apply. Library rows override global view, and a matching library deny wins. Built-in admins bypass checks; disabled users do not. The names are `view`, `play`, `download` (direct file downloads over the Jellyfin `/Items/{id}/Download` route), `manage-libraries`, `manage-metadata`, `manage-subtitles`, `manage-users`, `manage-plugins`, `manage-transcoding` and `manage-server`.
 - `permissions.ts`: `createGroup`, `setUserGroups` and `setPermissionOverride` require built-in admin membership. A null override restores inheritance. Membership replacement serializes on the admins group and rejects removal of the final enabled admin with `CONFLICT`.
 - `sessions.ts`: `login`, `authenticate`, `listSessions`, `revokeSession`, `createApiKey`, `listApiKeys` and `revokeApiKey`. Listing and revocation require ownership or `manage-users`. API keys belong to their creator and carry an integration name.
 

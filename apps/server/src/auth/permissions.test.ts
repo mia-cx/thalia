@@ -53,7 +53,9 @@ async function createLibrary(db: Database, name: string) {
   return library;
 }
 
-const management = permissions.filter((p) => p !== "view" && p !== "play");
+const management = permissions.filter(
+  (p) => p !== "view" && p !== "play" && p !== "download",
+);
 
 describe.skipIf(!databaseUrl)("auth permissions", () => {
   test("seeded users member grants view and play, denies management", () =>
@@ -62,6 +64,7 @@ describe.skipIf(!databaseUrl)("auth permissions", () => {
       const user = await createUser(db, "viewer", ["users"]);
       expect(await checkPermission(db, user.id, "view")).toBe(true);
       expect(await checkPermission(db, user.id, "play")).toBe(true);
+      expect(await checkPermission(db, user.id, "download")).toBe(true);
       for (const permission of management)
         expect(await checkPermission(db, user.id, permission)).toBe(false);
     }));
