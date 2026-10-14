@@ -8,7 +8,6 @@ import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
-import { migrateDatabase } from "../db/migrate.ts";
 import {
   artwork,
   files,
@@ -72,7 +71,8 @@ type Video = {
 async function addVersion(
   db: Database,
   library: LibraryRow,
-  item: { id: string; kind: "movie" | "episode" },
+  item: { id: string },
+  itemKind: "movie" | "episode",
   options: {
     bytes?: bigint;
     durationSeconds?: number;
@@ -85,7 +85,7 @@ async function addVersion(
     .insert(versions)
     .values({
       itemId: item.id,
-      itemKind: item.kind,
+      itemKind,
       libraryId: library.id,
       label: "Original",
       format: "video",
@@ -134,7 +134,9 @@ async function addMovie(
   db: Database,
   libraryId: string,
   title: string,
-  fields: Partial<typeof items.$inferInsert> = {},
+  fields: Partial<
+    Omit<typeof items.$inferInsert, "kind" | "parentId" | "extension">
+  > = {},
 ) {
   return insertItem(db, {
     libraryId,
@@ -177,7 +179,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
 
       // A multi-Version movie: 4K Dolby Vision and 1080p SDR count once for runtime.
       const multi = await addMovie(db, movies.id, "Multi");
-      const multiSource = await addVersion(db, movies, multi, {
+      const multiSource = await addVersion(db, movies, multi, "movie", {
         bytes: 4000n,
         durationSeconds: 7000,
         video: {
@@ -188,7 +190,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
           default: true,
         },
       });
-      await addVersion(db, movies, multi, {
+      await addVersion(db, movies, multi, "movie", {
         bytes: 2000n,
         durationSeconds: 6000,
       });
@@ -229,32 +231,32 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
       });
 
       const scope = await addMovie(db, movies.id, "Scope");
-      await addVersion(db, movies, scope, {
+      await addVersion(db, movies, scope, "movie", {
         durationSeconds: 100,
         video: { codec: "hevc", width: 3840, height: 1600, hdr: "hdr10" },
       });
       const wide = await addMovie(db, movies.id, "Wide");
-      await addVersion(db, movies, wide, {
+      await addVersion(db, movies, wide, "movie", {
         durationSeconds: 200,
         video: { width: 1920, height: 800 },
       });
       const small = await addMovie(db, movies.id, "Small");
-      await addVersion(db, movies, small, {
+      await addVersion(db, movies, small, "movie", {
         durationSeconds: 300,
         video: { width: 1280, height: 720 },
       });
       const low = await addMovie(db, movies.id, "Low");
-      await addVersion(db, movies, low, {
+      await addVersion(db, movies, low, "movie", {
         durationSeconds: 400,
         video: { codec: "mpeg2video", width: 640, height: 480 },
       });
       const silent = await addMovie(db, movies.id, "Silent");
-      await addVersion(db, movies, silent, {
+      await addVersion(db, movies, silent, "movie", {
         durationSeconds: 500,
         noVideo: true,
       });
       const cover = await addMovie(db, movies.id, "Cover");
-      await addVersion(db, movies, cover, {
+      await addVersion(db, movies, cover, "movie", {
         durationSeconds: 600,
         video: {
           codec: "mjpeg",
@@ -266,7 +268,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
         extraVideo: [{ codec: "h264", width: 1920, height: 1080, index: 1 }],
       });
       const old = await addMovie(db, movies.id, "Old");
-      await addVersion(db, movies, old, { durationSeconds: 800 });
+      await addVersion(db, movies, old, "movie", { durationSeconds: 800 });
       await db
         .update(items)
         .set({ addedAt: new Date(Date.now() - 40 * 24 * 3600 * 1000) })
@@ -300,7 +302,9 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
           canonicalFolder: `/srv/shows/series/s1/${episodeNumber}`,
           extension: { episodeNumber },
         });
-        await addVersion(db, shows, episode, { durationSeconds: 2400 });
+        await addVersion(db, shows, episode, "episode", {
+          durationSeconds: 2400,
+        });
       }
 
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
@@ -333,8 +337,10 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
           ],
         });
         expect(all[1]).toMatchObject({ libraryId: shows.id, items: 2 });
+        const showsStats = all[1];
+        if (showsStats === undefined) throw new Error("Shows stats missing.");
         expect(await client.libraries.stats({ id: shows.id })).toEqual([
-          all[1],
+          showsStats,
         ]);
         expect(
           await client.libraries.stats({
@@ -478,7 +484,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
           gap: "poster",
         });
         expect(posterItems.items.map((item) => item.id)).toEqual([
-          gapMovies["NoPoster"]!.id,
+          gapMovies["NoPoster"]?.id,
         ]);
         expect(posterItems.items[0]).toMatchObject({
           kind: "movie",
@@ -593,9 +599,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
           headers: { authorization: `Bearer ${token}` },
         });
         const space = await client.libraries.freeSpace();
-        const available = space.filter(
-          (entry) => entry.state === "available",
-        );
+        const available = space.filter((entry) => entry.state === "available");
         const unavailable = space.filter(
           (entry) => entry.state === "unavailable",
         );
@@ -643,8 +647,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
         for (const call of [
           () => client.libraries.stats({}),
           () => client.libraries.metadataGaps({}),
-          () =>
-            client.libraries.metadataGapItems({ libraryId, gap: "poster" }),
+          () => client.libraries.metadataGapItems({ libraryId, gap: "poster" }),
           () => client.libraries.freeSpace(),
         ]) {
           const error = await capture(call());
