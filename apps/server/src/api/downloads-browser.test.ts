@@ -36,7 +36,7 @@ describe.skipIf(!databaseUrl || browser === undefined)("web downloads", () => {
           username: "admin",
           password: "admin-pass",
         });
-        const viewer = await createLocalUser(db, admin.id, {
+        await createLocalUser(db, admin.id, {
           username: "viewer",
           password: "viewer-pass",
         });

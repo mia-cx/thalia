@@ -18,8 +18,8 @@ A user with `download` can save a movie or episode's original file into the brow
 - [x] Web: `lib/downloads` store over OPFS with unit tests.
 - [x] Web: Download button on movie and episode pages.
 - [x] Web: Downloads page and navigation entry.
-- [ ] Browser test: download through the button, reload mid-way, compare bytes.
-- [ ] Screenshots, lint, check.
+- [x] Browser test: download through the button, reload mid-way, compare bytes.
+- [x] Screenshots, lint, check.
 
 ## Notes
 - The web app has no per-Library permission data (`me.admin` only), so the item detail gains `canDownload`, computed like the Jellyfin layer's `CanDownload`.
