@@ -239,13 +239,42 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 ).toMatch(/\/admin\/settings$/);
                 expect(
                   await page.eval<boolean>(
+                    "document.body.innerText.includes('add a TMDB key')",
+                  ),
+                ).toBe(true);
+                expect(
+                  await page.eval<boolean>(
                     "[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add library')?.disabled === false",
                   ),
                 ).toBe(true);
 
+                // Switching Medium to Shows retargets the footnote at TVDB.
+                // Bits-ui opens on pointerdown, so drive real mouse input.
+                const click = async (selector: string, text?: string) => {
+                  const point = await page.eval<{ x: number; y: number }>(
+                    `(() => { const els = [...document.querySelectorAll(${JSON.stringify(selector)})]; const el = ${text === undefined ? "els[0]" : `els.find(e => e.textContent.trim() === ${JSON.stringify(text)})`}; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
+                  );
+                  for (const type of ["mousePressed", "mouseReleased"] as const)
+                    await page.send("Input.dispatchMouseEvent", {
+                      type,
+                      x: point.x,
+                      y: point.y,
+                      button: "left",
+                      clickCount: 1,
+                    });
+                };
+                await click("#libraryMedium");
+                await page.waitFor(
+                  "[...document.querySelectorAll('[data-slot=select-item]')].some(i => i.textContent.trim() === 'Shows')",
+                );
+                await click("[data-slot=select-item]", "Shows");
+                await page.waitFor(
+                  "document.body.innerText.includes('add a TVDB key')",
+                );
+
                 await signIn(page, base, token, "/admin/settings");
                 await page.waitFor(
-                  'document.body.innerText.includes("until you add a key named tmdb")',
+                  'document.body.innerText.includes("until you add a key named tmdb for movies or tvdb for shows")',
                 );
 
                 await api.settings.setProviderKey({

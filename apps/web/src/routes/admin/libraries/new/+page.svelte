@@ -20,6 +20,10 @@ const mediumNames: Record<Medium, string> = {
   movies: "Movies",
   shows: "Shows",
 };
+const metadataSources: Record<Medium, string> = {
+  movies: "TMDB",
+  shows: "TVDB",
+};
 
 let name = $state("");
 let medium = $state<Medium>("movies");
@@ -86,7 +90,7 @@ async function submit(event: SubmitEvent) {
 
 {#snippet noSource()}
   No metadata source is set up, so posters and details won't load until you add
-  a TMDB key in <a href="/admin/settings" class="text-tint hover:underline">General settings</a>.
+  a {metadataSources[medium]} key in <a href="/admin/settings" class="text-tint hover:underline">General settings</a>.
 {/snippet}
 
 <AdminPage

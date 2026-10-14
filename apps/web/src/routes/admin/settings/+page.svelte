@@ -402,7 +402,7 @@ async function removeKey(name: string) {
       title="Provider keys"
       description={settings.data.metadataSourceConfigured
         ? undefined
-        : "No metadata source is set up, so posters and details won't load until you add a key named tmdb."}
+        : "No metadata source is set up, so posters and details won't load until you add a key named tmdb for movies or tvdb for shows."}
     >
       {#each settings.data.providerKeys as name (name)}
         <FormRow label={name} inline>
