@@ -96,18 +96,37 @@ function clientLabel(session: Session) {
 // to one in-flight refetch plus one rerun when it was marked dirty.
 const refreshing = new Map<string, { running: boolean; dirty: boolean }>();
 
+// A load bumps every library it covers and applies answers only for those
+// still at its sequence, so an older whole-list answer can't overwrite a
+// newer per-library refetch.
+const statsSeq = new Map<string, number>();
+function bumpStatsSeq(ids: readonly string[]) {
+  const captured = new Map<string, number>();
+  for (const id of ids) {
+    const next = (statsSeq.get(id) ?? 0) + 1;
+    statsSeq.set(id, next);
+    captured.set(id, next);
+  }
+  return captured;
+}
+const seqMatches = (captured: Map<string, number>, id: string) =>
+  statsSeq.get(id) === captured.get(id);
+
 async function loadLibraryStats(libraryId: string) {
+  const captured = bumpStatsSeq([libraryId]);
   try {
     const [nextStats, nextGaps] = await Promise.all([
       client.libraries.stats({ id: libraryId }),
       client.libraries.metadataGaps({ id: libraryId }),
     ]);
+    if (!seqMatches(captured, libraryId)) return;
     const [statEntry] = nextStats;
     const [gapEntry] = nextGaps;
     if (statEntry !== undefined) stats = replaceLibraryEntry(stats, statEntry);
     if (gapEntry !== undefined) gaps = replaceLibraryEntry(gaps, gapEntry);
     statsFailures = { ...statsFailures, [libraryId]: undefined };
   } catch (error) {
+    if (!seqMatches(captured, libraryId)) return;
     statsFailures = { ...statsFailures, [libraryId]: readFailure(error) };
   }
 }
@@ -136,20 +155,35 @@ function refreshLibraryStats(libraryId: string) {
 async function loadAllStats() {
   const list = libraries.data;
   if (list === undefined) return;
+  const captured = bumpStatsSeq(list.map((library) => library.id));
   const [statsResult, gapsResult] = await Promise.allSettled([
     client.libraries.stats({}),
     client.libraries.metadataGaps({}),
   ]);
-  const failures: typeof statsFailures = {};
-  if (statsResult.status === "fulfilled") stats = statsResult.value;
-  else
-    for (const library of list)
-      failures[library.id] = readFailure(statsResult.reason);
-  if (gapsResult.status === "fulfilled") gaps = gapsResult.value;
-  else
-    for (const library of list)
-      failures[library.id] = readFailure(gapsResult.reason);
-  statsFailures = failures;
+  // Merge per library so entries a newer refetch already answered stay put.
+  for (const library of list) {
+    if (!seqMatches(captured, library.id)) continue;
+    const statEntry =
+      statsResult.status === "fulfilled"
+        ? statsResult.value.find((entry) => entry.libraryId === library.id)
+        : undefined;
+    const gapEntry =
+      gapsResult.status === "fulfilled"
+        ? gapsResult.value.find((entry) => entry.libraryId === library.id)
+        : undefined;
+    if (statEntry !== undefined) stats = replaceLibraryEntry(stats, statEntry);
+    if (gapEntry !== undefined) gaps = replaceLibraryEntry(gaps, gapEntry);
+    const failed =
+      statsResult.status === "rejected"
+        ? statsResult.reason
+        : gapsResult.status === "rejected"
+          ? gapsResult.reason
+          : undefined;
+    statsFailures = {
+      ...statsFailures,
+      [library.id]: failed === undefined ? undefined : readFailure(failed),
+    };
+  }
 }
 
 const controller = new AbortController();

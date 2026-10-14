@@ -569,6 +569,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             );
             for (const { requestId } of held)
               await page.send("Fetch.continueRequest", { requestId });
+            await page.send("Fetch.disable");
 
             // The reconcile lands all 25; the queued retry sees the null
             // cursor and does not append anything.
