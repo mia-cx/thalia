@@ -17,6 +17,12 @@ import {
   scanLibrary,
   updateLibrary,
 } from "../libraries/service.ts";
+import {
+  libraryFreeSpace,
+  libraryMetadataGaps,
+  libraryStats,
+  metadataGapItems,
+} from "../libraries/stats.ts";
 import { StoredVersionPolicy } from "../stored/policy.ts";
 import {
   getStoredVersionPolicy,
@@ -24,12 +30,20 @@ import {
 } from "../stored/service.ts";
 import { authenticated, authenticatedMutation } from "./context.ts";
 import { ApiError, fromHost, runApi } from "./errors.ts";
+import { decodeTitleCursor } from "./pagination.ts";
 import {
   AbsolutePath,
+  connection,
+  FilesystemSpace,
   FolderListing,
   Library,
   LibraryInput,
+  LibraryMetadataGaps,
+  LibraryStats,
   LibraryUpdate,
+  MetadataGap,
+  MetadataGapItem,
+  PageSize,
   PreviewExamples,
   ScanPreview,
   ScanStatus,
@@ -232,6 +246,80 @@ const folders = authenticated
     ),
   );
 
+const optionalIdInput = Schema.standardSchemaV1(
+  Schema.Struct({ id: Schema.optional(Schema.UUID) }),
+);
+
+const stats = authenticated
+  .route({ method: "GET", path: "/libraries/stats" })
+  .input(optionalIdInput)
+  .output(Schema.standardSchemaV1(Schema.Array(LibraryStats)))
+  .handler(async ({ context, input }) =>
+    runApi(
+      fromHost(() =>
+        libraryStats(context.db, context.caller.user.id, input.id),
+      ),
+    ),
+  );
+
+const metadataGaps = authenticated
+  .route({ method: "GET", path: "/libraries/metadata-gaps" })
+  .input(optionalIdInput)
+  .output(Schema.standardSchemaV1(Schema.Array(LibraryMetadataGaps)))
+  .handler(async ({ context, input }) =>
+    runApi(
+      fromHost(() =>
+        libraryMetadataGaps(context.db, context.caller.user.id, input.id),
+      ),
+    ),
+  );
+
+const gapItems = authenticated
+  .route({ method: "GET", path: "/libraries/metadata-gaps/items" })
+  .input(
+    Schema.standardSchemaV1(
+      Schema.Struct({
+        libraryId: Schema.UUID,
+        gap: MetadataGap,
+        cursor: Schema.optional(Schema.String),
+        limit: Schema.optional(PageSize),
+      }),
+    ),
+  )
+  .output(Schema.standardSchemaV1(connection(MetadataGapItem)))
+  .handler(async ({ context, input }) =>
+    runApi(
+      Effect.gen(function* () {
+        const after =
+          input.cursor === undefined
+            ? undefined
+            : decodeTitleCursor(input.cursor);
+        if (input.cursor !== undefined && after === undefined)
+          return yield* new ApiError({
+            code: "BAD_REQUEST",
+            reason: "Unknown cursor.",
+          });
+        return yield* fromHost(() =>
+          metadataGapItems(context.db, context.caller.user.id, {
+            libraryId: input.libraryId,
+            gap: input.gap,
+            ...(after === undefined ? {} : { after }),
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          }),
+        );
+      }),
+    ),
+  );
+
+const freeSpace = authenticated
+  .route({ method: "GET", path: "/libraries/free-space" })
+  .output(Schema.standardSchemaV1(Schema.Array(FilesystemSpace)))
+  .handler(async ({ context }) =>
+    runApi(
+      fromHost(() => libraryFreeSpace(context.db, context.caller.user.id)),
+    ),
+  );
+
 const preview = authenticated
   .route({ method: "GET", path: "/folders/preview" })
   .input(
@@ -270,6 +358,10 @@ export const libraryProcedures = {
   delete: remove,
   scan,
   scanStatus,
+  stats,
+  metadataGaps,
+  metadataGapItems: gapItems,
+  freeSpace,
   storedVersions,
   setStoredVersions,
 };
