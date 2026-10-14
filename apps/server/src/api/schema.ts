@@ -303,6 +303,7 @@ export const ServerSettings = Schema.Struct({
   oidcConfigured: Schema.Boolean,
   oidcClientSecretSet: Schema.Boolean,
   providerKeys: Schema.Array(Schema.String),
+  metadataMediums: Schema.Array(Schema.Literal("movies", "shows")),
   bitrateCapBps: Schema.NullOr(Schema.Int),
   allowCpu4k: Schema.Boolean,
   idleWindow: Schema.Struct({ start: Schema.String, end: Schema.String }),

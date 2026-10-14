@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { setupAdmin } from "../auth/accounts.ts";
 import { login } from "../auth/sessions.ts";
+import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { artwork } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
@@ -20,6 +21,20 @@ const dialogGone =
   "document.querySelector('[data-slot=dialog-content]') === null && document.querySelector('[data-slot=sheet-content]') === null";
 const clickButton = (label: string, scope = "document") =>
   `[...${scope}.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(label)})?.click()`;
+
+/** Runs `withDatabase` with TMDB_API_KEY unset, so only stored keys configure metadata. */
+async function withDatabaseWithoutTmdbEnv(
+  run: (db: Database, url: string) => Promise<void>,
+): Promise<void> {
+  const saved = Bun.env.TMDB_API_KEY;
+  delete Bun.env.TMDB_API_KEY;
+  try {
+    await withDatabase(run);
+  } finally {
+    if (saved === undefined) delete Bun.env.TMDB_API_KEY;
+    else Bun.env.TMDB_API_KEY = saved;
+  }
+}
 
 describe.skipIf(!databaseUrl || browser === undefined)(
   "libraries admin page",
@@ -182,6 +197,130 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               expect(paths.get(rootB)).toBe(repointed);
               expect(paths.get(rootC)).toBe(dirC);
               expect(paths.get(library.rootId)).toBeUndefined();
+            } finally {
+              await page.close();
+              await server.stop();
+            }
+          }),
+        ),
+      60_000,
+    );
+
+    test(
+      "the admin says when no metadata source is set up",
+      () =>
+        withFolder((folder) =>
+          withDatabaseWithoutTmdbEnv(async (db, url) => {
+            if (browser === undefined) throw new Error("Expected a browser.");
+            await migrateDatabase(db);
+            await setupAdmin(db, {
+              username: "admin",
+              password: "admin-pass",
+            });
+            const { token } = await login(
+              db,
+              {
+                username: "admin",
+                password: "admin-pass",
+                clientName: "Thalia Web",
+                deviceId: "libraries-browser-4",
+                deviceName: "Chromium",
+              },
+              "127.0.0.1",
+            );
+            const server = await startThalia("api", {
+              databaseUrl: url,
+              port: 0,
+              pluginOptions: { directory: join(folder, "installed") },
+            });
+            const base = `http://127.0.0.1:${server.apiServer?.port}`;
+            const api = createThaliaClient({
+              origin: base,
+              headers: { authorization: `Bearer ${token}` },
+            });
+            const page = await openPage();
+            try {
+              await signIn(page, base, token, "/admin/libraries/new");
+              await page.waitFor(
+                'document.body.innerText.includes("posters and details won\'t load")',
+              );
+              expect(
+                await page.eval<string>(
+                  "document.querySelector('.text-footnote a')?.href",
+                ),
+              ).toMatch(/\/admin\/settings$/);
+              expect(
+                await page.eval<boolean>(
+                  "document.body.innerText.includes('add a TMDB key')",
+                ),
+              ).toBe(true);
+              expect(
+                await page.eval<boolean>(
+                  "[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add library')?.disabled === false",
+                ),
+              ).toBe(true);
+
+              // Switching Medium to Shows retargets the footnote at TVDB.
+              // Bits-ui opens on pointerdown, so drive real mouse input.
+              const click = async (selector: string, text?: string) => {
+                const point = await page.eval<{ x: number; y: number }>(
+                  `(() => { const els = [...document.querySelectorAll(${JSON.stringify(selector)})]; const el = ${text === undefined ? "els[0]" : `els.find(e => e.textContent.trim() === ${JSON.stringify(text)})`}; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
+                );
+                for (const type of ["mousePressed", "mouseReleased"] as const)
+                  await page.send("Input.dispatchMouseEvent", {
+                    type,
+                    x: point.x,
+                    y: point.y,
+                    button: "left",
+                    clickCount: 1,
+                  });
+              };
+              await click("#libraryMedium");
+              await page.waitFor(
+                "[...document.querySelectorAll('[data-slot=select-item]')].some(i => i.textContent.trim() === 'Shows')",
+              );
+              await click("[data-slot=select-item]", "Shows");
+              await page.waitFor(
+                "document.body.innerText.includes('add a TVDB key')",
+              );
+
+              await signIn(page, base, token, "/admin/settings");
+              await page.waitFor(
+                'document.body.innerText.includes("until you add a key named tmdb for movies or tvdb for shows")',
+              );
+
+              await api.settings.setProviderKey({
+                name: "tmdb",
+                value: "provider-secret-value",
+              });
+              await signIn(page, base, token, "/admin/settings");
+              await page.waitFor(
+                'document.body.innerText.includes("until you add a key named tvdb")',
+              );
+              expect(
+                await page.eval<boolean>(
+                  "document.body.innerText.includes('No metadata source is set up')",
+                ),
+              ).toBe(false);
+
+              // Only shows lack a source now, so the footnote follows Medium.
+              await signIn(page, base, token, "/admin/libraries/new");
+              await click("#libraryMedium");
+              await page.waitFor(
+                "[...document.querySelectorAll('[data-slot=select-item]')].some(i => i.textContent.trim() === 'Shows')",
+              );
+              await click("[data-slot=select-item]", "Shows");
+              await page.waitFor(
+                "document.body.innerText.includes('add a TVDB key')",
+              );
+              await click("#libraryMedium");
+              await page.waitFor(
+                "[...document.querySelectorAll('[data-slot=select-item]')].some(i => i.textContent.trim() === 'Movies')",
+              );
+              await click("[data-slot=select-item]", "Movies");
+              await page.waitFor(
+                '!document.body.innerText.includes("posters and details won\'t load")',
+              );
             } finally {
               await page.close();
               await server.stop();

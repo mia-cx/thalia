@@ -61,6 +61,20 @@ async function capture(promise: Promise<unknown>) {
   throw new Error("Expected the client call to reject.");
 }
 
+/** Runs `withDatabase` with TMDB_API_KEY unset, so only stored keys configure metadata. */
+async function withDatabaseWithoutTmdbEnv(
+  run: (db: Database, url: string) => Promise<void>,
+): Promise<void> {
+  const saved = Bun.env.TMDB_API_KEY;
+  delete Bun.env.TMDB_API_KEY;
+  try {
+    await withDatabase(run);
+  } finally {
+    if (saved === undefined) delete Bun.env.TMDB_API_KEY;
+    else Bun.env.TMDB_API_KEY = saved;
+  }
+}
+
 describe.skipIf(!databaseUrl)("admin api", () => {
   test("setup.status answers before and after the first admin", () =>
     withDatabase(async (db, url) => {
@@ -506,7 +520,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
     }));
 
   test("settings.get reports configuration without any secret", () =>
-    withDatabase(async (db, url) => {
+    withDatabaseWithoutTmdbEnv(async (db, url) => {
       await migrateDatabase(db);
       const { admin, token } = await seed(db);
       await db.insert(settings).values({
@@ -536,6 +550,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
           oidcConfigured: true,
           oidcClientSecretSet: true,
           providerKeys: ["tmdb"],
+          metadataMediums: ["movies"],
           ...serverDefaults,
         });
         const client = createThaliaClient({ origin: base, headers });
@@ -546,7 +561,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
     }));
 
   test("settings mutations write proxies and provider keys", () =>
-    withDatabase(async (db, url) => {
+    withDatabaseWithoutTmdbEnv(async (db, url) => {
       await migrateDatabase(db);
       const { token } = await seed(db);
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
@@ -567,6 +582,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
           oidcConfigured: false,
           oidcClientSecretSet: false,
           providerKeys: [],
+          metadataMediums: [],
           ...serverDefaults,
         });
         const secret = await fetch(`${base}/api/settings`, {
@@ -600,6 +616,47 @@ describe.skipIf(!databaseUrl)("admin api", () => {
           client.settings.deleteProviderKey({ name: "tmdb" }),
         );
         expect(missing.code).toBe("NOT_FOUND");
+      } finally {
+        await server.stop();
+      }
+    }));
+
+  test("settings list the mediums a metadata source covers", () =>
+    withDatabaseWithoutTmdbEnv(async (db, url) => {
+      await migrateDatabase(db);
+      const { token } = await seed(db);
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const base = `http://127.0.0.1:${server.apiServer?.port}`;
+        const client = createThaliaClient({
+          origin: base,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect((await client.settings.get()).metadataMediums).toEqual([]);
+        expect(
+          (
+            await client.settings.setProviderKey({
+              name: "tmdb",
+              value: "provider-secret-value",
+            })
+          ).metadataMediums,
+        ).toEqual(["movies"]);
+        expect(
+          (
+            await client.settings.setProviderKey({
+              name: "tvdb",
+              value: "provider-secret-value",
+            })
+          ).metadataMediums,
+        ).toEqual(["movies", "shows"]);
+        expect((await client.settings.get()).metadataMediums).toEqual([
+          "movies",
+          "shows",
+        ]);
+        expect(
+          (await client.settings.deleteProviderKey({ name: "tmdb" }))
+            .metadataMediums,
+        ).toEqual(["shows"]);
       } finally {
         await server.stop();
       }
