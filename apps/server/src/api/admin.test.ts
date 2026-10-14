@@ -507,101 +507,158 @@ describe.skipIf(!databaseUrl)("admin api", () => {
 
   test("settings.get reports configuration without any secret", () =>
     withDatabase(async (db, url) => {
-      await migrateDatabase(db);
-      const { admin, token } = await seed(db);
-      await db.insert(settings).values({
-        key: "auth",
-        value: {
-          oidc: {
-            issuer: "https://id.mia.cx/application/o/thalia",
-            clientId: "thalia",
-            clientSecret: "oidc-secret-value",
-            scopes: ["openid"],
-          },
-        },
-      });
-      await setProviderKey(db, admin.id, "tmdb", "provider-secret-value");
-      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      const tmdbEnv = Bun.env.TMDB_API_KEY;
+      delete Bun.env.TMDB_API_KEY;
       try {
-        const base = `http://127.0.0.1:${server.apiServer?.port}`;
-        const headers = { authorization: `Bearer ${token}` };
-        const rest = await fetch(`${base}/api/settings`, { headers });
-        expect(rest.status).toBe(200);
-        const text = await rest.text();
-        expect(text).not.toContain("oidc-secret-value");
-        expect(text).not.toContain("provider-secret-value");
-        expect(JSON.parse(text)).toEqual({
-          trustedProxyAddresses: [],
-          artworkRequiresAuth: false,
-          oidcConfigured: true,
-          oidcClientSecretSet: true,
-          providerKeys: ["tmdb"],
-          ...serverDefaults,
+        await migrateDatabase(db);
+        const { admin, token } = await seed(db);
+        await db.insert(settings).values({
+          key: "auth",
+          value: {
+            oidc: {
+              issuer: "https://id.mia.cx/application/o/thalia",
+              clientId: "thalia",
+              clientSecret: "oidc-secret-value",
+              scopes: ["openid"],
+            },
+          },
         });
-        const client = createThaliaClient({ origin: base, headers });
-        expect((await client.settings.get()).oidcConfigured).toBe(true);
+        await setProviderKey(db, admin.id, "tmdb", "provider-secret-value");
+        const server = await startThalia("api", { databaseUrl: url, port: 0 });
+        try {
+          const base = `http://127.0.0.1:${server.apiServer?.port}`;
+          const headers = { authorization: `Bearer ${token}` };
+          const rest = await fetch(`${base}/api/settings`, { headers });
+          expect(rest.status).toBe(200);
+          const text = await rest.text();
+          expect(text).not.toContain("oidc-secret-value");
+          expect(text).not.toContain("provider-secret-value");
+          expect(JSON.parse(text)).toEqual({
+            trustedProxyAddresses: [],
+            artworkRequiresAuth: false,
+            oidcConfigured: true,
+            oidcClientSecretSet: true,
+            providerKeys: ["tmdb"],
+            metadataSourceConfigured: true,
+            ...serverDefaults,
+          });
+          const client = createThaliaClient({ origin: base, headers });
+          expect((await client.settings.get()).oidcConfigured).toBe(true);
+        } finally {
+          await server.stop();
+        }
       } finally {
-        await server.stop();
+        if (tmdbEnv === undefined) delete Bun.env.TMDB_API_KEY;
+        else Bun.env.TMDB_API_KEY = tmdbEnv;
       }
     }));
 
   test("settings mutations write proxies and provider keys", () =>
     withDatabase(async (db, url) => {
-      await migrateDatabase(db);
-      const { token } = await seed(db);
-      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      const tmdbEnv = Bun.env.TMDB_API_KEY;
+      delete Bun.env.TMDB_API_KEY;
       try {
-        const base = `http://127.0.0.1:${server.apiServer?.port}`;
-        const headers = {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        };
-        const client = createThaliaClient({ origin: base, headers });
-        const updated = await client.settings.update({
-          trustedProxyAddresses: ["10.0.0.2", "::ffff:10.0.0.3"],
-          artworkRequiresAuth: true,
-        });
-        expect(updated).toEqual({
-          trustedProxyAddresses: ["10.0.0.2", "10.0.0.3"],
-          artworkRequiresAuth: true,
-          oidcConfigured: false,
-          oidcClientSecretSet: false,
-          providerKeys: [],
-          ...serverDefaults,
-        });
-        const secret = await fetch(`${base}/api/settings`, {
-          method: "PATCH",
-          headers,
-          body: JSON.stringify({ oidcClientSecret: "oidc-secret-value" }),
-        });
-        expect(secret.status).toBe(200);
-        const secretText = await secret.text();
-        expect(secretText).not.toContain("oidc-secret-value");
-        expect(JSON.parse(secretText)).toMatchObject({
-          oidcConfigured: false,
-          oidcClientSecretSet: true,
-        });
-        const bad = await fetch(`${base}/api/settings`, {
-          method: "PATCH",
-          headers,
-          body: JSON.stringify({ trustedProxyAddresses: ["not-an-ip"] }),
-        });
-        expect(bad.status).toBe(400);
-        const keyed = await client.settings.setProviderKey({
-          name: "tmdb",
-          value: "secret",
-        });
-        expect(keyed.providerKeys).toEqual(["tmdb"]);
-        const removed = await client.settings.deleteProviderKey({
-          name: "tmdb",
-        });
-        expect(removed.providerKeys).toEqual([]);
-        const missing = await capture(
-          client.settings.deleteProviderKey({ name: "tmdb" }),
-        );
-        expect(missing.code).toBe("NOT_FOUND");
+        await migrateDatabase(db);
+        const { token } = await seed(db);
+        const server = await startThalia("api", { databaseUrl: url, port: 0 });
+        try {
+          const base = `http://127.0.0.1:${server.apiServer?.port}`;
+          const headers = {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          };
+          const client = createThaliaClient({ origin: base, headers });
+          const updated = await client.settings.update({
+            trustedProxyAddresses: ["10.0.0.2", "::ffff:10.0.0.3"],
+            artworkRequiresAuth: true,
+          });
+          expect(updated).toEqual({
+            trustedProxyAddresses: ["10.0.0.2", "10.0.0.3"],
+            artworkRequiresAuth: true,
+            oidcConfigured: false,
+            oidcClientSecretSet: false,
+            providerKeys: [],
+            metadataSourceConfigured: false,
+            ...serverDefaults,
+          });
+          const secret = await fetch(`${base}/api/settings`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ oidcClientSecret: "oidc-secret-value" }),
+          });
+          expect(secret.status).toBe(200);
+          const secretText = await secret.text();
+          expect(secretText).not.toContain("oidc-secret-value");
+          expect(JSON.parse(secretText)).toMatchObject({
+            oidcConfigured: false,
+            oidcClientSecretSet: true,
+          });
+          const bad = await fetch(`${base}/api/settings`, {
+            method: "PATCH",
+            headers,
+            body: JSON.stringify({ trustedProxyAddresses: ["not-an-ip"] }),
+          });
+          expect(bad.status).toBe(400);
+          const keyed = await client.settings.setProviderKey({
+            name: "tmdb",
+            value: "secret",
+          });
+          expect(keyed.providerKeys).toEqual(["tmdb"]);
+          const removed = await client.settings.deleteProviderKey({
+            name: "tmdb",
+          });
+          expect(removed.providerKeys).toEqual([]);
+          const missing = await capture(
+            client.settings.deleteProviderKey({ name: "tmdb" }),
+          );
+          expect(missing.code).toBe("NOT_FOUND");
+        } finally {
+          await server.stop();
+        }
       } finally {
-        await server.stop();
+        if (tmdbEnv === undefined) delete Bun.env.TMDB_API_KEY;
+        else Bun.env.TMDB_API_KEY = tmdbEnv;
+      }
+    }));
+
+  test("settings say whether a metadata source is configured", () =>
+    withDatabase(async (db, url) => {
+      const tmdbEnv = Bun.env.TMDB_API_KEY;
+      delete Bun.env.TMDB_API_KEY;
+      try {
+        await migrateDatabase(db);
+        const { token } = await seed(db);
+        const server = await startThalia("api", { databaseUrl: url, port: 0 });
+        try {
+          const base = `http://127.0.0.1:${server.apiServer?.port}`;
+          const client = createThaliaClient({
+            origin: base,
+            headers: { authorization: `Bearer ${token}` },
+          });
+          expect((await client.settings.get()).metadataSourceConfigured).toBe(
+            false,
+          );
+          expect(
+            (
+              await client.settings.setProviderKey({
+                name: "tmdb",
+                value: "provider-secret-value",
+              })
+            ).metadataSourceConfigured,
+          ).toBe(true);
+          expect((await client.settings.get()).metadataSourceConfigured).toBe(
+            true,
+          );
+          expect(
+            (await client.settings.deleteProviderKey({ name: "tmdb" }))
+              .metadataSourceConfigured,
+          ).toBe(false);
+        } finally {
+          await server.stop();
+        }
+      } finally {
+        if (tmdbEnv === undefined) delete Bun.env.TMDB_API_KEY;
+        else Bun.env.TMDB_API_KEY = tmdbEnv;
       }
     }));
 
