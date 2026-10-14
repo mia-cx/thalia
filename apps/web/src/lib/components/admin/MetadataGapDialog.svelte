@@ -39,6 +39,9 @@ let loading = $state(false);
 let failure = $state<ReturnType<typeof readFailure> | undefined>(undefined);
 let refreshed = $state(new Set<string>());
 
+/** The operation that produced the current failure, for Try again. */
+let retry = $state<(() => Promise<void>) | undefined>(undefined);
+
 // Opening or closing bumps this; a request that answered for an older
 // generation is dropped, so a slow first page can't overwrite a new opening.
 let generation = 0;
@@ -51,26 +54,89 @@ const serial = serialQueue();
 // frees the queue instead of blocking the next opening's first page.
 let controller = new AbortController();
 
-async function loadMore() {
+// Loading a page and what its failure retries. Each variant captures its own
+// inputs so a retry repeats the attempted request, not the current state.
+async function fetchPage(
+  gapKey: MetadataGap,
+  after: string | null,
+  signal: AbortSignal,
+  limit?: number,
+) {
+  return client.libraries.metadataGapItems(
+    {
+      libraryId,
+      gap: gapKey,
+      ...(after === null ? {} : { cursor: after }),
+      ...(limit === undefined ? {} : { limit }),
+    },
+    { signal },
+  );
+}
+
+/** The first page on open; replaces the list. */
+async function loadFirst() {
   if (gap === undefined) return;
   const ticket = generation;
   const gapKey = gap.key;
-  const after = cursor;
   const signal = controller.signal;
   loading = true;
   try {
-    const page = await client.libraries.metadataGapItems(
-      {
-        libraryId,
-        gap: gapKey,
-        ...(after === null ? {} : { cursor: after }),
-      },
-      { signal },
-    );
+    const page = await fetchPage(gapKey, null, signal);
+    if (ticket !== generation) return;
+    items = [...page.items];
+    cursor = page.cursor;
+    failure = undefined;
+    retry = undefined;
+  } catch (error) {
+    if (ticket === generation) {
+      failure = readFailure(error);
+      retry = loadFirst;
+    }
+  } finally {
+    if (ticket === generation) loading = false;
+  }
+}
+
+/** The next page; a no-op once the list is fully loaded. */
+async function showMore() {
+  if (gap === undefined) return;
+  const after = cursor;
+  if (after === null) return;
+  const ticket = generation;
+  const gapKey = gap.key;
+  const signal = controller.signal;
+  loading = true;
+  try {
+    const page = await fetchPage(gapKey, after, signal);
     if (ticket !== generation) return;
     items = [...items, ...page.items];
     cursor = page.cursor;
     failure = undefined;
+    retry = undefined;
+  } catch (error) {
+    if (ticket === generation) {
+      failure = readFailure(error);
+      // Retry the page that failed, not whatever cursor is current then.
+      retry = () => showMoreAt(after);
+    }
+  } finally {
+    if (ticket === generation) loading = false;
+  }
+}
+
+/** One specific page again, after its earlier fetch failed. */
+async function showMoreAt(after: string) {
+  if (gap === undefined) return;
+  const ticket = generation;
+  const signal = controller.signal;
+  loading = true;
+  try {
+    const page = await fetchPage(gap.key, after, signal);
+    if (ticket !== generation) return;
+    items = [...items, ...page.items];
+    cursor = page.cursor;
+    failure = undefined;
+    retry = undefined;
   } catch (error) {
     if (ticket === generation) failure = readFailure(error);
   } finally {
@@ -94,15 +160,7 @@ async function reconcile() {
   let after: string | null = null;
   try {
     do {
-      const page = await client.libraries.metadataGapItems(
-        {
-          libraryId,
-          gap: gapKey,
-          limit: reconcilePageSize,
-          ...(after === null ? {} : { cursor: after }),
-        },
-        { signal },
-      );
+      const page = await fetchPage(gapKey, after, signal, reconcilePageSize);
       next.push(...page.items);
       after = page.cursor;
       if (ticket !== generation) return;
@@ -110,8 +168,13 @@ async function reconcile() {
     items = next;
     cursor = after;
     failure = undefined;
+    retry = undefined;
   } catch (error) {
-    if (ticket === generation) failure = readFailure(error);
+    // Rows already loaded stay on screen; Try again runs reconcile afresh.
+    if (ticket === generation) {
+      failure = readFailure(error);
+      retry = reconcile;
+    }
   }
 }
 
@@ -159,8 +222,9 @@ $effect(() => {
     loading = true;
     refreshed = new Set();
     failure = undefined;
+    retry = undefined;
     seenRevision = revision;
-    void serial(loadMore);
+    void serial(loadFirst);
   });
 });
 
@@ -235,14 +299,17 @@ $effect(() => {
         {#if cursor !== null}
           <Button
             variant="secondary"
-            onclick={() => void serial(loadMore)}
+            onclick={() => void serial(showMore)}
             disabled={loading}>Show more</Button
           >
         {/if}
         {#if failure}
           <Button
             variant="secondary"
-            onclick={() => void serial(loadMore)}
+            onclick={() => {
+              const operation = retry;
+              if (operation !== undefined) void serial(operation);
+            }}
             disabled={loading}>Try again</Button
           >
         {/if}
