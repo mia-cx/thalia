@@ -61,6 +61,18 @@ async function capture(promise: Promise<unknown>) {
   throw new Error("Expected the client call to reject.");
 }
 
+/** Runs `run` with TMDB_API_KEY unset, so only stored keys configure metadata. */
+async function withoutTmdbEnv<T>(run: () => Promise<T>): Promise<T> {
+  const saved = Bun.env.TMDB_API_KEY;
+  delete Bun.env.TMDB_API_KEY;
+  try {
+    return await run();
+  } finally {
+    if (saved === undefined) delete Bun.env.TMDB_API_KEY;
+    else Bun.env.TMDB_API_KEY = saved;
+  }
+}
+
 describe.skipIf(!databaseUrl)("admin api", () => {
   test("setup.status answers before and after the first admin", () =>
     withDatabase(async (db, url) => {
@@ -506,10 +518,8 @@ describe.skipIf(!databaseUrl)("admin api", () => {
     }));
 
   test("settings.get reports configuration without any secret", () =>
-    withDatabase(async (db, url) => {
-      const tmdbEnv = Bun.env.TMDB_API_KEY;
-      delete Bun.env.TMDB_API_KEY;
-      try {
+    withDatabase((db, url) =>
+      withoutTmdbEnv(async () => {
         await migrateDatabase(db);
         const { admin, token } = await seed(db);
         await db.insert(settings).values({
@@ -539,7 +549,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
             oidcConfigured: true,
             oidcClientSecretSet: true,
             providerKeys: ["tmdb"],
-            metadataSourceConfigured: true,
+            metadataMediums: ["movies"],
             ...serverDefaults,
           });
           const client = createThaliaClient({ origin: base, headers });
@@ -547,17 +557,12 @@ describe.skipIf(!databaseUrl)("admin api", () => {
         } finally {
           await server.stop();
         }
-      } finally {
-        if (tmdbEnv === undefined) delete Bun.env.TMDB_API_KEY;
-        else Bun.env.TMDB_API_KEY = tmdbEnv;
-      }
-    }));
+      }),
+    ));
 
   test("settings mutations write proxies and provider keys", () =>
-    withDatabase(async (db, url) => {
-      const tmdbEnv = Bun.env.TMDB_API_KEY;
-      delete Bun.env.TMDB_API_KEY;
-      try {
+    withDatabase((db, url) =>
+      withoutTmdbEnv(async () => {
         await migrateDatabase(db);
         const { token } = await seed(db);
         const server = await startThalia("api", { databaseUrl: url, port: 0 });
@@ -578,7 +583,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
             oidcConfigured: false,
             oidcClientSecretSet: false,
             providerKeys: [],
-            metadataSourceConfigured: false,
+            metadataMediums: [],
             ...serverDefaults,
           });
           const secret = await fetch(`${base}/api/settings`, {
@@ -615,17 +620,12 @@ describe.skipIf(!databaseUrl)("admin api", () => {
         } finally {
           await server.stop();
         }
-      } finally {
-        if (tmdbEnv === undefined) delete Bun.env.TMDB_API_KEY;
-        else Bun.env.TMDB_API_KEY = tmdbEnv;
-      }
-    }));
+      }),
+    ));
 
-  test("settings say whether a metadata source is configured", () =>
-    withDatabase(async (db, url) => {
-      const tmdbEnv = Bun.env.TMDB_API_KEY;
-      delete Bun.env.TMDB_API_KEY;
-      try {
+  test("settings list the mediums a metadata source covers", () =>
+    withDatabase((db, url) =>
+      withoutTmdbEnv(async () => {
         await migrateDatabase(db);
         const { token } = await seed(db);
         const server = await startThalia("api", { databaseUrl: url, port: 0 });
@@ -635,32 +635,36 @@ describe.skipIf(!databaseUrl)("admin api", () => {
             origin: base,
             headers: { authorization: `Bearer ${token}` },
           });
-          expect((await client.settings.get()).metadataSourceConfigured).toBe(
-            false,
-          );
+          expect((await client.settings.get()).metadataMediums).toEqual([]);
           expect(
             (
               await client.settings.setProviderKey({
                 name: "tmdb",
                 value: "provider-secret-value",
               })
-            ).metadataSourceConfigured,
-          ).toBe(true);
-          expect((await client.settings.get()).metadataSourceConfigured).toBe(
-            true,
-          );
+            ).metadataMediums,
+          ).toEqual(["movies"]);
+          expect(
+            (
+              await client.settings.setProviderKey({
+                name: "tvdb",
+                value: "provider-secret-value",
+              })
+            ).metadataMediums,
+          ).toEqual(["movies", "shows"]);
+          expect((await client.settings.get()).metadataMediums).toEqual([
+            "movies",
+            "shows",
+          ]);
           expect(
             (await client.settings.deleteProviderKey({ name: "tmdb" }))
-              .metadataSourceConfigured,
-          ).toBe(false);
+              .metadataMediums,
+          ).toEqual(["shows"]);
         } finally {
           await server.stop();
         }
-      } finally {
-        if (tmdbEnv === undefined) delete Bun.env.TMDB_API_KEY;
-        else Bun.env.TMDB_API_KEY = tmdbEnv;
-      }
-    }));
+      }),
+    ));
 
   test("settings set the global cap and the idle window, which rebooks waiting store jobs", () =>
     withDatabase(async (db, url) => {

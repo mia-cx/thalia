@@ -21,6 +21,18 @@ const dialogGone =
 const clickButton = (label: string, scope = "document") =>
   `[...${scope}.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(label)})?.click()`;
 
+/** Runs `run` with TMDB_API_KEY unset, so only stored keys configure metadata. */
+async function withoutTmdbEnv<T>(run: () => Promise<T>): Promise<T> {
+  const saved = Bun.env.TMDB_API_KEY;
+  delete Bun.env.TMDB_API_KEY;
+  try {
+    return await run();
+  } finally {
+    if (saved === undefined) delete Bun.env.TMDB_API_KEY;
+    else Bun.env.TMDB_API_KEY = saved;
+  }
+}
+
 describe.skipIf(!databaseUrl || browser === undefined)(
   "libraries admin page",
   () => {
@@ -195,11 +207,9 @@ describe.skipIf(!databaseUrl || browser === undefined)(
       "the admin says when no metadata source is set up",
       () =>
         withFolder((folder) =>
-          withDatabase(async (db, url) => {
-            if (browser === undefined) throw new Error("Expected a browser.");
-            const tmdbEnv = Bun.env.TMDB_API_KEY;
-            delete Bun.env.TMDB_API_KEY;
-            try {
+          withDatabase((db, url) =>
+            withoutTmdbEnv(async () => {
+              if (browser === undefined) throw new Error("Expected a browser.");
               await migrateDatabase(db);
               await setupAdmin(db, {
                 username: "admin",
@@ -283,22 +293,38 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 });
                 await signIn(page, base, token, "/admin/settings");
                 await page.waitFor(
-                  "[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Remove')",
+                  'document.body.innerText.includes("until you add a key named tvdb")',
                 );
                 expect(
                   await page.eval<boolean>(
                     "document.body.innerText.includes('No metadata source is set up')",
                   ),
                 ).toBe(false);
+
+                // Only shows lack a source now, so the footnote follows Medium.
+                await signIn(page, base, token, "/admin/libraries/new");
+                await click("#libraryMedium");
+                await page.waitFor(
+                  "[...document.querySelectorAll('[data-slot=select-item]')].some(i => i.textContent.trim() === 'Shows')",
+                );
+                await click("[data-slot=select-item]", "Shows");
+                await page.waitFor(
+                  "document.body.innerText.includes('add a TVDB key')",
+                );
+                await click("#libraryMedium");
+                await page.waitFor(
+                  "[...document.querySelectorAll('[data-slot=select-item]')].some(i => i.textContent.trim() === 'Movies')",
+                );
+                await click("[data-slot=select-item]", "Movies");
+                await page.waitFor(
+                  '!document.body.innerText.includes("posters and details won\'t load")',
+                );
               } finally {
                 await page.close();
                 await server.stop();
               }
-            } finally {
-              if (tmdbEnv === undefined) delete Bun.env.TMDB_API_KEY;
-              else Bun.env.TMDB_API_KEY = tmdbEnv;
-            }
-          }),
+            }),
+          ),
         ),
       60_000,
     );
