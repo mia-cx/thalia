@@ -433,6 +433,13 @@ export async function planPlayback(
     qualityRung === undefined
       ? input.profile
       : boxProfile(input.profile, qualityRung);
+  const hlsProfile = { ...input.profile, ...input.profile.hlsCodecs };
+  const storedProfile =
+    input.profile.hlsCodecs === undefined
+      ? profile
+      : qualityRung === undefined
+        ? hlsProfile
+        : boxProfile(hlsProfile, qualityRung);
   const userPlayback = await userPlaybackSettings(db, caller.user.id);
   const caps: PlaybackCaps = {
     globalDefault: playbackSettings.bitrateCapBps,
@@ -484,7 +491,7 @@ export async function planPlayback(
   const pickedStored =
     input.quality === "original" || !storedEligible
       ? []
-      : pickStored(profile, caps, decision?.method ?? null).variantIds;
+      : pickStored(storedProfile, caps, decision?.method ?? null).variantIds;
   // Prefer direct stream trades the stored adaptive group for one live
   // progressive stream of the best passing Version, but only when the client
   // profile accepts progressive delivery and a live decision exists to serve.

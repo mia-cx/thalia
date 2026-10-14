@@ -19,6 +19,7 @@ import {
   withDatabase,
 } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
+import { readDeviceProfile } from "../jellyfin/profile.ts";
 import { scanDirectory } from "../libraries/scan.ts";
 import { planPlayback } from "../playback/planning.ts";
 import {
@@ -26,6 +27,7 @@ import {
   fixtureFolder,
   fixturePath,
   scanFolder,
+  twoRungPolicy,
   withStoredLibrary,
 } from "./testing.ts";
 
@@ -49,6 +51,87 @@ const threeRungs: JsonObject = {
 };
 
 describe.skipIf(!databaseUrl)("stored playback", () => {
+  test(
+    "dual-transport clients keep their HLS codecs when selecting stored rungs",
+    () =>
+      withDatabase(async (db) => {
+        await migrateDatabase(db);
+        const admin = await setupAdmin(db, {
+          username: "admin",
+          password: "admin-pass",
+        });
+        const { token } = await createApiKey(db, admin.id, "player");
+        const caller = await authenticate(db, token);
+        await withStoredLibrary(
+          db,
+          twoRungPolicy,
+          async ({ library, itemId, version }) => {
+            await scanFolder(db, library.id);
+            await drain(db);
+            const stored = await db
+              .select({ id: versions.id, rung: versions.rung })
+              .from(versions)
+              .where(eq(versions.origin, "stored"));
+            expect(stored).toHaveLength(2);
+            const http = {
+              Type: "Video",
+              Protocol: "http",
+              Container: "mp4",
+              VideoCodec: "h264",
+              AudioCodec: "aac",
+            };
+            const hls = {
+              ...http,
+              Protocol: "hls",
+              VideoCodec: "hevc,h264",
+            };
+            const plan = async (
+              transcodingProfiles: (typeof http)[],
+              quality?: string,
+            ) => {
+              const result = await planPlayback(
+                db,
+                caller,
+                {
+                  itemId,
+                  versionId: version.id,
+                  profile: readDeviceProfile({
+                    TranscodingProfiles: transcodingProfiles,
+                  }),
+                  quality,
+                },
+                {
+                  request: new Request("http://thalia.test/playback/plan"),
+                  peerAddress: "127.0.0.1",
+                },
+              );
+              const [session] = await db
+                .select({ decision: sessionRegistry.decision })
+                .from(sessionRegistry)
+                .where(eq(sessionRegistry.id, result.sessionId ?? ""));
+              return { result, decision: session?.decision };
+            };
+            const dual = await plan([http, hls]);
+            expect(dual.result.delivery).toBe("hls");
+            // Adaptive groups keep one codec family. HEVC wins at source
+            // quality; the H.264 rung remains available at 360p.
+            expect(dual.decision?.storedVariantIds).toEqual([
+              stored.find((row) => row.rung === "source")?.id ?? "",
+            ]);
+            const boxed = await plan([http, hls], "360p");
+            expect(boxed.decision?.storedVariantIds).toEqual([
+              stored.find((row) => row.rung === "360p")?.id ?? "",
+            ]);
+            const httpOnly = await plan([http]);
+            expect(httpOnly.result.delivery).toBe("progressive");
+            expect(httpOnly.decision?.storedVariantIds).toBeUndefined();
+          },
+          { videoCodec: "hevc", subtitles: [] },
+        );
+      }),
+    120_000,
+  );
+
   test(
     "plans complete stored rungs as variants served from disk, else falls back to the live path",
     () =>

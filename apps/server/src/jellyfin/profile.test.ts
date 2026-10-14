@@ -31,6 +31,7 @@ describe("DeviceProfile translation", () => {
   test("an HLS-only client opens no files and decodes its transcoding codecs", () => {
     const profile = readDeviceProfile(deviceProfiles.swiftfin);
     expect(profile.containers).toEqual([]);
+    expect(profile.hlsCodecs).toBeUndefined();
     expect(profile.videoCodecs).toEqual([
       {
         codec: "h264",
@@ -60,6 +61,7 @@ describe("DeviceProfile translation", () => {
     const profile = readDeviceProfile(deviceProfiles.progressive);
     expect(profile.progressive).toBe(true);
     expect(profile.hls).toBe(false);
+    expect(profile.hlsCodecs).toBeUndefined();
     expect(profile.videoCodecs.map((entry) => entry.codec)).toEqual(["h264"]);
     expect(profile.audioCodecs.map((entry) => entry.codec)).toEqual(["aac"]);
     // HLS-only and direct-play fixtures stay on HLS delivery.
@@ -81,8 +83,8 @@ describe("DeviceProfile translation", () => {
           Type: "Video",
           Protocol: "hls",
           Container: "mp4",
-          VideoCodec: "hevc",
-          AudioCodec: "aac",
+          VideoCodec: "h264,hevc",
+          AudioCodec: "aac,ac3",
         },
         {
           Type: "Video",
@@ -92,10 +94,43 @@ describe("DeviceProfile translation", () => {
           AudioCodec: "aac",
         },
       ],
+      CodecProfiles: [
+        {
+          Type: "Video",
+          Codec: "h264,hevc",
+          Conditions: [
+            { Condition: "LessThanEqual", Property: "Height", Value: "1080" },
+          ],
+        },
+        {
+          Type: "Audio",
+          Codec: "aac,ac3",
+          Conditions: [
+            {
+              Condition: "LessThanEqual",
+              Property: "AudioChannels",
+              Value: "2",
+            },
+          ],
+        },
+      ],
     });
     expect(mixed.progressive).toBe(true);
     expect(mixed.hls).toBe(true);
     expect(mixed.videoCodecs.map((entry) => entry.codec)).toEqual(["h264"]);
+    expect(mixed.hlsCodecs?.videoCodecs.map((entry) => entry.codec)).toEqual([
+      "h264",
+      "hevc",
+    ]);
+    expect(mixed.videoCodecs[0]?.maxHeight).toBe(1080);
+    expect(
+      mixed.hlsCodecs?.videoCodecs.map((entry) => entry.maxHeight),
+    ).toEqual([1080, 1080]);
+    expect(mixed.audioCodecs).toEqual([{ codec: "aac", maxChannels: 2 }]);
+    expect(mixed.hlsCodecs?.audioCodecs).toEqual([
+      { codec: "aac", maxChannels: 2 },
+      { codec: "ac3", maxChannels: 2 },
+    ]);
     // An http profile that outputs no mp4 never turns progressive on.
     const mkvOnly = readDeviceProfile({
       DirectPlayProfiles: [],
