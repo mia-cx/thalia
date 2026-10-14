@@ -479,15 +479,13 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
           still: 1,
         });
 
-        const noPoster = gapMovies["NoPoster"];
+        const noPoster = gapMovies.NoPoster;
         if (noPoster === undefined) throw new Error("Fixture missing.");
         const posterItems = await client.libraries.metadataGapItems({
           libraryId: movies.id,
           gap: "poster",
         });
-        expect(posterItems.items.map((item) => item.id)).toEqual([
-          noPoster.id,
-        ]);
+        expect(posterItems.items.map((item) => item.id)).toEqual([noPoster.id]);
         expect(posterItems.items[0]).toMatchObject({
           kind: "movie",
           title: "NoPoster",
