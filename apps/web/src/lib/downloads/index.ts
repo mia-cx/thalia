@@ -1,10 +1,11 @@
 import {
   createDownloads,
-  type DownloadRecord,
+  type DownloadInput,
   type Downloads,
 } from "./store.ts";
 
 export {
+  type DownloadInput,
   type DownloadRecord,
   type DownloadState,
   type DownloadStream,
@@ -23,6 +24,11 @@ function downloads_(): Downloads {
       root: () => navigator.storage.getDirectory(),
       fetch: ((input, init) => fetch(input, init)) as typeof fetch,
       storage: navigator.storage,
+      locks: "locks" in navigator ? navigator.locks : undefined,
+      channel:
+        typeof BroadcastChannel === "undefined"
+          ? undefined
+          : new BroadcastChannel("thalia-downloads"),
     });
   return instance;
 }
@@ -31,8 +37,7 @@ function downloads_(): Downloads {
 export const downloads: Downloads = {
   subscribe: (...args) => downloads_().subscribe(...args),
   restore: () => downloads_().restore(),
-  start: (input: Omit<DownloadRecord, "written" | "state">) =>
-    downloads_().start(input),
+  start: (input: DownloadInput) => downloads_().start(input),
   pause: (versionId) => downloads_().pause(versionId),
   resume: (versionId) => downloads_().resume(versionId),
   remove: (versionId) => downloads_().remove(versionId),
