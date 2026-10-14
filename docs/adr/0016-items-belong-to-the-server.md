@@ -22,6 +22,10 @@ This amends ADR 0015's chain. An Item's chain runs up through its parent Items t
 
 So a movie in Movies and Kids is visible to anyone allowed into either, through the copies in the Libraries they may open. To hide a film from someone regardless of where its copies live, put the rule on the Item.
 
+## Jellyfin translation layer
+
+Jellyfin's model has Library-owned items, and Infuse and the other clients depend on it. The translation layer therefore presents one Jellyfin item per Item and Library: its media sources are the Item's Versions in that Library only, and a show lists only the Seasons and Episodes with Versions in that Library. Its id is derived from the Item and the Library, so it is stable across scans. Progress, played, favourite and rating marks read and write the server Item, so watching a film through one Library marks it watched in the other. Thalia's own API and app use server-owned Items directly.
+
 ## Consequences
 
 Two Items merge whenever a provider id lands on an Item while another already holds it, which happens in normal operation: an untagged copy is scanned before its metadata match resolves. The merge moves every Version and File to the surviving Item. Per-user state keeps the most recently updated progress and rating and keeps a favourite if either Item had one.
