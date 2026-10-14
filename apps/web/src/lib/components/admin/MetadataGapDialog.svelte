@@ -7,6 +7,7 @@ import Failure from "$lib/components/Failure.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Dialog from "$lib/components/ui/dialog/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { serialQueue } from "$lib/serial.ts";
 import {
   formatCount,
   type MetadataGap,
@@ -42,6 +43,10 @@ let refreshed = $state(new Set<string>());
 // generation is dropped, so a slow first page can't overwrite a new opening.
 let generation = 0;
 
+// Page loads and reconciles run through one queue so they never interleave:
+// a late Show more can't append onto a reconciled list, and the reverse.
+const serial = serialQueue();
+
 async function loadMore() {
   if (gap === undefined) return;
   const ticket = generation;
@@ -68,6 +73,9 @@ async function loadMore() {
 // While open, a library.changed bumps `revision` and the list reconciles from
 // the first page: enough pages to cover what was loaded, then one assignment
 // so nothing flashes and Show more keeps paging from a consistent cursor.
+// The server's largest page: reconciles fetch few, wide pages.
+const reconcilePageSize = 100;
+
 async function reconcile() {
   if (gap === undefined) return;
   const ticket = generation;
@@ -80,7 +88,7 @@ async function reconcile() {
       const page = await client.libraries.metadataGapItems({
         libraryId,
         gap: gapKey,
-        limit: 100,
+        limit: reconcilePageSize,
         ...(after === null ? {} : { cursor: after }),
       });
       next.push(...page.items);
@@ -95,25 +103,16 @@ async function reconcile() {
   }
 }
 
-// Reconciles serialize with each other and don't trample a Show more in
-// flight: one runs at a time, a bump during it schedules one more pass.
-const reconciling = { running: false, dirty: false };
+// Reconcile bumps collapse into at most one queued run at a time; a bump
+// during a running reconcile queues exactly one more behind it.
+let reconcileQueued = false;
 function requestReconcile() {
-  if (reconciling.running) {
-    reconciling.dirty = true;
-    return;
-  }
-  reconciling.running = true;
-  void (async () => {
-    try {
-      do {
-        reconciling.dirty = false;
-        await reconcile();
-      } while (reconciling.dirty);
-    } finally {
-      reconciling.running = false;
-    }
-  })();
+  if (reconcileQueued) return;
+  reconcileQueued = true;
+  void serial(async () => {
+    reconcileQueued = false;
+    await reconcile();
+  });
 }
 
 async function refresh(item: MetadataGapItem) {
@@ -141,10 +140,13 @@ $effect(() => {
   untrack(() => {
     items = [];
     cursor = null;
+    // A first page is always queued below; start loading so the empty state
+    // doesn't flash before it runs.
+    loading = true;
     refreshed = new Set();
     failure = undefined;
     seenRevision = revision;
-    void loadMore();
+    void serial(loadMore);
   });
 });
 
@@ -217,13 +219,17 @@ $effect(() => {
     {#if cursor !== null || failure}
       <Dialog.Footer>
         {#if cursor !== null}
-          <Button variant="secondary" onclick={loadMore} disabled={loading}
-            >Show more</Button
+          <Button
+            variant="secondary"
+            onclick={() => void serial(loadMore)}
+            disabled={loading}>Show more</Button
           >
         {/if}
         {#if failure}
-          <Button variant="secondary" onclick={loadMore} disabled={loading}
-            >Try again</Button
+          <Button
+            variant="secondary"
+            onclick={() => void serial(loadMore)}
+            disabled={loading}>Try again</Button
           >
         {/if}
       </Dialog.Footer>

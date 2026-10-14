@@ -341,15 +341,15 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await page.eval(
               "[...document.querySelectorAll('button')].find(b => b.textContent.includes('No backdrop'))?.click()",
             );
-            await page.waitFor(
-              "[...document.querySelectorAll('[data-slot=dialog-content] a')].length === 1",
-            );
-
-            // Release the stale response; the list must stay the backdrop gap's.
+            // Release the stale response while the new opening loads; the list
+            // must still end up the backdrop gap's, with no duplicates.
             await page.send("Fetch.continueRequest", {
               requestId: held[0]?.requestId,
             });
-            await Bun.sleep(800);
+            await page.waitFor(
+              "[...document.querySelectorAll('[data-slot=dialog-content] a')].length === 1",
+            );
+            await Bun.sleep(400);
             const titles = await page.eval<string[]>(
               "[...document.querySelectorAll('[data-slot=dialog-content] a')].map(a => a.textContent.trim())",
             );
