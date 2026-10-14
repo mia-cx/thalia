@@ -12,7 +12,11 @@ import { alias } from "drizzle-orm/pg-core";
 import type { Schema } from "effect";
 import { Effect } from "effect";
 import { AuthError } from "../auth/errors.ts";
-import { requirePermission, viewableLibraryIds } from "../auth/permissions.ts";
+import {
+  checkPermission,
+  requirePermission,
+  viewableLibraryIds,
+} from "../auth/permissions.ts";
 import type { authenticate } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import {
@@ -20,9 +24,11 @@ import {
   contributors,
   credits,
   episodes,
+  files,
   items,
   progress,
   seasons,
+  streams,
   versions,
 } from "../db/schema/index.ts";
 import { ApiError, fromHost } from "./errors.ts";
@@ -245,8 +251,8 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
         id,
       }),
     );
-    const [[detail], itemCredits, itemVersions, children] = yield* fromHost(
-      () =>
+    const [[detail], itemCredits, itemVersions, children, canDownload] =
+      yield* fromHost(() =>
         Promise.all([
           db.select(detailFields).from(items).where(eq(items.id, id)),
           db
@@ -284,9 +290,56 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
             asc(items.title),
             asc(items.id),
           ]),
+          checkPermission(db, caller.user.id, "download", {
+            type: "library",
+            id: card.libraryId,
+          }),
         ]),
-    );
+      );
     if (!detail) return yield* new ApiError({ code: "NOT_FOUND" });
+    const versionIds = itemVersions.map((version) => version.id);
+    const [versionFiles, versionStreams] = yield* fromHost(() =>
+      versionIds.length === 0
+        ? Promise.all([Promise.resolve([]), Promise.resolve([])])
+        : Promise.all([
+            db
+              .select({
+                versionId: files.versionId,
+                container: files.container,
+              })
+              .from(files)
+              .where(inArray(files.versionId, versionIds))
+              .orderBy(asc(files.order)),
+            db
+              .select({
+                versionId: streams.versionId,
+                index: streams.index,
+                kind: streams.kind,
+                codec: streams.codec,
+                profile: streams.profile,
+                language: streams.language,
+                title: streams.title,
+                channels: streams.channels,
+                width: streams.width,
+                height: streams.height,
+                hdr: streams.hdr,
+                disposition: streams.disposition,
+              })
+              .from(streams)
+              .where(inArray(streams.versionId, versionIds))
+              .orderBy(asc(streams.index)),
+          ]),
+    );
+    const containerOf = new Map<string, string | null>();
+    for (const file of versionFiles)
+      if (!containerOf.has(file.versionId))
+        containerOf.set(file.versionId, file.container);
+    const streamsOf = new Map<string, typeof versionStreams>();
+    for (const stream of versionStreams) {
+      const list = streamsOf.get(stream.versionId) ?? [];
+      list.push(stream);
+      streamsOf.set(stream.versionId, list);
+    }
     const enriched = yield* fromHost(async () => {
       if (children.length === 0) return [];
       const ids = children.map((child) => child.id);
@@ -345,10 +398,19 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
       ...card,
       ...detail,
       credits: itemCredits,
+      canDownload,
       // JSON has no bigint; a byte count stays exact below 2^53.
       versions: itemVersions.map((version) => ({
         ...version,
         bytes: Number(version.bytes),
+        container: containerOf.get(version.id) ?? null,
+        streams: (streamsOf.get(version.id) ?? []).map(
+          ({ versionId, disposition, ...stream }) => ({
+            ...stream,
+            default: disposition.default === true,
+            forced: disposition.forced === true,
+          }),
+        ),
       })),
       children: enriched,
     };
