@@ -26,7 +26,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
       () =>
         withDatabase(async (db, url) => {
           if (browser === undefined) throw new Error("Expected a browser.");
-          const admin = await setupAdmin(db, {
+          await setupAdmin(db, {
             username: "admin",
             password: "admin-pass",
           });
