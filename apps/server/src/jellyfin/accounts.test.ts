@@ -7,6 +7,7 @@ import { checkPermission } from "../auth/permissions.ts";
 import { issueSession } from "../auth/sessions.ts";
 import { accessRules, users } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
+import { createLibrary } from "../libraries/service.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { createJellyfinHandler } from "./http.ts";
 import { jellyfinRoutes } from "./routes.ts";
@@ -334,6 +335,18 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
           { libraryId: deniedFolder.id, action: "view", allowed: false },
         ]),
       );
+      const later = await createLibrary(db, seed.admin.id, {
+        name: "Later",
+        medium: "movies",
+        roots: ["/later"],
+      });
+      for (const action of ["view", "play", "download"] as const)
+        expect(
+          await checkPermission(db, seed.viewer.id, action, {
+            type: "library",
+            id: later.id,
+          }),
+        ).toBe(false);
       expect(
         (
           await call(`/Users/${seed.viewer.id}/Policy`, admin, {
@@ -347,6 +360,12 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
           (rule) => rule.userId === seed.viewer.id && rule.libraryId !== null,
         ),
       ).toEqual([]);
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: later.id,
+        }),
+      ).toBe(true);
       await setLibraryAccess(db, seed.admin.id, {
         libraryId: deniedFolder.id,
         userId: seed.viewer.id,

@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm";
 import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
+import { initializeLibraryRules } from "../auth/folders.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import type { JsonValue } from "../db/schema/common.ts";
@@ -210,6 +211,7 @@ export async function createLibrary(
       .values({ name, medium: input.medium })
       .returning(fields);
     if (!library) throw new Error("Library insert returned no row.");
+    await initializeLibraryRules(tx, library.id);
     await tx.insert(libraryRoots).values(
       paths.map((path, position) => ({
         libraryId: library.id,

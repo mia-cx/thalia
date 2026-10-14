@@ -1,12 +1,10 @@
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import type { JsonValue } from "../db/schema/common.ts";
 import {
   type Action,
-  accessRules,
   actions,
   groups,
-  libraries,
   sessions,
   settings,
   userGroups,
@@ -15,6 +13,11 @@ import {
 import { hashLocalPassword, publicUserFields } from "./accounts.ts";
 import { readUserAccess, writeUserSettings } from "./admin.ts";
 import { AuthError, postgresCode } from "./errors.ts";
+import {
+  folderRuleSettingKey,
+  lockFolderRules,
+  setFolderRules,
+} from "./folders.ts";
 import { requireAdmin, setPermissionOverride } from "./permissions.ts";
 
 /** Authorizes account and preference access for the owner or a built-in administrator. */
@@ -191,42 +194,15 @@ export async function updateAccountAccess(
       .for("update");
     if (admins === undefined) throw new Error("Seeded admins group missing.");
     await requireAdmin(tx, actorId);
+    if (input.enabledFolders !== undefined) await lockFolderRules(tx);
     const [target] = await tx
       .select({ id: users.id })
       .from(users)
       .where(eq(users.id, userId))
       .for("update");
     if (target === undefined) throw new AuthError("NOT_FOUND");
-    if (input.enabledFolders !== undefined) {
-      const folders = await tx.select({ id: libraries.id }).from(libraries);
-      if (
-        input.enabledFolders !== "all" &&
-        input.enabledFolders.some(
-          (id) => !folders.some((folder) => folder.id === id),
-        )
-      )
-        throw new AuthError("NOT_FOUND");
-      await tx
-        .delete(accessRules)
-        .where(
-          and(
-            eq(accessRules.userId, userId),
-            eq(accessRules.action, "view"),
-            sql`${accessRules.libraryId} is not null`,
-          ),
-        );
-      if (input.enabledFolders !== "all" && folders.length) {
-        const enabled = input.enabledFolders;
-        await tx.insert(accessRules).values(
-          folders.map((folder) => ({
-            userId,
-            libraryId: folder.id,
-            action: "view" as const,
-            allowed: enabled.includes(folder.id),
-          })),
-        );
-      }
-    }
+    if (input.enabledFolders !== undefined)
+      await setFolderRules(tx, target.id, input.enabledFolders);
     for (const permission of actions) {
       const allowed = input.permissionOverrides?.[permission];
       if (allowed !== undefined)
@@ -318,7 +294,12 @@ export async function removeAccount(
     if (disabled === undefined) {
       await tx
         .delete(settings)
-        .where(sql`${settings.key} like ${`client.preferences.${userId}.%`}`);
+        .where(
+          or(
+            sql`${settings.key} like ${`client.preferences.${userId}.%`}`,
+            eq(settings.key, folderRuleSettingKey(target.id)),
+          ),
+        );
       await tx.delete(users).where(eq(users.id, userId));
       return;
     }

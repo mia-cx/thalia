@@ -1,5 +1,6 @@
 import { server } from "../auth/access.ts";
 import { readUserAccess } from "../auth/admin.ts";
+import { hasRestrictedFolders } from "../auth/folders.ts";
 import { checkPermission, viewableLibraryIds } from "../auth/permissions.ts";
 import { readAccount, readClientPreference } from "../auth/profile.ts";
 import {
@@ -39,7 +40,10 @@ export async function userDto(db: Database, user: User, serverId: string) {
     checkPermission(db, user.id, "subtitles:edit", server),
   ]);
   // An allow-list must retain inherited access when a policy is read and saved again.
-  const enabledFolders = access.libraryAccess.length
+  const restrictedFolders =
+    access.libraryAccess.length > 0 ||
+    (await hasRestrictedFolders(db, user.id));
+  const enabledFolders = restrictedFolders
     ? await viewableLibraryIds(db, user.id)
     : [];
   return {
@@ -95,7 +99,7 @@ export async function userDto(db: Database, user: User, serverId: string) {
       EnableMediaConversion: false,
       EnableAllDevices: true,
       EnableAllChannels: false,
-      EnableAllFolders: access.libraryAccess.length === 0,
+      EnableAllFolders: !restrictedFolders,
       EnabledFolders: enabledFolders.map(toGuid),
       InvalidLoginAttemptCount: 0,
       LoginAttemptsBeforeLockout: -1,
