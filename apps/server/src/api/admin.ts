@@ -81,6 +81,7 @@ const toUserAccess = (access: Awaited<ReturnType<typeof getUserAccess>>) => ({
         ? null
         : Number(access.settings.bitrateCapBps),
     contentRatingCeiling: access.settings.contentRatingCeiling,
+    preferDirectStream: access.settings.preferDirectStream,
   },
 });
 
@@ -275,6 +276,7 @@ export const userProcedures = {
           id: Schema.UUID,
           bitrateCapBps: Schema.NullOr(Schema.Int),
           contentRatingCeiling: Schema.NullOr(Schema.String),
+          preferDirectStream: Schema.optional(Schema.Boolean),
         }),
       ),
     )
@@ -292,6 +294,7 @@ export const userProcedures = {
                   ? null
                   : BigInt(input.bitrateCapBps),
               contentRatingCeiling: input.contentRatingCeiling,
+              preferDirectStream: input.preferDirectStream,
             },
           );
           return toUserAccess(await readUserAccess(context.db, input.id));

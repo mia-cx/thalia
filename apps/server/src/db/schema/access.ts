@@ -109,6 +109,9 @@ export const userSettings = pgTable(
       .references(() => users.id, owned),
     bitrateCapBps: bigint("bitrate_cap_bps", { mode: "bigint" }),
     contentRatingCeiling: text("content_rating_ceiling"),
+    preferDirectStream: boolean("prefer_direct_stream")
+      .notNull()
+      .default(false),
   },
   (table) => [
     check("user_settings_bitrate_check", sql`${table.bitrateCapBps} > 0`),

@@ -264,10 +264,11 @@ export const Group = Schema.Struct({
   permissions: Schema.Array(PermissionName),
 });
 
-/** The per-user bitrate cap and content-rating ceiling. */
+/** The per-user bitrate cap, content-rating ceiling and direct-stream preference. */
 export const UserSettings = Schema.Struct({
   bitrateCapBps: Schema.NullOr(Schema.Int),
   contentRatingCeiling: Schema.NullOr(Schema.String),
+  preferDirectStream: Schema.Boolean,
 });
 
 /** One user's full access shape behind the per-user screen. */

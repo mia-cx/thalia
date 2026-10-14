@@ -160,11 +160,13 @@ describe.skipIf(!databaseUrl)("auth admin", () => {
       expect(access.settings).toEqual({
         bitrateCapBps: 8_000_000n,
         contentRatingCeiling: "PG-13",
+        preferDirectStream: false,
       });
       const fresh = await getUserAccess(db, admin.id, admin.id);
       expect(fresh.settings).toEqual({
         bitrateCapBps: null,
         contentRatingCeiling: null,
+        preferDirectStream: false,
       });
       expect(fresh.overrides).toEqual([]);
       expect(fresh.libraryAccess).toEqual([]);
@@ -254,6 +256,7 @@ describe.skipIf(!databaseUrl)("auth admin", () => {
       expect(stored).toEqual({
         bitrateCapBps: big,
         contentRatingCeiling: "TV-MA",
+        preferDirectStream: false,
       });
       const cleared = await writeUserSettings(db, admin.id, viewer.id, {
         bitrateCapBps: null,
@@ -262,6 +265,7 @@ describe.skipIf(!databaseUrl)("auth admin", () => {
       expect(cleared).toEqual({
         bitrateCapBps: null,
         contentRatingCeiling: null,
+        preferDirectStream: false,
       });
       for (const bitrateCapBps of [
         0n,

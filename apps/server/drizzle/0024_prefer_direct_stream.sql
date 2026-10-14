@@ -1,0 +1,1 @@
+ALTER TABLE "user_settings" ADD COLUMN "prefer_direct_stream" boolean DEFAULT false NOT NULL;
