@@ -66,7 +66,7 @@ describe.skipIf(!databaseUrl)("auth invites", () => {
         });
     }));
 
-  test("creating invites requires manage-users", () =>
+  test("creating invites requires users:manage", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       const admin = await setupAdmin(db, {

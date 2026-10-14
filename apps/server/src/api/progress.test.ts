@@ -9,9 +9,9 @@ import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   events,
   items,
-  libraryAccess,
   progress,
   segmentTimelines,
   sessionRegistry,
@@ -444,18 +444,19 @@ describe.skipIf(!databaseUrl)("playback progress", () => {
           ).status,
         ).toBe(401);
 
-        await db.insert(libraryAccess).values({
+        await db.insert(accessRules).values({
+          action: "view",
           libraryId: fx.library.id,
           userId: fx.owner.id,
           allowed: false,
         });
         expect((await capture(client.playback.start(scope))).status).toBe(403);
         await db
-          .delete(libraryAccess)
+          .delete(accessRules)
           .where(
             and(
-              eq(libraryAccess.userId, fx.owner.id),
-              eq(libraryAccess.libraryId, fx.library.id),
+              eq(accessRules.userId, fx.owner.id),
+              eq(accessRules.libraryId, fx.library.id),
             ),
           );
         await setPermissionOverride(

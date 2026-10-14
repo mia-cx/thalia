@@ -29,13 +29,19 @@ export const maxSubtitleBytes = 8 * 1024 * 1024;
 async function visibleItem(db: Database, userId: string, itemId: string) {
   const [item] = await db.select().from(items).where(eq(items.id, itemId));
   if (item === undefined) throw new AuthError("NOT_FOUND");
-  await requirePermission(db, userId, "view", item.libraryId);
+  await requirePermission(db, userId, "view", {
+    type: "library",
+    id: item.libraryId,
+  });
   return item;
 }
 
 async function manageableItem(db: Database, userId: string, itemId: string) {
   const item = await visibleItem(db, userId, itemId);
-  await requirePermission(db, userId, "manage-subtitles");
+  await requirePermission(db, userId, "subtitles:edit", {
+    type: "library",
+    id: item.libraryId,
+  });
   return item;
 }
 

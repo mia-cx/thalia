@@ -3,10 +3,10 @@ import { eq } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  type Action,
+  accessRules,
   groups,
-  type Permission,
   userGroups,
-  userPermissionOverrides,
   userSettings,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
@@ -26,6 +26,7 @@ import {
   setPermissionOverride,
   setUserGroups,
 } from "./permissions.ts";
+import { updateAccountAccess } from "./profile.ts";
 
 async function seed(db: Database) {
   const admin = await setupAdmin(db, {
@@ -42,7 +43,7 @@ async function seed(db: Database) {
 async function seedManager(db: Database, adminId: string) {
   const managers = await createGroup(db, adminId, {
     name: "managers",
-    permissions: ["manage-users"],
+    permissions: ["users:manage", "view"],
   });
   const manager = await createLocalUser(db, adminId, {
     username: "manager",
@@ -63,7 +64,24 @@ async function createLibrary(db: Database, name: string) {
 }
 
 describe.skipIf(!databaseUrl)("auth admin", () => {
-  test("listUsers and listGroups return ordered rows for manage-users", () =>
+  test("unknown folder ids refuse the whole account access update", () =>
+    withDatabase(async (db) => {
+      const { admin, viewer } = await seed(db);
+      const library = await createLibrary(db, "movies");
+      await updateAccountAccess(db, admin.id, viewer.id, {
+        enabledFolders: [library.id],
+      });
+      const before = await getUserAccess(db, admin.id, viewer.id);
+      await expect(
+        updateAccountAccess(db, admin.id, viewer.id, {
+          enabledFolders: [library.id, Bun.randomUUIDv7()],
+          permissionOverrides: { play: false },
+        }),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      expect(await getUserAccess(db, admin.id, viewer.id)).toEqual(before);
+    }));
+
+  test("listUsers and listGroups return ordered rows for users:manage", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       const { admin } = await seed(db);
@@ -152,7 +170,7 @@ describe.skipIf(!databaseUrl)("auth admin", () => {
       expect(fresh.libraryAccess).toEqual([]);
     }));
 
-  test("reads reject callers without manage-users", () =>
+  test("reads reject callers without users:manage", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       const { viewer } = await seed(db);
@@ -194,15 +212,15 @@ describe.skipIf(!databaseUrl)("auth admin", () => {
         permissions: ["view"],
       });
       const updated = await setGroupPermissions(db, admin.id, custom.id, [
-        "manage-metadata",
+        "metadata:edit",
         "view",
-        "manage-metadata",
+        "metadata:edit",
       ]);
       expect(updated).toMatchObject({
         id: custom.id,
         name: "editors",
         builtIn: false,
-        permissions: ["manage-metadata", "view"],
+        permissions: ["metadata:edit", "view"],
       });
       const [admins] = await db
         .select()
@@ -216,7 +234,7 @@ describe.skipIf(!databaseUrl)("auth admin", () => {
         setGroupPermissions(db, admin.id, Bun.randomUUIDv7(), ["view"]),
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
       await expect(
-        setGroupPermissions(db, admin.id, custom.id, ["bogus" as Permission]),
+        setGroupPermissions(db, admin.id, custom.id, ["bogus" as Action]),
       ).rejects.toMatchObject({ code: "INVALID_INPUT" });
       const manager = await seedManager(db, admin.id);
       await expect(
@@ -279,7 +297,7 @@ describe.skipIf(!databaseUrl)("auth admin", () => {
       });
     }));
 
-  test("setLibraryAccess allows, denies and inherits with deny winning", () =>
+  test("setLibraryAccess allows, denies and inherits with user rules winning", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       const { admin, viewer } = await seed(db);
@@ -290,49 +308,67 @@ describe.skipIf(!databaseUrl)("auth admin", () => {
         .where(eq(groups.name, "users"));
       if (!usersGroup) throw new Error("Seed group missing.");
 
-      expect(await checkPermission(db, viewer.id, "view", library.id)).toBe(
-        true,
-      );
+      expect(
+        await checkPermission(db, viewer.id, "view", {
+          type: "library",
+          id: library.id,
+        }),
+      ).toBe(true);
       await setLibraryAccess(db, admin.id, {
         libraryId: library.id,
         userId: viewer.id,
         allowed: false,
       });
-      expect(await checkPermission(db, viewer.id, "view", library.id)).toBe(
-        false,
-      );
+      expect(
+        await checkPermission(db, viewer.id, "view", {
+          type: "library",
+          id: library.id,
+        }),
+      ).toBe(false);
       await setLibraryAccess(db, admin.id, {
         libraryId: library.id,
         userId: viewer.id,
         allowed: true,
       });
-      expect(await checkPermission(db, viewer.id, "view", library.id)).toBe(
-        true,
-      );
+      expect(
+        await checkPermission(db, viewer.id, "view", {
+          type: "library",
+          id: library.id,
+        }),
+      ).toBe(true);
       await setLibraryAccess(db, admin.id, {
         libraryId: library.id,
         groupId: usersGroup.id,
         allowed: false,
       });
-      expect(await checkPermission(db, viewer.id, "view", library.id)).toBe(
-        false,
-      );
+      expect(
+        await checkPermission(db, viewer.id, "view", {
+          type: "library",
+          id: library.id,
+        }),
+      ).toBe(true);
       await setLibraryAccess(db, admin.id, {
         libraryId: library.id,
         groupId: usersGroup.id,
         allowed: null,
       });
-      expect(await checkPermission(db, viewer.id, "view", library.id)).toBe(
-        true,
-      );
+      expect(
+        await checkPermission(db, viewer.id, "view", {
+          type: "library",
+          id: library.id,
+        }),
+      ).toBe(true);
       await setLibraryAccess(db, admin.id, {
         libraryId: library.id,
         userId: viewer.id,
         allowed: null,
       });
-      expect(await checkPermission(db, viewer.id, "view", library.id)).toBe(
-        true,
-      );
+      expect(
+        await checkPermission(db, viewer.id, "view", {
+          type: "library",
+          id: library.id,
+        }),
+      ).toBe(true);
       const access = await getUserAccess(db, admin.id, viewer.id);
       expect(access.libraryAccess).toEqual([]);
     }));
@@ -424,15 +460,15 @@ describe.skipIf(!databaseUrl)("auth admin", () => {
       await db
         .insert(userGroups)
         .values({ userId: viewer.id, groupId: custom.id });
-      await db.insert(userPermissionOverrides).values({
+      await db.insert(accessRules).values({
         userId: viewer.id,
-        permission: "manage-subtitles",
+        action: "subtitles:edit",
         allowed: true,
       });
       const access = await getUserAccess(db, admin.id, viewer.id);
       expect(access.groupIds).toHaveLength(2);
       expect(access.overrides).toEqual([
-        { permission: "manage-subtitles", allowed: true },
+        { permission: "subtitles:edit", allowed: true },
       ]);
     }));
 });

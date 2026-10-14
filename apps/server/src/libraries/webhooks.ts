@@ -1,5 +1,6 @@
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { and, eq } from "drizzle-orm";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import { authenticate } from "../auth/sessions.ts";
@@ -467,7 +468,7 @@ export function createServarrWebhookHandler(
       const auth = await authenticate(db, secret);
       if (auth.credential.kind !== "api-key")
         throw new AuthError("UNAUTHENTICATED");
-      await requirePermission(db, auth.user.id, "manage-libraries");
+      await requirePermission(db, auth.user.id, "libraries:manage", server);
     } catch (error) {
       if (error instanceof AuthError)
         return respond(

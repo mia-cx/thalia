@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { server } from "../auth/access.ts";
 import { createLocalUser, isSetupComplete } from "../auth/accounts.ts";
 import {
   getUserAccess,
@@ -383,7 +384,8 @@ export const settingsProcedures = {
           await requirePermission(
             context.db,
             context.caller.user.id,
-            "manage-server",
+            "server:manage",
+            server,
           );
           return readServerSettings(context.db, context.plugins);
         }),

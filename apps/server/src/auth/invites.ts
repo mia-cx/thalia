@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import { groups, invites, userGroups, users } from "../db/schema/index.ts";
+import { server } from "./access.ts";
 import { prepareLocalAccount, publicUserFields } from "./accounts.ts";
 import { AuthError, postgresCode } from "./errors.ts";
 import { requirePermission } from "./permissions.ts";
@@ -32,13 +33,13 @@ const safeInviteFields = {
   acceptedAt: invites.acceptedAt,
 };
 
-/** Creates an expiring invite for an actor with manage-users. */
+/** Creates an expiring invite for an actor with users:manage. */
 export async function createInvite(
   db: Database,
   actorId: string,
   input: { email: string; expiresInSeconds: number },
 ) {
-  await requirePermission(db, actorId, "manage-users");
+  await requirePermission(db, actorId, "users:manage", server);
   const email = input.email.trim().toLowerCase();
   if (
     email.length < 3 ||

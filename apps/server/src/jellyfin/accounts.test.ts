@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { seedBrowse } from "../api/view-fixtures.ts";
+import { server } from "../auth/access.ts";
+import { readUserAccess, setLibraryAccess } from "../auth/admin.ts";
 import { createIntegrationKey } from "../auth/integration-keys.ts";
-import { checkPermission } from "../auth/permissions.ts";
+import { checkPermission, setPermissionOverride } from "../auth/permissions.ts";
 import { issueSession } from "../auth/sessions.ts";
-import { users } from "../db/schema/index.ts";
+import { accessRules, libraries, users } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
+import { insertLibraries } from "../libraries/testing.ts";
 import { createJellyfinHandler } from "./http.ts";
 import { jellyfinRoutes } from "./routes.ts";
 import { jellyfinLogin } from "./testing.ts";
@@ -278,7 +281,163 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
           RemoteClientBitrateLimit: 4_000_000,
         },
       });
-      expect(await checkPermission(db, seed.viewer.id, "download")).toBe(true);
+      expect(
+        await checkPermission(db, seed.viewer.id, "download", server),
+      ).toBe(true);
+      const folders = await insertLibraries(db, [
+        { name: "Allowed", medium: "movies", rootPath: "/allowed" },
+        { name: "Denied", medium: "movies", rootPath: "/denied" },
+      ]);
+      const allowedFolder = folders[0];
+      const deniedFolder = folders[1];
+      if (!allowedFolder || !deniedFolder)
+        throw new Error("Fixture Libraries missing.");
+      expect(
+        (
+          await call(`/Users/${seed.viewer.id}/Policy`, admin, {
+            ...policy,
+            EnableAllFolders: false,
+            EnabledFolders: [allowedFolder.id.replaceAll("-", "")],
+          })
+        ).status,
+      ).toBe(204);
+      expect(await (await call("/Users/Me")).json()).toMatchObject({
+        Policy: {
+          EnableAllFolders: false,
+          EnabledFolders: [allowedFolder.id.replaceAll("-", "")],
+        },
+      });
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: allowedFolder.id,
+        }),
+      ).toBe(true);
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: deniedFolder.id,
+        }),
+      ).toBe(false);
+      const folderRules = (await db.select().from(accessRules)).filter(
+        (rule) => rule.userId === seed.viewer.id && rule.libraryId !== null,
+      );
+      const existingFolders = await db
+        .select({ id: libraries.id })
+        .from(libraries);
+      expect(folderRules).toHaveLength(existingFolders.length);
+      expect(
+        folderRules.map((rule) => ({
+          libraryId: rule.libraryId,
+          action: rule.action,
+          allowed: rule.allowed,
+        })),
+      ).toEqual(
+        expect.arrayContaining(
+          existingFolders.map((folder) => ({
+            libraryId: folder.id,
+            action: "view",
+            allowed: folder.id === allowedFolder.id,
+          })),
+        ),
+      );
+      expect(
+        (
+          await call(`/Users/${seed.viewer.id}/Policy`, admin, {
+            ...policy,
+            EnableAllFolders: true,
+          })
+        ).status,
+      ).toBe(204);
+      expect(
+        (await db.select().from(accessRules)).filter(
+          (rule) => rule.userId === seed.viewer.id && rule.libraryId !== null,
+        ),
+      ).toEqual([]);
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: deniedFolder.id,
+        }),
+      ).toBe(true);
+      await setLibraryAccess(db, seed.admin.id, {
+        libraryId: deniedFolder.id,
+        userId: seed.viewer.id,
+        allowed: false,
+      });
+      const access = await readUserAccess(db, seed.viewer.id);
+      const groupId = access.groupIds[0];
+      if (!groupId) throw new Error("Viewer Group missing.");
+      await setPermissionOverride(
+        db,
+        seed.admin.id,
+        seed.viewer.id,
+        "view",
+        false,
+      );
+      await setLibraryAccess(db, seed.admin.id, {
+        libraryId: allowedFolder.id,
+        groupId,
+        allowed: true,
+      });
+      const restricted: {
+        Policy: { EnableAllFolders: boolean; EnabledFolders: string[] };
+      } = await (await call("/Users/Me")).json();
+      expect(restricted.Policy.EnableAllFolders).toBe(false);
+      expect(restricted.Policy.EnabledFolders).toContain(
+        allowedFolder.id.replaceAll("-", ""),
+      );
+      expect(restricted.Policy.EnabledFolders).not.toContain(
+        deniedFolder.id.replaceAll("-", ""),
+      );
+      expect(
+        (
+          await call(
+            `/Users/${seed.viewer.id}/Policy`,
+            admin,
+            restricted.Policy,
+          )
+        ).status,
+      ).toBe(204);
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: allowedFolder.id,
+        }),
+      ).toBe(true);
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: deniedFolder.id,
+        }),
+      ).toBe(false);
+      const savedRules = (await readUserAccess(db, seed.viewer.id))
+        .libraryAccess;
+      expect(savedRules).toEqual(
+        expect.arrayContaining([
+          { libraryId: allowedFolder.id, allowed: true },
+          { libraryId: deniedFolder.id, allowed: false },
+        ]),
+      );
+      expect(
+        (
+          await call(
+            `/Users/${seed.viewer.id}/Policy`,
+            admin,
+            restricted.Policy,
+          )
+        ).status,
+      ).toBe(204);
+      expect((await readUserAccess(db, seed.viewer.id)).libraryAccess).toEqual(
+        savedRules,
+      );
+      await setPermissionOverride(
+        db,
+        seed.admin.id,
+        seed.viewer.id,
+        "view",
+        null,
+      );
       for (const allowed of [false, true]) {
         expect(
           (
@@ -288,9 +447,9 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
             })
           ).status,
         ).toBe(204);
-        expect(await checkPermission(db, seed.viewer.id, "download")).toBe(
-          allowed,
-        );
+        expect(
+          await checkPermission(db, seed.viewer.id, "download", server),
+        ).toBe(allowed);
       }
       expect(
         (

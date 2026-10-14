@@ -199,7 +199,10 @@ export function listItemCards(
     // Without a library the list is scoped to every library the caller may view.
     const scope = yield* fromHost(async () => {
       if (input.libraryId !== undefined) {
-        await requirePermission(db, caller.user.id, "view", input.libraryId);
+        await requirePermission(db, caller.user.id, "view", {
+          type: "library",
+          id: input.libraryId,
+        });
         return eq(items.libraryId, input.libraryId);
       }
       const viewable = await viewableLibraryIds(db, caller.user.id);
@@ -237,7 +240,10 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
     const [card] = yield* fromHost(() => browseCards(db, eq(items.id, id)));
     if (!card) return yield* new ApiError({ code: "NOT_FOUND" });
     yield* fromHost(() =>
-      requirePermission(db, caller.user.id, "view", card.libraryId),
+      requirePermission(db, caller.user.id, "view", {
+        type: "library",
+        id: card.libraryId,
+      }),
     );
     const [[detail], itemCredits, itemVersions, children] = yield* fromHost(
       () =>

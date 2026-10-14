@@ -2,6 +2,7 @@ import { extname, posix } from "node:path";
 import { and, asc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { Schema } from "effect";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import { authenticate } from "../auth/sessions.ts";
@@ -157,14 +158,14 @@ const respond = (body: unknown, status: number) =>
     },
   });
 
-/** Accepts only an API key with manage-libraries, sent as a Bearer header. */
+/** Accepts only an API key with libraries:manage, sent as a Bearer header. */
 async function requireWatcherKey(db: Database, request: Request) {
   const token = request.headers.get("authorization")?.match(bearerPattern)?.[1];
   if (token === undefined) throw new AuthError("UNAUTHENTICATED");
   const auth = await authenticate(db, token);
   if (auth.credential.kind !== "api-key")
     throw new AuthError("UNAUTHENTICATED");
-  await requirePermission(db, auth.user.id, "manage-libraries");
+  await requirePermission(db, auth.user.id, "libraries:manage", server);
 }
 
 async function readBody<A, I>(request: Request, schema: Schema.Schema<A, I>) {

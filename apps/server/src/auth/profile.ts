@@ -2,16 +2,16 @@ import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import type { JsonValue } from "../db/schema/common.ts";
 import {
+  type Action,
+  actions,
   groups,
-  type Permission,
-  permissions,
   sessions,
   settings,
   userGroups,
   users,
 } from "../db/schema/index.ts";
 import { hashLocalPassword, publicUserFields } from "./accounts.ts";
-import { readUserAccess, writeUserSettings } from "./admin.ts";
+import { readUserAccess, setFolderRules, writeUserSettings } from "./admin.ts";
 import { AuthError, postgresCode } from "./errors.ts";
 import { requireAdmin, setPermissionOverride } from "./permissions.ts";
 
@@ -176,8 +176,9 @@ export async function updateAccountAccess(
   input: {
     administrator?: boolean;
     disabled?: boolean;
-    permissionOverrides?: Partial<Record<Permission, boolean>>;
+    permissionOverrides?: Partial<Record<Action, boolean>>;
     bitrateCapBps?: bigint | null;
+    enabledFolders?: readonly string[] | "all";
   },
 ) {
   await db.transaction(async (tx) => {
@@ -194,7 +195,9 @@ export async function updateAccountAccess(
       .where(eq(users.id, userId))
       .for("update");
     if (target === undefined) throw new AuthError("NOT_FOUND");
-    for (const permission of permissions) {
+    if (input.enabledFolders !== undefined)
+      await setFolderRules(tx, target.id, input.enabledFolders);
+    for (const permission of actions) {
       const allowed = input.permissionOverrides?.[permission];
       if (allowed !== undefined)
         await setPermissionOverride(tx, actorId, userId, permission, allowed);

@@ -69,8 +69,14 @@ export async function pingPlayback(db: Database, actorId: string, id: string) {
     .where(eq(sessionRegistry.id, id));
   if (session === undefined) throw new AuthError("NOT_FOUND");
   if (session.userId !== actorId) throw new AuthError("FORBIDDEN");
-  await requirePermission(db, actorId, "view", session.libraryId);
-  await requirePermission(db, actorId, "play");
+  await requirePermission(db, actorId, "view", {
+    type: "library",
+    id: session.libraryId,
+  });
+  await requirePermission(db, actorId, "play", {
+    type: "library",
+    id: session.libraryId,
+  });
   await db
     .update(sessionRegistry)
     .set({ lastSeenAt: new Date() })

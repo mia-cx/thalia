@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import { apiKeys, sessions, users } from "../db/schema/index.ts";
+import { server } from "./access.ts";
 import { publicUserFields } from "./accounts.ts";
 import { AuthError } from "./errors.ts";
 import { requirePermission } from "./permissions.ts";
@@ -104,7 +105,8 @@ async function ownOrManager(
   userId: string,
 ): Promise<void> {
   if (!(await enabledUserById(db, actorId))) throw new AuthError("FORBIDDEN");
-  if (userId !== actorId) await requirePermission(db, actorId, "manage-users");
+  if (userId !== actorId)
+    await requirePermission(db, actorId, "users:manage", server);
 }
 
 /** Issues a device session inside the caller's database transaction. */
@@ -239,7 +241,7 @@ export async function authenticate(db: Database, token: string) {
   throw new AuthError("UNAUTHENTICATED");
 }
 
-/** Lists a user's sessions newest first; allowed for the owner or manage-users. */
+/** Lists a user's sessions newest first; allowed for the owner or users:manage. */
 export async function listSessions(
   db: Database,
   actorId: string,
@@ -253,7 +255,7 @@ export async function listSessions(
     .orderBy(desc(sessions.createdAt));
 }
 
-/** Revokes a session by id; allowed for the owner or manage-users. */
+/** Revokes a session by id; allowed for the owner or users:manage. */
 export async function revokeSession(
   db: Database,
   actorId: string,
@@ -291,7 +293,7 @@ export async function createApiKey(
   return { token, key };
 }
 
-/** Lists a user's API keys newest first; allowed for the owner or manage-users. */
+/** Lists a user's API keys newest first; allowed for the owner or users:manage. */
 export async function listApiKeys(
   db: Database,
   actorId: string,
@@ -305,7 +307,7 @@ export async function listApiKeys(
     .orderBy(desc(apiKeys.createdAt));
 }
 
-/** Revokes an API key by id; allowed for the owner or manage-users. */
+/** Revokes an API key by id; allowed for the owner or users:manage. */
 export async function revokeApiKey(
   db: Database,
   actorId: string,

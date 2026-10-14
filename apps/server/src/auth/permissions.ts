@@ -1,15 +1,18 @@
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import {
+  type Action,
+  accessRules,
+  actions,
   groups,
+  itemAncestors,
+  items,
   libraries,
-  libraryAccess,
-  type Permission,
-  permissions,
+  serverOnlyActions,
   userGroups,
-  userPermissionOverrides,
   users,
 } from "../db/schema/index.ts";
+import { type AccessObject, resolveAccess, server } from "./access.ts";
 import { AuthError, postgresCode } from "./errors.ts";
 
 type Queryable = Pick<Database, "select">;
@@ -32,81 +35,120 @@ async function memberships(db: Queryable, userId: string) {
       id: groups.id,
       name: groups.name,
       builtIn: groups.builtIn,
-      permissions: groups.permissions,
     })
     .from(userGroups)
     .innerJoin(groups, eq(groups.id, userGroups.groupId))
     .where(eq(userGroups.userId, userId));
 }
 
-/** Reports whether an enabled user holds a permission via groups, overrides or library access. */
+async function objectChain(
+  db: Queryable,
+  object: AccessObject,
+): Promise<AccessObject[]> {
+  if (object.type === "server") return [server];
+  if (object.type === "library") return [object, server];
+  const rows = await db
+    .select({ id: items.id, libraryId: items.libraryId })
+    .from(itemAncestors)
+    .innerJoin(items, eq(items.id, itemAncestors.ancestorId))
+    .where(eq(itemAncestors.descendantId, object.id))
+    .orderBy(itemAncestors.depth);
+  if (!rows[0]) throw new AuthError("NOT_FOUND");
+  return [
+    ...rows.map((row) => ({ type: "item" as const, id: row.id })),
+    { type: "library", id: rows[0].libraryId },
+    server,
+  ];
+}
+
+async function callerRules(
+  db: Queryable,
+  userId: string,
+  groupIds: string[],
+  chain?: AccessObject[],
+) {
+  return db
+    .select()
+    .from(accessRules)
+    .where(
+      and(
+        or(
+          eq(accessRules.userId, userId),
+          groupIds.length ? inArray(accessRules.groupId, groupIds) : undefined,
+        ),
+        chain
+          ? or(
+              ...chain.map((object) =>
+                object.type === "server"
+                  ? and(
+                      isNull(accessRules.libraryId),
+                      isNull(accessRules.itemId),
+                    )
+                  : object.type === "library"
+                    ? eq(accessRules.libraryId, object.id)
+                    : eq(accessRules.itemId, object.id),
+              ),
+            )
+          : undefined,
+      ),
+    );
+}
+
+/** Checks an enabled user's Action on the given object through Access rules. */
 export async function checkPermission(
   db: Queryable,
   userId: string,
-  permission: Permission,
-  libraryId?: string,
+  action: Action,
+  object: AccessObject,
 ): Promise<boolean> {
+  if (
+    (serverOnlyActions as readonly Action[]).includes(action) &&
+    object.type !== "server"
+  )
+    throw new Error("Server-only Actions require the server object.");
   if (!(await enabledUser(db, userId))) return false;
   const memberGroups = await memberships(db, userId);
   if (memberGroups.some((g) => g.builtIn && g.name === "admins")) return true;
-
-  let granted = memberGroups.some((g) => g.permissions.includes(permission));
-  const [override] = await db
-    .select({ allowed: userPermissionOverrides.allowed })
-    .from(userPermissionOverrides)
-    .where(
-      and(
-        eq(userPermissionOverrides.userId, userId),
-        eq(userPermissionOverrides.permission, permission),
-      ),
-    )
-    .limit(1);
-  if (override) granted = override.allowed;
-
-  if (permission === "view" && libraryId) {
-    const groupIds = memberGroups.map((g) => g.id);
-    const access = await db
-      .select({ allowed: libraryAccess.allowed })
-      .from(libraryAccess)
-      .where(
-        and(
-          eq(libraryAccess.libraryId, libraryId),
-          or(
-            eq(libraryAccess.userId, userId),
-            groupIds.length
-              ? inArray(libraryAccess.groupId, groupIds)
-              : undefined,
-          ),
-        ),
-      );
-    if (access.length) return access.every((row) => row.allowed);
-  }
-  return granted;
+  const chain = await objectChain(db, object);
+  const groupIds = memberGroups.map((g) => g.id);
+  const rules = await callerRules(db, userId, groupIds, chain);
+  return resolveAccess({ rules, chain, action, userId, groupIds }).allowed;
 }
 
-/** Lists the ids of every library the user may view, decided by checkPermission itself. */
+/** Loads the caller's rules once and resolves each Library in memory. */
 export async function viewableLibraryIds(
   db: Database,
   userId: string,
 ): Promise<string[]> {
+  if (!(await enabledUser(db, userId))) return [];
+  const memberGroups = await memberships(db, userId);
   const rows = await db.select({ id: libraries.id }).from(libraries);
-  // The checks are independent reads, so they run concurrently. A set-based
-  // join is deliberately not used: it would duplicate checkPermission's
-  // precedence rules, which must stay single-sourced.
-  const allowed = await Promise.all(
-    rows.map((row) => checkPermission(db, userId, "view", row.id)),
-  );
-  return rows.filter((_, index) => allowed[index]).map((row) => row.id);
+  if (memberGroups.some((g) => g.builtIn && g.name === "admins"))
+    return rows.map((row) => row.id);
+  const groupIds = memberGroups.map((g) => g.id);
+  const rules = await callerRules(db, userId, groupIds);
+  return rows
+    .filter(
+      (row) =>
+        resolveAccess({
+          rules,
+          chain: [{ type: "library", id: row.id }, server],
+          action: "view",
+          userId,
+          groupIds,
+        }).allowed,
+    )
+    .map((row) => row.id);
 }
 
-/** Throws FORBIDDEN when an enabled user lacks a permission. */
+/** Throws FORBIDDEN when the caller cannot perform the Action on the object. */
 export async function requirePermission(
   db: Queryable,
   userId: string,
-  permission: Permission,
-  libraryId?: string,
+  action: Action,
+  object: AccessObject,
 ): Promise<void> {
-  if (!(await checkPermission(db, userId, permission, libraryId)))
+  if (!(await checkPermission(db, userId, action, object)))
     throw new AuthError("FORBIDDEN");
 }
 
@@ -134,7 +176,7 @@ export async function requireAdmin(
 export async function createGroup(
   db: Database,
   actorId: string,
-  input: { name: string; permissions: readonly Permission[] },
+  input: { name: string; permissions: readonly Action[] },
 ) {
   await requireAdmin(db, actorId);
   const name = input.name.trim();
@@ -143,19 +185,27 @@ export async function createGroup(
     name.length > 80 ||
     name.includes("\0") ||
     builtInNames.includes(name.toLowerCase()) ||
-    input.permissions.some(
-      (p) => !(permissions as readonly string[]).includes(p),
-    )
+    input.permissions.some((p) => !(actions as readonly string[]).includes(p))
   )
     throw new AuthError("INVALID_INPUT");
   const unique = [...new Set(input.permissions)];
   try {
-    const [group] = await db
-      .insert(groups)
-      .values({ name, builtIn: false, permissions: unique })
-      .returning();
-    if (!group) throw new Error("Group insert returned no row.");
-    return group;
+    return await db.transaction(async (tx) => {
+      const [group] = await tx
+        .insert(groups)
+        .values({ name, builtIn: false })
+        .returning();
+      if (!group) throw new Error("Group insert returned no row.");
+      if (unique.length)
+        await tx.insert(accessRules).values(
+          unique.map((action) => ({
+            groupId: group.id,
+            action,
+            allowed: true,
+          })),
+        );
+      return { ...group, permissions: unique };
+    });
   } catch (error) {
     if (postgresCode(error) === "23505") throw new AuthError("CONFLICT");
     throw error;
@@ -212,11 +262,11 @@ export async function setPermissionOverride(
   db: Pick<Database, "select" | "insert" | "delete">,
   actorId: string,
   userId: string,
-  permission: Permission,
+  permission: Action,
   allowed: boolean | null,
 ): Promise<void> {
   await requireAdmin(db, actorId);
-  if (!(permissions as readonly string[]).includes(permission))
+  if (!(actions as readonly string[]).includes(permission))
     throw new AuthError("INVALID_INPUT");
   const [target] = await db
     .select({ id: users.id })
@@ -225,19 +275,24 @@ export async function setPermissionOverride(
     .limit(1);
   if (!target) throw new AuthError("NOT_FOUND");
   const where = and(
-    eq(userPermissionOverrides.userId, userId),
-    eq(userPermissionOverrides.permission, permission),
+    eq(accessRules.userId, userId),
+    eq(accessRules.action, permission),
+    isNull(accessRules.libraryId),
+    isNull(accessRules.itemId),
   );
   if (allowed === null) {
-    await db.delete(userPermissionOverrides).where(where);
+    await db.delete(accessRules).where(where);
   } else {
     await db
-      .insert(userPermissionOverrides)
-      .values({ userId, permission, allowed })
+      .insert(accessRules)
+      .values({ userId, action: permission, allowed })
       .onConflictDoUpdate({
         target: [
-          userPermissionOverrides.userId,
-          userPermissionOverrides.permission,
+          accessRules.userId,
+          accessRules.groupId,
+          accessRules.libraryId,
+          accessRules.itemId,
+          accessRules.action,
         ],
         set: { allowed },
       });

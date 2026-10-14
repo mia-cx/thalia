@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import type { JsonObject } from "../db/schema/common.ts";
 import { settings, settingsLockClass } from "../db/schema/index.ts";
+import { server } from "./access.ts";
 import { AuthError } from "./errors.ts";
 import { requirePermission } from "./permissions.ts";
 import { normalizeAddress } from "./transport.ts";
@@ -185,13 +186,13 @@ function validatedPatch(patch: AuthSettingsPatch): JsonObject {
   return values;
 }
 
-/** Merges a validated patch into the stored auth settings for a caller holding manage-server. */
+/** Merges a validated patch into the stored auth settings for a caller holding server:manage. */
 export async function writeAuthSettings(
   db: Database,
   actorId: string,
   patch: AuthSettingsPatch,
 ) {
-  await requirePermission(db, actorId, "manage-server");
+  await requirePermission(db, actorId, "server:manage", server);
   const values = validatedPatch(patch);
   const secret = patch.oidcClientSecret?.trim();
   if (

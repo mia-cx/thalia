@@ -6,7 +6,7 @@ type Row = { id: string; permissions: string[] };
 test("a failed refresh keeps the saved permissions for the next edit", async () => {
   const server = new Map<string, string[]>([
     ["g1", ["view"]],
-    ["g2", ["manage-metadata"]],
+    ["g2", ["metadata:edit"]],
   ]);
   const rows = () =>
     [...server.entries()].map(([id, permissions]) => ({
@@ -35,23 +35,19 @@ test("a failed refresh keeps the saved permissions for the next edit", async () 
   expect(first).toBeDefined();
   const saved1 = await setPermissions("g1", [
     ...(first?.permissions ?? []),
-    "manage-metadata",
+    "metadata:edit",
   ]);
   await cacheSavedGroup(list, saved1);
 
   const second = list.data?.find((row) => row.id === "g1");
   const saved2 = await setPermissions("g1", [
     ...(second?.permissions ?? []),
-    "manage-subtitles",
+    "subtitles:edit",
   ]);
   await cacheSavedGroup(list, saved2);
 
-  expect(server.get("g1")).toEqual([
-    "view",
-    "manage-metadata",
-    "manage-subtitles",
-  ]);
+  expect(server.get("g1")).toEqual(["view", "metadata:edit", "subtitles:edit"]);
   expect(list.data?.find((row) => row.id === "g2")?.permissions).toEqual([
-    "manage-metadata",
+    "metadata:edit",
   ]);
 });

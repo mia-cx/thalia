@@ -8,7 +8,7 @@ import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { artwork, libraryAccess, settings } from "../db/schema/index.ts";
+import { accessRules, artwork, settings } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { insertItem } from "../db/tree.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -815,7 +815,8 @@ describe.skipIf(!databaseUrl)("artwork http", () => {
           username: "viewer",
           password: "viewer-pass",
         });
-        await db.insert(libraryAccess).values({
+        await db.insert(accessRules).values({
+          action: "view",
           libraryId: item.libraryId,
           userId: viewer.id,
           allowed: false,

@@ -4,6 +4,7 @@ import { ORPCError } from "@orpc/client";
 import { eq } from "drizzle-orm";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
+import { setPermissionOverride } from "../auth/permissions.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
@@ -87,6 +88,68 @@ async function capture(promise: Promise<unknown>) {
 }
 
 describe.skipIf(!databaseUrl)("plugin admin api", () => {
+  test("plugins:manage permits plugin and registry administration independently of server:manage", () =>
+    withFolder((folder) =>
+      withDatabase(async (db, url) => {
+        const admin = await setupAdmin(db, {
+          username: "admin",
+          password: "admin-pass",
+        });
+        const manager = await createLocalUser(db, admin.id, {
+          username: "manager",
+          password: "manager-pass",
+        });
+        await setPermissionOverride(
+          db,
+          admin.id,
+          manager.id,
+          "plugins:manage",
+          true,
+        );
+        await setPermissionOverride(
+          db,
+          admin.id,
+          manager.id,
+          "server:manage",
+          false,
+        );
+        const token = (await createApiKey(db, manager.id, "plugins")).token;
+        await withServer(url, folder, async (_base, client) => {
+          expect((await client(token).plugins.list()).plugins).toEqual([]);
+          expect(
+            await client(token).registries.add({
+              url: "https://example.test/registry.json",
+            }),
+          ).toContain("https://example.test/registry.json");
+          await setPermissionOverride(
+            db,
+            admin.id,
+            manager.id,
+            "plugins:manage",
+            false,
+          );
+          await setPermissionOverride(
+            db,
+            admin.id,
+            manager.id,
+            "server:manage",
+            true,
+          );
+          expect((await capture(client(token).plugins.list())).code).toBe(
+            "FORBIDDEN",
+          );
+          expect(
+            (
+              await capture(
+                client(token).registries.remove({
+                  url: "https://example.test/registry.json",
+                }),
+              )
+            ).code,
+          ).toBe("FORBIDDEN");
+        });
+      }),
+    ));
   test("an admin previews, installs, configures and switches a plugin; a viewer may not", () =>
     withFolder((folder) =>
       withDatabase(async (db, url) => {

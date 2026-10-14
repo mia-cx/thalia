@@ -272,7 +272,10 @@ export function createArtworkHandler(
         }
         if (libraryId === null)
           return jsonError(404, "NOT_FOUND", "Artwork not found.");
-        await requirePermission(db, caller.user.id, "view", libraryId);
+        await requirePermission(db, caller.user.id, "view", {
+          type: "library",
+          id: libraryId,
+        });
       }
       const release = await acquireSlot(request.signal);
       if (release === undefined)

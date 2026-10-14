@@ -169,6 +169,20 @@ export const accountRoutes: Route[] = [
       const userId = await targetUser(context);
       const policy = await readDto(context.request, "UserPolicy");
       await updateAccountAccess(context.db, context.caller.user.id, userId, {
+        enabledFolders:
+          policy.EnableAllFolders === true
+            ? "all"
+            : policy.EnableAllFolders === false ||
+                Array.isArray(policy.EnabledFolders)
+              ? (Array.isArray(policy.EnabledFolders)
+                  ? policy.EnabledFolders
+                  : []
+                ).map((value) => {
+                  if (typeof value !== "string")
+                    throw new AuthError("INVALID_INPUT");
+                  return requiredGuid(value);
+                })
+              : undefined,
         administrator:
           typeof policy.IsAdministrator === "boolean"
             ? policy.IsAdministrator
@@ -186,7 +200,7 @@ export const accountRoutes: Route[] = [
             typeof policy.EnableContentDownloading === "boolean"
               ? policy.EnableContentDownloading
               : undefined,
-          "manage-subtitles":
+          "subtitles:edit":
             typeof policy.EnableSubtitleManagement === "boolean"
               ? policy.EnableSubtitleManagement
               : undefined,

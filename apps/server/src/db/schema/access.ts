@@ -12,23 +12,31 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { id, instant, owned } from "./common.ts";
-import { libraries } from "./core.ts";
+import { items, libraries } from "./core.ts";
 
-export const permissions = [
+/** Actions which can only name the server. */
+export const serverOnlyActions = [
+  "libraries:manage",
+  "users:manage",
+  "plugins:manage",
+  "transcoding:manage",
+  "server:manage",
+] as const;
+/** The closed list of Actions enforced by Access rules. */
+export const actions = [
   "view",
   "play",
   "download",
-  "manage-libraries",
-  "manage-metadata",
-  "manage-subtitles",
-  "manage-users",
-  "manage-plugins",
-  "manage-transcoding",
-  "manage-server",
+  "metadata:edit",
+  "subtitles:edit",
+  ...serverOnlyActions,
 ] as const;
-export type Permission = (typeof permissions)[number];
-const permissionList = sql.raw(
-  `ARRAY[${permissions.map((permission) => `'${permission}'`).join(",")}]::text[]`,
+export type Action = (typeof actions)[number];
+const actionList = sql.raw(
+  `ARRAY[${actions.map((action) => `'${action}'`).join(",")}]::text[]`,
+);
+const serverActionList = sql.raw(
+  `ARRAY[${serverOnlyActions.map((action) => `'${action}'`).join(",")}]::text[]`,
 );
 
 // Credentials store SHA-256 digests, never the raw token.
@@ -68,25 +76,11 @@ export const users = pgTable(
   ],
 );
 
-export const groups = pgTable(
-  "groups",
-  {
-    id: id(),
-    name: text("name").notNull().unique(),
-    builtIn: boolean("built_in").notNull().default(false),
-    permissions: text("permissions")
-      .array()
-      .$type<Permission[]>()
-      .notNull()
-      .default(sql`'{}'::text[]`),
-  },
-  (table) => [
-    check(
-      "groups_permissions_check",
-      sql`${table.permissions} <@ ${permissionList}`,
-    ),
-  ],
-);
+export const groups = pgTable("groups", {
+  id: id(),
+  name: text("name").notNull().unique(),
+  builtIn: boolean("built_in").notNull().default(false),
+});
 
 export const userGroups = pgTable(
   "user_groups",
@@ -102,28 +96,6 @@ export const userGroups = pgTable(
   (table) => [
     unique("user_groups_membership_unique").on(table.userId, table.groupId),
     index("user_groups_group_idx").on(table.groupId),
-  ],
-);
-
-export const userPermissionOverrides = pgTable(
-  "user_permission_overrides",
-  {
-    id: id(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, owned),
-    permission: text("permission").$type<Permission>().notNull(),
-    allowed: boolean("allowed").notNull(),
-  },
-  (table) => [
-    unique("user_permission_overrides_unique").on(
-      table.userId,
-      table.permission,
-    ),
-    check(
-      "user_permission_overrides_permission_check",
-      sql`${table.permission} = ANY(${permissionList})`,
-    ),
   ],
 );
 
@@ -143,29 +115,47 @@ export const userSettings = pgTable(
   ],
 );
 
-export const libraryAccess = pgTable(
-  "library_access",
+/** One subject's allow or deny of an Action on an object. */
+export const accessRules = pgTable(
+  "access_rules",
   {
     id: id(),
-    libraryId: uuid("library_id")
-      .notNull()
-      .references(() => libraries.id, owned),
     userId: uuid("user_id").references(() => users.id, owned),
     groupId: uuid("group_id").references(() => groups.id, owned),
+    libraryId: uuid("library_id").references(() => libraries.id, owned),
+    itemId: uuid("item_id").references(() => items.id, owned),
+    action: text("action").$type<Action>().notNull(),
     allowed: boolean("allowed").notNull(),
   },
   (table) => [
     check(
-      "library_access_principal_check",
+      "access_rules_subject_check",
       sql`num_nonnulls(${table.userId}, ${table.groupId}) = 1`,
     ),
-    uniqueIndex("library_access_user_unique")
-      .on(table.userId, table.libraryId)
-      .where(sql`${table.userId} is not null`),
-    uniqueIndex("library_access_group_unique")
-      .on(table.groupId, table.libraryId)
-      .where(sql`${table.groupId} is not null`),
-    index("library_access_library_idx").on(table.libraryId),
+    check(
+      "access_rules_object_check",
+      sql`num_nonnulls(${table.libraryId}, ${table.itemId}) <= 1`,
+    ),
+    check(
+      "access_rules_action_check",
+      sql`${table.action} = ANY(${actionList})`,
+    ),
+    check(
+      "access_rules_server_action_check",
+      sql`not (${table.action} = ANY(${serverActionList})) or (${table.libraryId} is null and ${table.itemId} is null)`,
+    ),
+    unique("access_rules_unique")
+      .on(
+        table.userId,
+        table.groupId,
+        table.libraryId,
+        table.itemId,
+        table.action,
+      )
+      .nullsNotDistinct(),
+    index("access_rules_group_idx").on(table.groupId),
+    index("access_rules_library_idx").on(table.libraryId),
+    index("access_rules_item_idx").on(table.itemId),
   ],
 );
 

@@ -15,9 +15,9 @@ import {
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   files,
   items,
-  libraryAccess,
   sessionRegistry,
   streams,
   users,
@@ -420,7 +420,7 @@ describe.skipIf(!databaseUrl)("direct playback", () => {
       }
     }));
 
-  test("revoked permissions, stopped sessions and disabled owners reject", () =>
+  test("revoked actions, stopped sessions and disabled owners reject", () =>
     withDatabase(async (db, url) => {
       await migrateDatabase(db);
       const fixture = await makeFixture();
@@ -438,7 +438,8 @@ describe.skipIf(!databaseUrl)("direct playback", () => {
           );
           const cookie = `thalia_session=${fx.accountToken}`;
 
-          await db.insert(libraryAccess).values({
+          await db.insert(accessRules).values({
+            action: "view",
             libraryId: fx.library.id,
             userId: fx.owner.id,
             allowed: false,
@@ -452,11 +453,11 @@ describe.skipIf(!databaseUrl)("direct playback", () => {
             ).status,
           ).toBe(403);
           await db
-            .delete(libraryAccess)
+            .delete(accessRules)
             .where(
               and(
-                eq(libraryAccess.userId, fx.owner.id),
-                eq(libraryAccess.libraryId, fx.library.id),
+                eq(accessRules.userId, fx.owner.id),
+                eq(accessRules.libraryId, fx.library.id),
               ),
             );
 

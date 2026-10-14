@@ -20,7 +20,6 @@ import {
   items,
   jobs,
   movies,
-  permissions,
   progress,
   providerIds,
   ratings,
@@ -182,17 +181,16 @@ describe.skipIf(!databaseUrl)("Postgres schema", () => {
         await migrateDatabase(db);
         const before = await migrationState(db);
         expect(before.journal).toHaveLength(migrationJournal.entries.length);
-        expect(before.tables).toHaveLength(37);
+        expect(before.tables).toHaveLength(36);
         expect(before.extensions).toEqual([
           { extname: "btree_gist" },
           { extname: "pg_trgm" },
         ]);
         expect(before.groups).toMatchObject([
-          { name: "admins", builtIn: true, permissions: [...permissions] },
+          { name: "admins", builtIn: true },
           {
             name: "users",
             builtIn: true,
-            permissions: ["view", "play", "download"],
           },
         ]);
         expect(
@@ -238,7 +236,7 @@ describe.skipIf(!databaseUrl)("Postgres schema", () => {
             ]);
             const state = await migrationState(db);
             expect(state.journal).toHaveLength(migrationJournal.entries.length);
-            expect(state.tables).toHaveLength(37);
+            expect(state.tables).toHaveLength(36);
             expect(state.groups).toHaveLength(2);
           } finally {
             for (const runner of runners) runner.kill();

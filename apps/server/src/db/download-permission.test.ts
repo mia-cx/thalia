@@ -58,7 +58,7 @@ describe.skipIf(!databaseUrl)("download permission migration", () => {
           name: string;
           permissions: string[];
         }>(
-          sql`select name, permissions from groups where name in ('watchers', 'browsers', 'users') order by name`,
+          sql`select g.name, array_agg(r.action order by case r.action when 'view' then 1 when 'play' then 2 else 3 end) as permissions from groups g join access_rules r on r.group_id = g.id where g.name in ('watchers', 'browsers', 'users') group by g.name order by g.name`,
         );
         expect(groupRows).toEqual([
           { name: "browsers", permissions: ["view"] },
@@ -69,7 +69,7 @@ describe.skipIf(!databaseUrl)("download permission migration", () => {
           user_id: string;
           allowed: boolean;
         }>(
-          sql`select user_id, allowed from user_permission_overrides where permission = 'download' order by user_id`,
+          sql`select user_id, allowed from access_rules where action = 'download' and user_id is not null order by user_id`,
         );
         expect(overrides).toEqual([{ user_id: player, allowed: true }]);
       },

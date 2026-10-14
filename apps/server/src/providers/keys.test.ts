@@ -369,7 +369,7 @@ describe.skipIf(!databaseUrl)("provider keys", () => {
       expect(await readProviderKeyNames(db)).toEqual([]);
     }));
 
-  test("callers without manage-server are FORBIDDEN", () =>
+  test("callers without server:manage are FORBIDDEN", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       const { admin, viewer } = await seed(db);

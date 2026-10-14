@@ -5,6 +5,7 @@ import type {
 } from "@thalia/plugin-api";
 import { eq } from "drizzle-orm";
 import { publishEvent } from "../api/events.ts";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
@@ -22,7 +23,10 @@ import { providersForLibrary, readMetadataSettings } from "./settings.ts";
 async function subject(db: Database, actorId: string, id: string) {
   const [item] = await db.select().from(items).where(eq(items.id, id));
   if (item === undefined) return null;
-  await requirePermission(db, actorId, "view", item.libraryId);
+  await requirePermission(db, actorId, "view", {
+    type: "library",
+    id: item.libraryId,
+  });
   const ids = await db
     .select({ provider: providerIds.provider, value: providerIds.value })
     .from(providerIds)
@@ -167,7 +171,10 @@ export async function selectRemoteMetadata(
 ) {
   const item = await subject(db, actorId, itemId);
   if (item === null) throw new AuthError("NOT_FOUND");
-  await requirePermission(db, actorId, "manage-metadata", item.libraryId);
+  await requirePermission(db, actorId, "metadata:edit", {
+    type: "library",
+    id: item.libraryId,
+  });
   if (Object.keys(input.providerIds).length === 0)
     throw new AuthError("INVALID_INPUT");
   const providers = await providersFor(
@@ -234,7 +241,12 @@ export async function downloadRemoteArtwork(
   request: typeof fetch = fetch,
 ) {
   const item = await subject(db, actorId, itemId);
-  await requirePermission(db, actorId, "manage-metadata", item?.libraryId);
+  await requirePermission(
+    db,
+    actorId,
+    "metadata:edit",
+    item ? { type: "library", id: item.libraryId } : server,
+  );
   // Libraries and metadata identities have no artwork owner in the core.
   if (item === null) return;
   await storeArtworkOriginal(db, itemId, image, request);

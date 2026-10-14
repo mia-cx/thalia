@@ -595,7 +595,7 @@ async function revoke(sessionId: string) {
     loading={libs.data === undefined && !libs.failure ? 3 : undefined}
     failure={libs.failure ??
       (Object.values(libraryFailures).at(-1) || undefined)}
-    description="Deny wins over every group.{adminLocked
+    description="Allow and Deny override groups.{adminLocked
       ? ' Only an admin can change this.'
       : ''}"
   >

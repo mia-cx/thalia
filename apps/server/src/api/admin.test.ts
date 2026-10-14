@@ -153,7 +153,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
       });
       const managers = await createGroup(db, admin.id, {
         name: "managers",
-        permissions: ["manage-users"],
+        permissions: ["users:manage"],
       });
       await setUserGroups(db, admin.id, manager.id, [managers.id]);
       const { token: managerToken } = await login(
@@ -349,7 +349,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
       });
       const custom = await createGroup(db, admin.id, {
         name: "editors",
-        permissions: ["manage-metadata"],
+        permissions: ["metadata:edit"],
       });
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
       try {
@@ -460,18 +460,24 @@ describe.skipIf(!databaseUrl)("admin api", () => {
         expect(denied.libraryAccess).toEqual([
           { libraryId: library.id, allowed: false },
         ]);
-        expect(await checkPermission(db, viewer.id, "view", library.id)).toBe(
-          false,
-        );
+        expect(
+          await checkPermission(db, viewer.id, "view", {
+            type: "library",
+            id: library.id,
+          }),
+        ).toBe(false);
         const inherited = await client.users.setLibraryAccess({
           id: viewer.id,
           libraryId: library.id,
           allowed: null,
         });
         expect(inherited.libraryAccess).toEqual([]);
-        expect(await checkPermission(db, viewer.id, "view", library.id)).toBe(
-          true,
-        );
+        expect(
+          await checkPermission(db, viewer.id, "view", {
+            type: "library",
+            id: library.id,
+          }),
+        ).toBe(true);
       } finally {
         await server.stop();
       }
@@ -488,18 +494,18 @@ describe.skipIf(!databaseUrl)("admin api", () => {
         const client = createThaliaClient({ origin: base, headers });
         const created = await client.groups.create({
           name: "editors",
-          permissions: ["manage-metadata"],
+          permissions: ["metadata:edit"],
         });
         expect(created).toMatchObject({
           name: "editors",
           builtIn: false,
-          permissions: ["manage-metadata"],
+          permissions: ["metadata:edit"],
         });
         const updated = await client.groups.setPermissions({
           id: created.id,
-          permissions: ["view", "manage-subtitles"],
+          permissions: ["view", "subtitles:edit"],
         });
-        expect(updated.permissions).toEqual(["view", "manage-subtitles"]);
+        expect(updated.permissions).toEqual(["view", "subtitles:edit"]);
         const [admins] = await db
           .select()
           .from(groups)

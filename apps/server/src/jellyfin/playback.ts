@@ -1,9 +1,11 @@
+import { eq } from "drizzle-orm";
 import type { createHlsHandler } from "../api/hls.ts";
 import { listVersionViews } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import { verifyPlaybackToken } from "../auth/playback-tokens.ts";
 import { authenticate } from "../auth/sessions.ts";
+import { items } from "../db/schema/index.ts";
 import { serveVersionFile } from "../playback/direct.ts";
 import { planPlayback } from "../playback/planning.ts";
 import { parseHlsName } from "../playback/playlists.ts";
@@ -272,12 +274,19 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
           path: `/Items/{id}/${kind}`,
           handle: async (context) => {
             const itemId = requiredGuid(context.params.id);
-            if (kind === "Download")
+            if (kind === "Download") {
+              const [item] = await context.db
+                .select({ libraryId: items.libraryId })
+                .from(items)
+                .where(eq(items.id, itemId));
+              if (!item) throw new AuthError("NOT_FOUND");
               await requirePermission(
                 context.db,
                 context.caller.user.id,
                 "download",
+                { type: "library", id: item.libraryId },
               );
+            }
             const version = await versionOf(
               context,
               context.caller.user.id,

@@ -63,7 +63,11 @@ async function requireViewableItem(
     .where(eq(items.id, itemId))
     .limit(1);
   if (item === undefined) throw new AuthError("NOT_FOUND");
-  await requirePermission(db, userId, "view", item.libraryId);
+  await requirePermission(db, userId, "view", {
+    type: "library",
+    id: item.libraryId,
+  });
+  return item;
 }
 
 function clampPosition(position: number, durationSeconds: number | null) {
@@ -120,8 +124,11 @@ export async function resumeProgress(
   itemId: string,
   versionId: string,
 ) {
-  await requireViewableItem(db, userId, itemId);
-  await requirePermission(db, userId, "play");
+  const item = await requireViewableItem(db, userId, itemId);
+  await requirePermission(db, userId, "play", {
+    type: "library",
+    id: item.libraryId,
+  });
   const [version] = await db
     .select()
     .from(versions)
@@ -177,8 +184,14 @@ async function lockSession(tx: LifecycleDb, userId: string, scope: Scope) {
     )
     .limit(1);
   if (version === undefined) throw new AuthError("NOT_FOUND");
-  await requirePermission(tx, userId, "view", version.libraryId);
-  await requirePermission(tx, userId, "play");
+  await requirePermission(tx, userId, "view", {
+    type: "library",
+    id: version.libraryId,
+  });
+  await requirePermission(tx, userId, "play", {
+    type: "library",
+    id: version.libraryId,
+  });
   await tx.execute(
     sql`select pg_advisory_xact_lock(hashtextextended(${`${userId}:${scope.itemId}`}, 0))`,
   );
@@ -251,8 +264,11 @@ export async function resolvePlaySession(
   const { itemId, sessionId, versionId } = report;
   const userId = caller.user.id;
   const credentialId = caller.credential.id;
-  await requireViewableItem(db, userId, itemId);
-  await requirePermission(db, userId, "play");
+  const item = await requireViewableItem(db, userId, itemId);
+  await requirePermission(db, userId, "play", {
+    type: "library",
+    id: item.libraryId,
+  });
   const [found] = await db
     .select({
       id: sessionRegistry.id,

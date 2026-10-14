@@ -3,10 +3,10 @@ import { eq } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   episodes,
   groups,
   items,
-  libraryAccess,
   progress,
   seasons,
   userGroups,
@@ -817,7 +817,8 @@ describe.skipIf(!databaseUrl)("next up", () => {
 
       expect(await nextUp(db, userA.id)).toContain(deniedNextId);
 
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
+        action: "view",
         libraryId: deniedLibrary.id,
         userId: userA.id,
         allowed: false,

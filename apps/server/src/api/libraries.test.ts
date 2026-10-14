@@ -10,10 +10,10 @@ import { createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   files,
   items,
   libraries,
-  libraryAccess,
   versions,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
@@ -157,9 +157,10 @@ describe.skipIf(!databaseUrl)("libraries api", () => {
         .returning();
       if (!allowed || !denied)
         throw new Error("Library insert returned no row.");
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
         libraryId: denied.id,
         userId: viewer.id,
+        action: "view",
         allowed: false,
       });
       const server = await startThalia("api", { databaseUrl: url, port: 0 });

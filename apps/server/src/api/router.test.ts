@@ -8,7 +8,7 @@ import { setPermissionOverride } from "../auth/permissions.ts";
 import { createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { artwork, items, libraryAccess } from "../db/schema/index.ts";
+import { accessRules, artwork, items } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -292,7 +292,8 @@ describe.skipIf(!databaseUrl)("api router", () => {
         username: "viewer",
         password: "viewer-pass",
       });
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
+        action: "view",
         libraryId: library.id,
         userId: viewer.id,
         allowed: false,
@@ -320,7 +321,8 @@ describe.skipIf(!databaseUrl)("api router", () => {
         password: "viewer-pass",
       });
       await setPermissionOverride(db, admin.id, viewer.id, "view", false);
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
+        action: "view",
         libraryId: library.id,
         userId: viewer.id,
         allowed: true,

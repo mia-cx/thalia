@@ -89,7 +89,7 @@ describe.skipIf(!databaseUrl)("store status", () => {
     60_000,
   );
 
-  test("needs manage-transcoding", () =>
+  test("needs transcoding:manage", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       const admin = await setupAdmin(db, {

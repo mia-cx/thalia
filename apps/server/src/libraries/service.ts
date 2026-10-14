@@ -10,6 +10,7 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
@@ -175,9 +176,9 @@ async function readLibrary(db: Connection, id: string) {
   return library;
 }
 
-/** Lists every library with its roots for a caller holding manage-libraries. */
+/** Lists every library with its roots for a caller holding libraries:manage. */
 export async function listLibraries(db: Database, actorId: string) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   return withRoots(
     db,
     await db
@@ -187,19 +188,19 @@ export async function listLibraries(db: Database, actorId: string) {
   );
 }
 
-/** Loads one library with its roots for a caller holding manage-libraries. */
+/** Loads one library with its roots for a caller holding libraries:manage. */
 export async function getLibrary(db: Database, actorId: string, id: string) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   return readLibrary(db, id);
 }
 
-/** Creates a library with one or more roots for a caller holding manage-libraries. */
+/** Creates a library with one or more roots for a caller holding libraries:manage. */
 export async function createLibrary(
   db: Database,
   actorId: string,
   input: CreateLibraryInput,
 ) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   const name = normalizeName(input.name);
   const paths = normalizeRoots(input.roots);
   return db.transaction(async (tx) => {
@@ -255,7 +256,7 @@ async function removeRoots(
 
 /**
  * Renames a library and edits its roots for a caller holding
- * manage-libraries. It runs under the Library's row lock, which scans hold
+ * libraries:manage. It runs under the Library's row lock, which scans hold
  * while they write, and queues a full scan when a root was added or repointed.
  */
 export async function updateLibrary(
@@ -264,7 +265,7 @@ export async function updateLibrary(
   id: string,
   input: UpdateLibraryInput,
 ) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   const name = input.name === undefined ? undefined : normalizeName(input.name);
   const requested =
     input.roots === undefined
@@ -352,7 +353,7 @@ export async function deleteLibrary(
   id: string,
   store: ArtworkStoreConfig = artworkStoreConfig(),
 ) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   const orphaned = await db.transaction(async (tx) => {
     // The row lock serializes this snapshot against concurrent artwork stores.
     const [library] = await tx
@@ -382,9 +383,9 @@ export async function deleteLibrary(
   return { ok: true };
 }
 
-/** Enqueues a full library scan for a caller holding manage-libraries. */
+/** Enqueues a full library scan for a caller holding libraries:manage. */
 export async function scanLibrary(db: Database, actorId: string, id: string) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   const [library] = await db
     .select({ id: libraries.id, medium: libraries.medium })
     .from(libraries)
@@ -419,7 +420,7 @@ export async function writeLibraryPreference(
   id: string,
   value: JsonValue,
 ) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   await db.transaction(async (tx) => {
     const [library] = await tx
       .select({ id: libraries.id })
@@ -484,14 +485,14 @@ export async function rescanLibraries(
   for (const library of selected) await scanLibrary(db, actorId, library.id);
 }
 
-/** Reports one scan run's counts and newest job for a caller holding manage-libraries. */
+/** Reports one scan run's counts and newest job for a caller holding libraries:manage. */
 export async function libraryScanStatus(
   db: Database,
   actorId: string,
   id: string,
   runId?: string,
 ) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   const [library] = await db
     .select({ id: libraries.id })
     .from(libraries)

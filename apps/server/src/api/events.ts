@@ -1,6 +1,7 @@
 import { withEventMeta } from "@orpc/server";
 import { asc, desc, eq, gt, sql } from "drizzle-orm";
 import { Option, Schema } from "effect";
+import { server } from "../auth/access.ts";
 import { checkPermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { events, sessionRegistry } from "../db/schema/index.ts";
@@ -54,9 +55,12 @@ export async function canReceive(
 ): Promise<boolean> {
   switch (event.kind) {
     case "library.changed":
-      return checkPermission(db, caller.user.id, "view", event.libraryId);
+      return checkPermission(db, caller.user.id, "view", {
+        type: "library",
+        id: event.libraryId,
+      });
     case "job.progress":
-      return checkPermission(db, caller.user.id, "manage-server");
+      return checkPermission(db, caller.user.id, "server:manage", server);
     case "session.state":
     case "segment.ready": {
       const [session] = await db
@@ -65,7 +69,7 @@ export async function canReceive(
         .where(eq(sessionRegistry.id, event.sessionId))
         .limit(1);
       if (session?.userId === caller.user.id) return true;
-      return checkPermission(db, caller.user.id, "manage-server");
+      return checkPermission(db, caller.user.id, "server:manage", server);
     }
     // Marks and progress are private to the user who made them.
     case "user-data.changed":

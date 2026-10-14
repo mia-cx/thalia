@@ -380,7 +380,7 @@ describe.skipIf(!databaseUrl)("playback sessions", () => {
       ).toEqual([stored.id, direct.id]);
     }));
 
-  test("needs manage-server, over RPC and REST", () =>
+  test("needs server:manage, over RPC and REST", () =>
     withDatabase(async (db, url) => {
       await migrateDatabase(db);
       const fx = await seed(db);
