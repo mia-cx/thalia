@@ -260,9 +260,9 @@ onDestroy(() => {
     />
   {/each}
 
-  {#if freeSpace.data !== undefined && freeSpace.data.length > 0}
-    <FormGroup title="Free space">
-      {#each freeSpace.data as filesystem}
+  {#if (freeSpace.data !== undefined && freeSpace.data.length > 0) || freeSpace.failure !== undefined}
+    <FormGroup title="Free space" failure={freeSpace.failure ?? undefined}>
+      {#each freeSpace.data ?? [] as filesystem (filesystem.roots[0]?.id)}
         {#if filesystem.state === "available"}
           {@const multiLibrary =
             new Set(filesystem.roots.map((root) => root.libraryId)).size > 1}
@@ -293,6 +293,15 @@ onDestroy(() => {
           />
         {/if}
       {/each}
+      {#snippet actions()}
+        {#if freeSpace.failure}
+          <Button
+            variant="secondary"
+            onclick={() => freeSpace.reload()}
+            disabled={freeSpace.loading}>Try again</Button
+          >
+        {/if}
+      {/snippet}
     </FormGroup>
   {/if}
 

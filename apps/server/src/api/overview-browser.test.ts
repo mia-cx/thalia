@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { setupAdmin } from "../auth/accounts.ts";
 import { login } from "../auth/sessions.ts";
-import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { artwork, items, providerIds } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
@@ -131,6 +130,95 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await page.waitFor(
               "[...document.querySelectorAll('button')].every(b => !b.textContent.includes('No overview')) || [...document.querySelectorAll('button')].some(b => b.textContent.includes('No overview') && b.textContent.trim().endsWith('0'))",
             );
+          } finally {
+            await page.close();
+            await server.stop();
+          }
+        }),
+      ));
+
+    test("a gap with more than one page lists every row without resetting", () =>
+      withFolder((folder) =>
+        withDatabase(async (db, url) => {
+          if (browser === undefined) throw new Error("Expected a browser.");
+          await migrateDatabase(db);
+          await setupAdmin(db, {
+            username: "admin",
+            password: "admin-pass",
+          });
+          const { token } = await login(
+            db,
+            {
+              username: "admin",
+              password: "admin-pass",
+              clientName: "Thalia Web",
+              deviceId: "overview-browser-paging",
+              deviceName: "Chromium",
+            },
+            "127.0.0.1",
+          );
+          const [library] = await insertLibraries(db, {
+            name: "Movies",
+            medium: "movies",
+            rootPath: folder,
+          });
+          if (library === undefined) throw new Error("Fixture missing.");
+          // One more than a page of Items missing their poster.
+          for (let i = 1; i <= 25; i += 1) {
+            const movie = await insertItem(db, {
+              libraryId: library.id,
+              kind: "movie",
+              title: `Gap Movie ${String(i).padStart(2, "0")}`,
+              overview: "Set.",
+              canonicalFolder: `/movies/gap-${i}`,
+              extension: {},
+            });
+            await db.insert(artwork).values({
+              itemId: movie.id,
+              type: "backdrop",
+              backend: "colocated",
+              storageKey: `gap-${i}/backdrop.jpg`,
+              selected: true,
+            });
+            await db
+              .insert(providerIds)
+              .values({ itemId: movie.id, provider: "tmdb", value: `${i}` });
+          }
+
+          const server = await startThalia("api", {
+            databaseUrl: url,
+            port: 0,
+            pluginOptions: { directory: `${folder}/installed` },
+          });
+          const page = await openPage();
+          const dialogLinks =
+            "document.querySelectorAll('[data-slot=dialog-content] a').length";
+          try {
+            const base = `http://127.0.0.1:${server.apiServer?.port}`;
+            await signIn(page, base, token, "/admin/overview");
+            await page.waitFor(
+              "[...document.querySelectorAll('button')].some(b => b.textContent.includes('No poster'))",
+            );
+            await page.eval(
+              "[...document.querySelectorAll('button')].find(b => b.textContent.includes('No poster'))?.click()",
+            );
+            await page.waitFor(`${dialogLinks} === 24`);
+            await page.waitFor(
+              "[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Show more')",
+            );
+            await page.eval(clickButton("Show more"));
+            await page.waitFor(`${dialogLinks} === 25`);
+            await page.waitFor(
+              "[...document.querySelectorAll('button')].every(b => b.textContent.trim() !== 'Show more')",
+            );
+            // A reset loop would drop back to the first page within a second.
+            await Bun.sleep(1000);
+            expect(await page.eval<number>(dialogLinks)).toBe(25);
+            expect(
+              await page.eval<boolean>(
+                "[...document.querySelectorAll('button')].every(b => b.textContent.trim() !== 'Show more')",
+              ),
+            ).toBe(true);
           } finally {
             await page.close();
             await server.stop();

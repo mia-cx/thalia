@@ -13,6 +13,7 @@ import {
   formatResolution,
   type LibraryGaps,
   type LibraryStats,
+  type MetadataGap,
 } from "$lib/stats.ts";
 
 /** One library's stats card on the Overview: counts, mixes and gap rows. */
@@ -38,16 +39,18 @@ const gapRows = $derived(
       ["overview", "No overview"],
       ["providerIds", "No provider IDs"],
       ...(library.medium === "shows"
-        ? [["still", "Episodes without a still"] as const]
+        ? [["still", "Episodes without a still"]]
         : []),
-    ] as const
+    ] as [MetadataGap, string][]
   ).map(([key, label]) => ({ key, label, count: gaps?.[key] ?? 0 })),
 );
 
 let dialogOpen = $state(false);
-let dialogGap = $state<{ key: string; label: string } | undefined>(undefined);
+let dialogGap = $state<{ key: MetadataGap; label: string } | undefined>(
+  undefined,
+);
 
-function openGap(row: { key: string; label: string }) {
+function openGap(row: { key: MetadataGap; label: string }) {
   dialogGap = row;
   dialogOpen = true;
 }
@@ -55,7 +58,11 @@ function openGap(row: { key: string; label: string }) {
 
 <FormGroup
   title={library.name}
-  loading={stats === undefined || gaps === undefined ? 3 : undefined}
+  loading={
+    failure === undefined && (stats === undefined || gaps === undefined)
+      ? 3
+      : undefined
+  }
   {failure}
 >
   {#if stats !== undefined && gaps !== undefined}
@@ -130,5 +137,5 @@ function openGap(row: { key: string; label: string }) {
   gap={dialogGap}
   count={dialogGap === undefined || gaps === undefined
     ? 0
-    : gaps[dialogGap.key as keyof Omit<LibraryGaps, "libraryId">]}
+    : gaps[dialogGap.key]}
 />

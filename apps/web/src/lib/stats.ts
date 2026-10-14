@@ -20,6 +20,9 @@ export type MetadataGapItem = Awaited<
   ReturnType<ThaliaClient["libraries"]["metadataGapItems"]>
 >["items"][number];
 
+/** The gap names, derived from the counts row so they can't drift. */
+export type MetadataGap = Exclude<keyof LibraryGaps, "libraryId">;
+
 const numberFormat = new Intl.NumberFormat();
 
 /** A count in the viewer's locale, such as `1,234`. */

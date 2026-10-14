@@ -1,10 +1,26 @@
 import { stat, statfs } from "node:fs/promises";
-import { asc, eq, inArray, type SQL, sql } from "drizzle-orm";
-import { server } from "../auth/access.ts";
-import { requirePermission } from "../auth/permissions.ts";
+import { and, asc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { Schema } from "effect";
 import { episodeSeason, ownSeason, showItem } from "../api/items.ts";
-import type { ItemKind } from "../api/schema.ts";
+import {
+  afterTitle,
+  defaultPageSize,
+  encodeTitleCursor,
+  type Page,
+  type TitleKey,
+  toPageBy,
+} from "../api/pagination.ts";
+import {
+  type FilesystemSpace as FilesystemSpaceSchema,
+  type ItemKind,
+  type LibraryMetadataGaps as LibraryMetadataGapsSchema,
+  type LibraryStats as LibraryStatsSchema,
+  type MetadataGapItem as MetadataGapItemSchema,
+  MetadataGap as MetadataGapSchema,
+  type SpaceRoot as SpaceRootSchema,
+} from "../api/schema.ts";
+import { server } from "../auth/access.ts";
+import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import {
   artwork,
@@ -14,91 +30,25 @@ import {
   libraryRoots,
   providerIds,
 } from "../db/schema/index.ts";
-import {
-  afterTitle,
-  defaultPageSize,
-  encodeTitleCursor,
-  toPageBy,
-  type Page,
-  type TitleKey,
-} from "../api/pagination.ts";
 
 /** One Library's dashboard numbers over its playable Items and their imported Versions. */
-export type LibraryStats = {
-  libraryId: string;
-  items: number;
-  versions: number;
-  files: number;
-  bytes: number;
-  runtimeSeconds: number;
-  addedLast30Days: number;
-  multiVersionItems: number;
-  resolution: {
-    uhd: number;
-    fullHd: number;
-    hd: number;
-    lower: number;
-    unknown: number;
-  };
-  dynamicRange: { sdr: number; hdr: number; dolbyVision: number };
-  codecs: { codec: string; versions: number }[];
-};
+export type LibraryStats = Schema.Schema.Type<typeof LibraryStatsSchema>;
 
 /** The metadata an Item can be missing, as the Overview counts it. */
-export type MetadataGap =
-  | "poster"
-  | "backdrop"
-  | "overview"
-  | "providerIds"
-  | "still";
-
-export const metadataGaps = [
-  "poster",
-  "backdrop",
-  "overview",
-  "providerIds",
-  "still",
-] as const;
+export type MetadataGap = Schema.Schema.Type<typeof MetadataGapSchema>;
 
 /** One library's count of Items missing each piece of metadata. */
-export type LibraryMetadataGaps = {
-  libraryId: string;
-  poster: number;
-  backdrop: number;
-  overview: number;
-  providerIds: number;
-  still: number;
-};
+export type LibraryMetadataGaps = Schema.Schema.Type<
+  typeof LibraryMetadataGapsSchema
+>;
 
 /** An Item missing a piece of metadata, with what the Overview needs to name and link it. */
-export type MetadataGapItem = {
-  id: string;
-  kind: "movie" | "show" | "season" | "episode";
-  title: string;
-  year: number | null;
-  parentId: string | null;
-  show: { id: string; title: string } | null;
-  seasonNumber: number | null;
-  episodeNumber: number | null;
-};
+export type MetadataGapItem = Schema.Schema.Type<typeof MetadataGapItemSchema>;
 
-type SpaceRoot = {
-  id: string;
-  libraryId: string;
-  libraryName: string;
-  path: string;
-};
+type SpaceRoot = Schema.Schema.Type<typeof SpaceRootSchema>;
 
 /** One filesystem holding Library roots, or one root the server can't read. */
-export type FilesystemSpace =
-  | {
-      state: "available";
-      totalBytes: number;
-      availableBytes: number;
-      usedBytes: number;
-      roots: SpaceRoot[];
-    }
-  | { state: "unavailable"; roots: SpaceRoot[] };
+export type FilesystemSpace = Schema.Schema.Type<typeof FilesystemSpaceSchema>;
 
 // The gap rules live once so the counts and the item list cannot disagree:
 // each names the Item kinds it applies to and the predicate marking it missing.
@@ -115,7 +65,10 @@ const gapDefinitions: Record<
   { kinds: readonly Schema.Schema.Type<typeof ItemKind>[]; missing: SQL }
 > = {
   poster: { kinds: ["movie", "show"], missing: noSelectedArtwork("poster") },
-  backdrop: { kinds: ["movie", "show"], missing: noSelectedArtwork("backdrop") },
+  backdrop: {
+    kinds: ["movie", "show"],
+    missing: noSelectedArtwork("backdrop"),
+  },
   overview: {
     kinds: ["movie", "show", "episode"],
     missing: sql`(${items.overview} is null or btrim(${items.overview}) = '')`,
@@ -300,7 +253,7 @@ export async function libraryMetadataGaps(
   const scope = await scopedLibraries(db, actorId, id);
   return Promise.all(
     scope.map(async (library) => {
-      const counts = metadataGaps.map(
+      const counts = MetadataGapSchema.literals.map(
         (gap) =>
           sql`(select count(*)::int from ${items}
             where ${items.libraryId} = ${library.id}
@@ -308,9 +261,7 @@ export async function libraryMetadataGaps(
               and ${gapDefinitions[gap].missing}
           ) as ${sql.identifier(gap)}`,
       );
-      const result = await db.execute(
-        sql`select ${sql.join(counts, sql`, `)}`,
-      );
+      const result = await db.execute(sql`select ${sql.join(counts, sql`, `)}`);
       const row = result[0] as Record<string, number> | undefined;
       if (row === undefined)
         throw new Error("Gap counts query returned no row.");
@@ -364,10 +315,12 @@ export async function metadataGapItems(
       ),
     )
     .where(
-      sql`${items.libraryId} = ${input.libraryId}
-        and ${inArray(items.kind, [...gap.kinds])}
-        and ${gap.missing}
-        ${input.after === undefined ? sql`` : sql`and ${afterTitle(input.after)}`}`,
+      and(
+        eq(items.libraryId, input.libraryId),
+        inArray(items.kind, [...gap.kinds]),
+        gap.missing,
+        input.after === undefined ? undefined : afterTitle(input.after),
+      ),
     )
     .orderBy(asc(items.title), asc(items.id))
     .limit(limit + 1);
@@ -404,8 +357,13 @@ export async function libraryFreeSpace(
       asc(libraries.id),
       asc(libraryRoots.position),
     );
+  // The union's roots are readonly; groups accumulate into mutable lists.
+  type Available = Omit<
+    Extract<FilesystemSpace, { state: "available" }>,
+    "roots"
+  > & { roots: SpaceRoot[] };
   const filesystems: FilesystemSpace[] = [];
-  const byDevice = new Map<number, Extract<FilesystemSpace, { state: "available" }>>();
+  const byDevice = new Map<number, Available>();
   for (const root of roots) {
     try {
       const info = await stat(root.path);
