@@ -104,7 +104,12 @@ async function expectHandlerError(
 
 describe.skipIf(!databaseUrl)("library scan jobs", () => {
   for (const medium of ["movies", "shows"] as const) {
-    for (const assertion of ["none", "running", "follow-up"] as const) {
+    for (const assertion of [
+      "none",
+      "running",
+      "follow-up",
+      "during-write",
+    ] as const) {
       test(`${medium}: a queued rename preserves identity and ${assertion} provider assertions during reconciliation`, () =>
         withDatabase((db) =>
           withTempRoot(async (root) => {
@@ -170,6 +175,8 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
             const options = {
               concurrencyKey: libraryConcurrencyKey(library.id),
             };
+            const earlierAssertion =
+              assertion === "running" || assertion === "during-write";
             await enqueueScan(
               queue,
               {
@@ -177,17 +184,16 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
                 libraryId: library.id,
                 path: ".",
                 reconcileMissing: true,
-                changes:
-                  assertion === "running"
-                    ? [
-                        {
-                          kind: "add",
-                          rootId: library.rootId,
-                          path: before,
-                          providerIds: assertedIds,
-                        },
-                      ]
-                    : [],
+                changes: earlierAssertion
+                  ? [
+                      {
+                        kind: "add",
+                        rootId: library.rootId,
+                        path: before,
+                        providerIds: assertedIds,
+                      },
+                    ]
+                  : [],
               },
               { ...options, priority: 1 },
             );
@@ -197,24 +203,13 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
             const base = await libraryScanSource(db, library);
             // The assertion race renames before the walk, after the claim
             // fixed its input. The other cases rename after the held walk.
-            if (assertion === "running")
+            if (earlierAssertion)
               await rename(join(root, before), join(root, after));
             await rm(join(root, deleted));
             const walked = Promise.withResolvers<void>();
             const release = Promise.withResolvers<void>();
-            const scanning = runScanJob(db, running.payload, running, {
-              ...base,
-              walk: async (path, recursive) => {
-                const snapshot = await base.walk(path, recursive);
-                walked.resolve();
-                await release.promise;
-                return snapshot;
-              },
-            });
-            try {
-              await walked.promise;
-              if (assertion !== "running")
-                await rename(join(root, before), join(root, after));
+            let submitted = false;
+            const queueFollowup = async () => {
               const followup = await enqueueScan(
                 queue,
                 {
@@ -235,10 +230,31 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
                 options,
               );
               expect(followup.id).not.toBe(running.id);
+            };
+            const scanning = runScanJob(db, running.payload, running, {
+              ...base,
+              verify: async (file) => {
+                await base.verify(file);
+                if (assertion !== "during-write" || submitted) return;
+                submitted = true;
+                await queueFollowup();
+              },
+              walk: async (path, recursive) => {
+                const snapshot = await base.walk(path, recursive);
+                walked.resolve();
+                await release.promise;
+                return snapshot;
+              },
+            });
+            try {
+              await walked.promise;
+              if (!earlierAssertion)
+                await rename(join(root, before), join(root, after));
+              if (assertion !== "during-write") await queueFollowup();
             } finally {
               release.resolve();
             }
-            if (assertion === "running") {
+            if (earlierAssertion) {
               await scanning;
               await queue.complete(running);
             } else {

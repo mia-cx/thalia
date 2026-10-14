@@ -649,14 +649,18 @@ export async function pruneEmptiedItems(
  */
 async function reconcileStaleFiles(
   tx: Transaction,
+  libraryId: string,
   source: ScanSource,
   rules: ScanRules,
   scope: string,
   itemIds: readonly string[],
   walkedKeys: ReadonlySet<string>,
-  pendingMoves: ReadonlySet<string>,
+  changes: readonly ScanChange[],
 ): Promise<string[]> {
-  if (itemIds.length === 0) return [];
+  if (itemIds.length === 0) {
+    await queuedScanMoveSources(tx, libraryId, changes);
+    return [];
+  }
   const held = await tx
     .select({
       id: files.id,
@@ -673,19 +677,20 @@ async function reconcileStaleFiles(
     .innerJoin(itemAncestors, eq(itemAncestors.descendantId, files.itemId))
     .where(inArray(itemAncestors.ancestorId, [...itemIds]));
   // A File is stale only when its own root lacks it.
-  const stale = held.filter(
-    (file) =>
-      !walkedKeys.has(rootedKey(file)) && !pendingMoves.has(rootedKey(file)),
-  );
+  const stale = held.filter((file) => !walkedKeys.has(rootedKey(file)));
   // Only a path inside the scope can have come back since the walk.
   await source.confirmMissing(
     stale.filter((file) => inScope(rules, scope, false, file.path)),
   );
-  const gone = [];
+  const missing = [];
   for (const file of stale) {
     if (inScope(rules, scope, false, file.path) || !(await source.exists(file)))
-      gone.push(file);
+      missing.push(file);
   }
+  // Enqueues do not take the Library lock. Read them after the filesystem
+  // checks, just before deletion, so a move arriving during the write counts.
+  const pendingMoves = await queuedScanMoveSources(tx, libraryId, changes);
+  const gone = missing.filter((file) => !pendingMoves.has(rootedKey(file)));
   const goneIds = gone.map((file) => file.id);
   if (goneIds.length > 0)
     await tx.delete(files).where(inArray(files.id, goneIds));
@@ -1031,8 +1036,6 @@ export async function scanDirectory(
     if (locked.rootsRevision !== source.rootsRevision)
       throw new Error("Library roots changed before scan write.");
 
-    const pendingMoves = await queuedScanMoveSources(tx, libraryId, changes);
-
     const emptiedItemIds = await applyScanChanges(
       tx,
       libraryId,
@@ -1230,14 +1233,17 @@ export async function scanDirectory(
         );
       const touched = await reconcileStaleFiles(
         tx,
+        libraryId,
         source,
         rules,
         path,
         [...new Set([...itemIds, ...atFolder.map((row) => row.id)])],
         walkedKeys,
-        pendingMoves,
+        changes,
       );
       await pruneEmptiedItems(tx, touched, deletedArtwork);
+    } else {
+      await queuedScanMoveSources(tx, libraryId, changes);
     }
 
     await persistScanFailures(tx, rules, path, walked, result);
@@ -1353,8 +1359,6 @@ export async function scanShowDirectory(
     // A root edit between the walk and this lock made the snapshot stale.
     if (locked.rootsRevision !== source.rootsRevision)
       throw new Error("Library roots changed before scan write.");
-
-    const pendingMoves = await queuedScanMoveSources(tx, libraryId, changes);
 
     const emptiedItemIds = await applyScanChanges(
       tx,
@@ -1829,14 +1833,17 @@ export async function scanShowDirectory(
         );
       const touched = await reconcileStaleFiles(
         tx,
+        libraryId,
         source,
         rules,
         path,
         [...new Set([...itemIds, ...atFolder.map((row) => row.id)])],
         walkedKeys,
-        pendingMoves,
+        changes,
       );
       await pruneEmptiedItems(tx, touched, deletedArtwork);
+    } else {
+      await queuedScanMoveSources(tx, libraryId, changes);
     }
 
     await persistScanFailures(tx, rules, path, walked, result);
