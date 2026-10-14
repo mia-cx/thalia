@@ -64,10 +64,12 @@ const startValue = $derived(
 const endValue = $derived(windowEnd ?? settings.data?.idleWindow.end ?? "");
 
 const providerKeysNote = $derived.by(() => {
+  const data = settings.data;
+  if (data === undefined) return undefined;
   const missing = (["movies", "shows"] as const).filter(
-    (medium) => !settings.data?.metadataMediums.includes(medium),
+    (medium) => !data.metadataMediums.includes(medium),
   );
-  if (settings.data === undefined || missing.length === 0) return undefined;
+  if (missing.length === 0) return undefined;
   if (missing.length === 2)
     return "No metadata source is set up, so posters and details won't load until you add a key named tmdb for movies or tvdb for shows.";
   return missing[0] === "shows"
