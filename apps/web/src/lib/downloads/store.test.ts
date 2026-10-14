@@ -1,0 +1,391 @@
+import { describe, expect, test } from "bun:test";
+import { get } from "svelte/store";
+import { createDownloads } from "./store.ts";
+
+// An in-memory OPFS stand-in at the FileSystemDirectoryHandle boundary:
+// writables stage bytes that swap into the file only on close().
+class FakeFile {
+  constructor(private readonly data: Uint8Array) {}
+  get size() {
+    return this.data.length;
+  }
+  async arrayBuffer() {
+    return this.data.slice().buffer;
+  }
+  async text() {
+    return new TextDecoder().decode(this.data);
+  }
+}
+
+class FakeWritable {
+  private buffer: Uint8Array;
+  private position = 0;
+  closed = false;
+  constructor(
+    private readonly handle: FakeFileHandle,
+    existing: Uint8Array | undefined,
+  ) {
+    this.buffer = existing ?? new Uint8Array(0);
+  }
+  async seek(position: number) {
+    this.position = position;
+  }
+  async truncate(size: number) {
+    this.buffer = this.buffer.slice(0, size);
+    if (this.position > size) this.position = size;
+  }
+  async write(data: Uint8Array | string | Blob) {
+    const chunk =
+      typeof data === "string"
+        ? new TextEncoder().encode(data)
+        : data instanceof Blob
+          ? new Uint8Array(await data.arrayBuffer())
+          : data;
+    const end = this.position + chunk.byteLength;
+    if (end > this.buffer.length) {
+      const grown = new Uint8Array(end);
+      grown.set(this.buffer);
+      this.buffer = grown;
+    }
+    this.buffer.set(chunk, this.position);
+    this.position = end;
+  }
+  async close() {
+    this.closed = true;
+    this.handle.commit(this.buffer);
+  }
+}
+
+class FakeFileHandle {
+  constructor(
+    private readonly dir: FakeDir,
+    private readonly name: string,
+  ) {}
+  async getFile() {
+    const data = this.dir.files.get(this.name);
+    if (data === undefined)
+      throw new DOMException("Not found.", "NotFoundError");
+    return new FakeFile(data);
+  }
+  async createWritable(options?: { keepExistingData?: boolean }) {
+    const existing = this.dir.files.get(this.name);
+    return new FakeWritable(
+      this,
+      options?.keepExistingData === true ? existing?.slice() : undefined,
+    );
+  }
+  commit(data: Uint8Array) {
+    this.dir.files.set(this.name, data);
+  }
+}
+
+class FakeDir {
+  readonly dirs = new Map<string, FakeDir>();
+  readonly files = new Map<string, Uint8Array>();
+  async getDirectoryHandle(name: string, options?: { create?: boolean }) {
+    let dir = this.dirs.get(name);
+    if (dir === undefined) {
+      if (options?.create !== true)
+        throw new DOMException("Not found.", "NotFoundError");
+      dir = new FakeDir();
+      this.dirs.set(name, dir);
+    }
+    return dir;
+  }
+  async getFileHandle(name: string, options?: { create?: boolean }) {
+    if (!this.files.has(name)) {
+      if (options?.create !== true)
+        throw new DOMException("Not found.", "NotFoundError");
+      this.files.set(name, new Uint8Array(0));
+    }
+    return new FakeFileHandle(this, name);
+  }
+  async removeEntry(name: string) {
+    if (this.dirs.delete(name) || this.files.delete(name)) return;
+    throw new DOMException("Not found.", "NotFoundError");
+  }
+}
+
+type FetchCall = { url: string; range: string | undefined };
+
+/** Serves `bytes` honouring `Range: bytes=N-`, chunked through a ReadableStream; gates pause before chunk i. */
+function fakeFetch(
+  bytes: Uint8Array,
+  options: {
+    chunk?: number;
+    gates?: (Promise<void> | undefined)[];
+    ignoreRange?: boolean;
+  } = {},
+) {
+  const calls: FetchCall[] = [];
+  const transport = async (url: string, init: RequestInit = {}) => {
+    const headers = (init.headers ?? {}) as Record<string, string>;
+    calls.push({ url, range: headers.range });
+    const out = new Headers();
+    let offset = 0;
+    let status = 200;
+    const match = /^bytes=(\d+)-$/.exec(headers.range ?? "");
+    if (match && options.ignoreRange !== true) {
+      offset = Number(match[1]);
+      status = 206;
+    }
+    const body = bytes.subarray(offset);
+    out.set("content-length", String(body.length));
+    if (status === 206)
+      out.set("content-range", `bytes ${offset}-${bytes.length - 1}/${bytes.length}`);
+    const chunk = options.chunk ?? Math.max(1, body.length);
+    let index = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        init.signal?.addEventListener("abort", () =>
+          controller.error(new DOMException("Aborted.", "AbortError")),
+        );
+        try {
+          for (let i = 0; i < body.length; i += chunk, index++) {
+            await options.gates?.[index];
+            controller.enqueue(body.subarray(i, i + chunk));
+          }
+          controller.close();
+        } catch {}
+      },
+    });
+    return new Response(stream, { status, headers: out });
+  };
+  return { transport: transport as unknown as typeof fetch, calls };
+}
+
+function fakeStorage(options: { persist?: boolean; quota?: number } = {}) {
+  const calls = { persist: 0 };
+  const storage = {
+    persist: async () => {
+      calls.persist += 1;
+      return options.persist ?? true;
+    },
+    persisted: async () => options.persist ?? true,
+    estimate: async () => ({ usage: 100, quota: options.quota ?? 1000 }),
+  };
+  return { storage, calls };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+async function waitFor(condition: () => boolean) {
+  for (let i = 0; i < 500; i++) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("Timed out waiting for the store.");
+}
+
+const bytes = Uint8Array.from({ length: 64 }, (_, i) => i);
+
+const input = {
+  itemId: "01900000-0000-7000-8000-000000000001",
+  versionId: "01900000-0000-7000-8000-000000000002",
+  title: "Movie (2026)",
+  bytes: bytes.length,
+  container: "mp4",
+  streams: [],
+};
+
+function makeStore(
+  root: FakeDir,
+  transport: typeof fetch,
+  storage: ReturnType<typeof fakeStorage>["storage"],
+) {
+  return createDownloads({
+    root: async () => root as unknown as FileSystemDirectoryHandle,
+    fetch: transport,
+    storage,
+    commitBytes: 16,
+  });
+}
+
+function fileOf(root: FakeDir) {
+  return root.dirs.get("downloads")?.files.get(input.versionId);
+}
+
+describe("downloads store", () => {
+  test("streams a file into OPFS and marks it complete", async () => {
+    const root = new FakeDir();
+    const { transport, calls } = fakeFetch(bytes, { chunk: 8 });
+    const { storage, calls: persisted } = fakeStorage();
+    const store = makeStore(root, transport, storage);
+    await store.start(input);
+    await waitFor(
+      () => get(store).records[0]?.state === "complete",
+    );
+    expect(fileOf(root)).toEqual(bytes);
+    const snapshot = get(store);
+    expect(snapshot.records[0]?.written).toBe(64);
+    expect(snapshot.persisted).toBe(true);
+    expect(persisted.persist).toBe(1);
+    expect(snapshot.storage).toEqual({ usage: 100, quota: 1000, downloads: 64 });
+    expect(calls).toEqual([
+      {
+        url: `/api/items/${input.itemId}/versions/${input.versionId}/download`,
+        range: undefined,
+      },
+    ]);
+  });
+
+  test("pause commits and resume continues with a Range header", async () => {
+    const root = new FakeDir();
+    const gate = deferred();
+    const { transport, calls } = fakeFetch(bytes, {
+      chunk: 8,
+      gates: [undefined, undefined, gate.promise],
+    });
+    const { storage } = fakeStorage();
+    const store = makeStore(root, transport, storage);
+    await store.start(input);
+    await waitFor(() => (get(store).records[0]?.written ?? 0) >= 16);
+    const pausing = store.pause(input.versionId);
+    gate.resolve();
+    await pausing;
+    expect(get(store).records[0]?.state).toBe("paused");
+    expect(fileOf(root)?.length).toBe(16);
+
+    await store.resume(input.versionId);
+    await waitFor(() => get(store).records[0]?.state === "complete");
+    expect(calls[1]?.range).toBe("bytes=16-");
+    expect(fileOf(root)).toEqual(bytes);
+  });
+
+  test("a 200 answer to a Range request restarts the file", async () => {
+    const root = new FakeDir();
+    const gate = deferred();
+    const first = fakeFetch(bytes, {
+      chunk: 8,
+      gates: [undefined, gate.promise],
+    });
+    const { storage } = fakeStorage();
+    const store = makeStore(root, first.transport, storage);
+    await store.start(input);
+    await waitFor(() => (get(store).records[0]?.written ?? 0) >= 8);
+    const pausing = store.pause(input.versionId);
+    gate.resolve();
+    await pausing;
+    expect(fileOf(root)?.length).toBe(8);
+
+    // The resumed request ignores the Range and answers 200: restart whole.
+    const second = fakeFetch(bytes, { chunk: 8, ignoreRange: true });
+    const restarted = createDownloads({
+      root: async () => root as unknown as FileSystemDirectoryHandle,
+      fetch: (...args) => second.transport(...args),
+      storage,
+      commitBytes: 16,
+    });
+    // Share the same store's records is impossible; resume through a fresh
+    // transfer by calling resume on a store that restored the index.
+    await restarted.restore();
+    await restarted.resume(input.versionId);
+    await waitFor(
+      () => get(restarted).records[0]?.state === "complete",
+    );
+    expect(second.calls[0]?.range).toBe("bytes=8-");
+    expect(fileOf(root)).toEqual(bytes);
+  });
+
+  test("remove deletes the file and record, paused or complete", async () => {
+    const root = new FakeDir();
+    const gate = deferred();
+    const { transport } = fakeFetch(bytes, {
+      chunk: 8,
+      gates: [undefined, gate.promise],
+    });
+    const { storage } = fakeStorage();
+    const store = makeStore(root, transport, storage);
+    await store.start(input);
+    await waitFor(() => (get(store).records[0]?.written ?? 0) >= 8);
+    const pausing = store.pause(input.versionId);
+    gate.resolve();
+    await pausing;
+    await store.remove(input.versionId);
+    expect(get(store).records).toEqual([]);
+    expect(fileOf(root)).toBeUndefined();
+    expect(get(store).storage?.downloads).toBe(0);
+
+    const again = fakeFetch(bytes);
+    const complete = createDownloads({
+      root: async () => root as unknown as FileSystemDirectoryHandle,
+      fetch: (...args) => again.transport(...args),
+      storage,
+      commitBytes: 16,
+    });
+    await complete.restore();
+    await complete.start(input);
+    await waitFor(
+      () => get(complete).records[0]?.state === "complete",
+    );
+    await complete.remove(input.versionId);
+    expect(get(complete).records).toEqual([]);
+    expect(fileOf(root)).toBeUndefined();
+    expect(get(complete).storage?.downloads).toBe(0);
+  });
+
+  test("restore picks a mid-download record up as paused and resume finishes it", async () => {
+    const root = new FakeDir();
+    const gate = deferred();
+    const first = fakeFetch(bytes, {
+      chunk: 8,
+      gates: [undefined, undefined, gate.promise],
+    });
+    const { storage } = fakeStorage();
+    const store = makeStore(root, first.transport, storage);
+    await store.start(input);
+    await waitFor(() => (get(store).records[0]?.written ?? 0) >= 16);
+    const pausing = store.pause(input.versionId);
+    gate.resolve();
+    await pausing;
+
+    // A reload: a new store over the same root reads the index back.
+    const resumed = fakeFetch(bytes, { chunk: 8 });
+    const restored = createDownloads({
+      root: async () => root as unknown as FileSystemDirectoryHandle,
+      fetch: (...args) => resumed.transport(...args),
+      storage,
+      commitBytes: 16,
+    });
+    await restored.restore();
+    const snapshot = get(restored);
+    expect(snapshot.ready).toBe(true);
+    expect(snapshot.records).toEqual([
+      { ...input, written: 16, state: "paused" },
+    ]);
+    await restored.resume(input.versionId);
+    await waitFor(
+      () => get(restored).records[0]?.state === "complete",
+    );
+    expect(resumed.calls[0]?.range).toBe("bytes=16-");
+    expect(fileOf(root)).toEqual(bytes);
+  });
+
+  test("a refused persist still completes and is asked once across starts", async () => {
+    const root = new FakeDir();
+    const { transport } = fakeFetch(bytes, { chunk: 8 });
+    const { storage, calls } = fakeStorage({ persist: false });
+    const store = makeStore(root, transport, storage);
+    const other = { ...input, versionId: "01900000-0000-7000-8000-000000000003" };
+    await store.start(input);
+    await store.start(other);
+    expect(calls.persist).toBe(1);
+    expect(get(store).persisted).toBe(false);
+    await waitFor(
+      () =>
+        get(store).records.every((record) => record.state === "complete") &&
+        get(store).records.length === 2,
+    );
+    expect(fileOf(root)).toEqual(bytes);
+    expect(
+      root.dirs.get("downloads")?.files.get(other.versionId),
+    ).toEqual(bytes);
+    expect(calls.persist).toBe(1);
+  });
+});
