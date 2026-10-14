@@ -250,7 +250,10 @@ describe.skipIf(!databaseUrl)("jellyfin streaming", () => {
               authorization: `${mp4Client}, Token="${token}"`,
               "content-type": "application/json",
             },
-            body: JSON.stringify({ DeviceProfile: deviceProfiles.progressive }),
+            body: JSON.stringify({
+              DeviceProfile: deviceProfiles.progressive,
+              StartTimeTicks: 20_000_000,
+            }),
           });
           expect(info.status).toBe(200);
           const { MediaSources } = (await info.json()) as {
@@ -265,10 +268,15 @@ describe.skipIf(!databaseUrl)("jellyfin streaming", () => {
           expect(subtitle?.DeliveryMethod).toBe("External");
           const streamUrl = new URL(source?.TranscodingUrl ?? "", base);
           expect(streamUrl.pathname).toBe(`/videos/${itemGuid}/stream.mp4`);
+          // The resume position rides the URL the client follows unchanged.
+          expect(streamUrl.searchParams.get("StartTimeTicks")).toBe("20000000");
           // Players fetch the URL bare; its token authenticates.
           const stream = await fetch(streamUrl);
           expect(stream.status).toBe(200);
           expect(stream.headers.get("content-type")).toBe("video/mp4");
+          expect(Number(stream.headers.get("x-stream-offset"))).toBeGreaterThan(
+            0,
+          );
           const reader = stream.body?.getReader();
           if (reader === undefined) throw new Error("Expected a body.");
           const first = await reader.read();
@@ -276,14 +284,6 @@ describe.skipIf(!databaseUrl)("jellyfin streaming", () => {
           expect(new TextDecoder().decode(first.value?.slice(4, 8))).toBe(
             "ftyp",
           );
-          // StartTimeTicks seeks through the same forward.
-          streamUrl.searchParams.set("StartTimeTicks", "20000000");
-          const started = await fetch(streamUrl);
-          expect(started.status).toBe(200);
-          expect(
-            Number(started.headers.get("x-stream-offset")),
-          ).toBeGreaterThanOrEqual(0);
-          await started.body?.cancel();
         } finally {
           await thalia.stop();
           await rm(scratch, { recursive: true, force: true });

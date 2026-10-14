@@ -16,6 +16,8 @@ export type PlannedSource = {
   audioStreamIndex: number | null;
   /** The subtitle Stream the client chose, null for none; undefined when it chose nothing. */
   subtitleStreamIndex?: number | null;
+  /** The resume position PlaybackInfo asked for, carried by the progressive URL only. */
+  startTimeTicks?: number;
 };
 
 const streamTypes = {
@@ -228,7 +230,11 @@ export function mediaSource(
     TranscodingUrl:
       transcode && planned?.query != null
         ? progressive
-          ? `/videos/${toGuid(itemId)}/stream.mp4?${planned.query}`
+          ? `/videos/${toGuid(itemId)}/stream.mp4?${planned.query}${
+              planned.startTimeTicks === undefined
+                ? ""
+                : `&StartTimeTicks=${planned.startTimeTicks}`
+            }`
           : `/videos/${toGuid(itemId)}/master.m3u8?${planned.query}`
         : undefined,
     TranscodingSubProtocol: transcode && !progressive ? "hls" : "http",

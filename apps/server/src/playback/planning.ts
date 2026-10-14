@@ -460,7 +460,9 @@ export async function planPlayback(
   // Stream, so a burn-in over HLS or another audio Stream stays live, or
   // fails the plan when no live path exists.
   const storedEligible =
-    !requiresBurnIn(source, profile, true) && (selection.audio ?? 0) === 0;
+    !requiresBurnIn(source, profile, true) &&
+    (selection.audio ?? 0) === 0 &&
+    input.profile.hls !== false;
   const segmentTimelineId = version.timelineAligned
     ? version.segmentTimelineId
     : null;

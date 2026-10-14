@@ -210,6 +210,11 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
               : subtitleIndex < 0
                 ? null
                 : subtitleIndex;
+          // A resume or server-side seek rides the progressive TranscodingUrl.
+          const startTicks =
+            body.number("StartTimeTicks") ?? query.integer("StartTimeTicks");
+          const startTimeTicks =
+            startTicks !== undefined && startTicks > 0 ? startTicks : undefined;
           const externalSubtitle = version.externalSubtitles.some(
             (track) => track.index === subtitleStreamIndex,
           );
@@ -267,6 +272,7 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
                     }),
               audioStreamIndex: plan.audioStreamIndex,
               subtitleStreamIndex,
+              startTimeTicks,
             };
           } catch (error) {
             // No path plays for this profile. The source still answers, with

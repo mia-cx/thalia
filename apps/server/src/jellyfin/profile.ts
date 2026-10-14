@@ -149,7 +149,10 @@ const positive = (value: string | null | undefined) => {
  * Translates a Jellyfin DeviceProfile into the engine's client profile.
  * DirectPlayProfiles give the containers and codecs a client opens as files,
  * an empty field meaning any, as in Jellyfin. HLS TranscodingProfiles add the codecs it decodes over HLS, first in
- * preference; http TranscodingProfiles follow and mark the profile progressive.
+ * preference and marking the profile HLS-capable. An http TranscodingProfile
+ * that outputs mp4 marks the profile progressive, since the progressive
+ * stream is always fragmented MP4; its codecs then replace the HLS ones,
+ * because live sessions for that client stream progressively.
  * Unconditional CodecProfiles narrow video profiles, level, size,
  * audio channels and HDR flavours; a profile without any VideoRangeType
  * condition takes every flavour, as Jellyfin does. Embedded SubtitleProfiles
@@ -168,7 +171,14 @@ export function readDeviceProfile(
   const direct = (profile.directplayprofiles ?? []).filter(isVideo);
   const transcode = (profile.transcodingprofiles ?? []).filter(isVideo);
   const hls = transcode.filter((entry) => lowered(entry.protocol) === "hls");
-  const http = transcode.filter((entry) => lowered(entry.protocol) === "http");
+  // A progressive stream is always fragmented MP4, so only an http profile
+  // that outputs mp4 counts; an http mkv/ts one matches nothing we serve.
+  const http = transcode.filter(
+    (entry) =>
+      lowered(entry.protocol) === "http" &&
+      translate("container", entry.container).includes("mp4"),
+  );
+  const progressive = http.length > 0;
   // Jellyfin reads an empty DirectPlayProfile field as any value, and
   // Swiftfin's direct play mode sends only the type.
   const directNames = (
@@ -180,13 +190,16 @@ export function readDeviceProfile(
         ? translate(kind, entry[field])
         : Object.values(jellyfinNames[kind]).flat(),
     );
+  // A progressive client's live sessions stream progressively, so its HLS
+  // codecs do not count toward the decode list; direct play codecs always do.
   const decodes = (
     kind: "video" | "audio",
     field: "videocodec" | "audiocodec",
   ) => [
     ...new Set([
-      ...hls.flatMap((entry) => translate(kind, entry[field])),
-      ...http.flatMap((entry) => translate(kind, entry[field])),
+      ...(progressive ? http : hls).flatMap((entry) =>
+        translate(kind, entry[field]),
+      ),
       ...directNames(kind, field),
     ]),
   ];
@@ -282,6 +295,7 @@ export function readDeviceProfile(
       bitrate == null || !Number.isFinite(bitrate) || bitrate <= 0
         ? null
         : Math.floor(bitrate),
-    progressive: http.length > 0,
+    progressive,
+    hls: hls.length > 0,
   };
 }

@@ -59,11 +59,65 @@ describe("DeviceProfile translation", () => {
   test("an http TranscodingProfile marks the profile progressive and counts its codecs", () => {
     const profile = readDeviceProfile(deviceProfiles.progressive);
     expect(profile.progressive).toBe(true);
+    expect(profile.hls).toBe(false);
     expect(profile.videoCodecs.map((entry) => entry.codec)).toEqual(["h264"]);
     expect(profile.audioCodecs.map((entry) => entry.codec)).toEqual(["aac"]);
     // HLS-only and direct-play fixtures stay on HLS delivery.
-    for (const name of ["swiftfin", "infuse", "findroid"] as const)
-      expect(readDeviceProfile(deviceProfiles[name]).progressive).toBe(false);
+    for (const name of ["infuse", "findroid"] as const) {
+      const other = readDeviceProfile(deviceProfiles[name]);
+      expect(other.progressive).toBe(false);
+      expect(other.hls).toBe(false);
+    }
+    const swiftfin = readDeviceProfile(deviceProfiles.swiftfin);
+    expect(swiftfin.progressive).toBe(false);
+    expect(swiftfin.hls).toBe(true);
+  });
+
+  test("a progressive client's codecs come from its http profile, not the HLS one", () => {
+    const mixed = readDeviceProfile({
+      DirectPlayProfiles: [],
+      TranscodingProfiles: [
+        {
+          Type: "Video",
+          Protocol: "hls",
+          Container: "mp4",
+          VideoCodec: "hevc",
+          AudioCodec: "aac",
+        },
+        {
+          Type: "Video",
+          Protocol: "http",
+          Container: "mp4",
+          VideoCodec: "h264",
+          AudioCodec: "aac",
+        },
+      ],
+    });
+    expect(mixed.progressive).toBe(true);
+    expect(mixed.hls).toBe(true);
+    expect(mixed.videoCodecs.map((entry) => entry.codec)).toEqual(["h264"]);
+    // An http profile that outputs no mp4 never turns progressive on.
+    const mkvOnly = readDeviceProfile({
+      DirectPlayProfiles: [],
+      TranscodingProfiles: [
+        {
+          Type: "Video",
+          Protocol: "hls",
+          Container: "mp4",
+          VideoCodec: "h264",
+          AudioCodec: "aac",
+        },
+        {
+          Type: "Video",
+          Protocol: "http",
+          Container: "mkv",
+          VideoCodec: "h264",
+          AudioCodec: "aac",
+        },
+      ],
+    });
+    expect(mkvOnly.progressive).toBe(false);
+    expect(mkvOnly.hls).toBe(true);
   });
 
   test("Findroid's empty profile accepts nothing, so no path plays", () => {

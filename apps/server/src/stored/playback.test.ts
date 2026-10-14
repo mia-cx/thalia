@@ -9,7 +9,7 @@ import * as HLS from "hls-parser";
 import type { thaliaRouter } from "../api/router.ts";
 import { setupAdmin } from "../auth/accounts.ts";
 import { writeUserSettings } from "../auth/admin.ts";
-import { createApiKey } from "../auth/sessions.ts";
+import { authenticate, createApiKey } from "../auth/sessions.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import type { JsonObject } from "../db/schema/common.ts";
 import { sessionRegistry, versions } from "../db/schema/index.ts";
@@ -20,6 +20,7 @@ import {
 } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { scanDirectory } from "../libraries/scan.ts";
+import { planPlayback } from "../playback/planning.ts";
 import {
   drain,
   fixtureFolder,
@@ -349,6 +350,32 @@ describe.skipIf(!databaseUrl)("stored playback", () => {
               expect(
                 (await decisionOf(off.sessionId))?.storedVariantIds,
               ).toHaveLength(2);
+
+              // An http-only client never gets stored HLS, preference or not.
+              // planPlayback takes a raw profile; the rpc input schema leaves
+              // `hls` out, so this goes through the planner directly.
+              const httpOnly = await planPlayback(
+                db,
+                await authenticate(db, token),
+                {
+                  itemId,
+                  versionId: version.id,
+                  profile: {
+                    ...remuxClient,
+                    progressive: true,
+                    hls: false,
+                  },
+                },
+                {
+                  request: new Request("http://thalia.test/rpc/playback/plan"),
+                  peerAddress: "127.0.0.1",
+                },
+              );
+              expect(httpOnly.delivery).toBe("progressive");
+              expect(httpOnly.url).toContain("/stream?token=");
+              expect(
+                (await decisionOf(httpOnly.sessionId))?.storedVariantIds,
+              ).toBeUndefined();
 
               await writeUserSettings(db, admin.id, admin.id, {
                 bitrateCapBps: null,
