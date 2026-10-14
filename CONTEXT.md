@@ -61,8 +61,12 @@ A TV series: the parent of Seasons, which are the parents of Episodes.
 _Avoid_: series, TV series, program
 
 **Collection**:
-An ordered set of Items made by a provider or a user: a film franchise, a book series, a list. An Item may belong to many Collections.
+An ordered set of Items that belongs to the library, made by a provider or an admin: a film franchise, a book series. An Item may belong to many Collections. Anyone who can view one of its Items sees it, listing only the Items they can view.
 _Avoid_: box set, franchise, series, anthology, list
+
+**Playlist**:
+An ordered set of Items that one user owns. Private until its owner shares it with users or Groups.
+_Avoid_: list, queue, mix, user collection
 
 **Book**:
 An Item in the books medium. Its Versions are ebooks or audiobooks of the same work.
@@ -120,13 +124,21 @@ _Avoid_: ladder, rendition set, ABR set
 A Version Thalia transcoded with the quality profile and keeps next to its source file, so a session needs no live transcode.
 _Avoid_: pre-transcode, cache, optimized version, live transcode
 
+**Action**:
+Something a user does to an object: view, play, download or edit metadata or subtitles on an Item, a Library or the server; manage users, libraries, plugins, transcoding or the server, on the server only; view or edit a Playlist.
+_Avoid_: permission, right, privilege, scope
+
+**Access rule**:
+An allow or deny of one Action on one Item, Library, Playlist or the server, for one user or Group. The rule on the most specific object decides. On the same object, a user's rule beats their Groups', and between Groups, deny wins.
+_Avoid_: permission, ACL entry, policy, grant, override
+
 **Permission**:
-One allowed action, such as viewing a library or managing subtitles. Users get them through Groups, with per-user overrides.
+Whether a user may perform an Action on an object, as decided by Access rules. Built-in admins hold every Permission. Disabled users hold none.
 _Avoid_: right, privilege, scope
 
 **Group**:
-A named set of Permissions given to users. Built-in: admins and users.
-_Avoid_: role, policy, team
+A named set of users that Access rules can name. Built-in: admins, whose members bypass every rule, and users.
+_Avoid_: role (a Role is a process's job), policy, team
 
 **Shelf**:
 A named row of Items on a browse screen, contributed by a medium or a plugin. Core shelves: continue watching, recently added, recently played.
