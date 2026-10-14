@@ -337,6 +337,41 @@ export async function metadataGapItems(
   );
 }
 
+/** stat/statfs can block forever on a dead NFS/SMB mount. */
+const probeTimeoutMs = 3_000;
+
+/** Pending probes by path, so retries share one call instead of piling more
+ * hung syscalls onto the same root. */
+const pendingProbes = new Map<
+  string,
+  Promise<{
+    dev: number;
+    blocks: number;
+    bfree: number;
+    bavail: number;
+    bsize: number;
+  }>
+>();
+
+function probeRoot(path: string) {
+  const pending = pendingProbes.get(path);
+  if (pending !== undefined) return pending;
+  const probe = (async () => {
+    const info = await stat(path);
+    const fs = await statfs(path);
+    return {
+      dev: info.dev,
+      blocks: Number(fs.blocks),
+      bfree: Number(fs.bfree),
+      bavail: Number(fs.bavail),
+      bsize: fs.bsize,
+    };
+  })();
+  pendingProbes.set(path, probe);
+  void probe.finally(() => pendingProbes.delete(path)).catch(() => undefined);
+  return probe;
+}
+
 /** Free space on every filesystem holding a Library root, measured in the API process. */
 export async function libraryFreeSpace(
   db: Database,
@@ -357,6 +392,20 @@ export async function libraryFreeSpace(
       asc(libraries.id),
       asc(libraryRoots.position),
     );
+  // Probe concurrently; a timed-out or dead root is reported unavailable.
+  const probes = await Promise.all(
+    roots.map((root) =>
+      Promise.race([
+        probeRoot(root.path),
+        Bun.sleep(probeTimeoutMs).then(() => {
+          throw new Error(`Timed out probing ${root.path}`);
+        }),
+      ]).then(
+        (probe) => ({ root, probe }),
+        () => ({ root, probe: undefined }),
+      ),
+    ),
+  );
   // The union's roots are readonly; groups accumulate into mutable lists.
   type Available = Omit<
     Extract<FilesystemSpace, { state: "available" }>,
@@ -364,27 +413,25 @@ export async function libraryFreeSpace(
   > & { roots: SpaceRoot[] };
   const filesystems: FilesystemSpace[] = [];
   const byDevice = new Map<number, Available>();
-  for (const root of roots) {
-    try {
-      const info = await stat(root.path);
-      const fs = await statfs(root.path);
-      const existing = byDevice.get(info.dev);
-      if (existing !== undefined) {
-        existing.roots.push(root);
-        continue;
-      }
-      const space = {
-        state: "available" as const,
-        totalBytes: Number(fs.blocks) * fs.bsize,
-        availableBytes: Number(fs.bavail) * fs.bsize,
-        usedBytes: (Number(fs.blocks) - Number(fs.bfree)) * fs.bsize,
-        roots: [root],
-      };
-      byDevice.set(info.dev, space);
-      filesystems.push(space);
-    } catch {
+  for (const { root, probe } of probes) {
+    if (probe === undefined) {
       filesystems.push({ state: "unavailable", roots: [root] });
+      continue;
     }
+    const existing = byDevice.get(probe.dev);
+    if (existing !== undefined) {
+      existing.roots.push(root);
+      continue;
+    }
+    const space = {
+      state: "available" as const,
+      totalBytes: probe.blocks * probe.bsize,
+      availableBytes: probe.bavail * probe.bsize,
+      usedBytes: (probe.blocks - probe.bfree) * probe.bsize,
+      roots: [root],
+    };
+    byDevice.set(probe.dev, space);
+    filesystems.push(space);
   }
   return filesystems;
 }
