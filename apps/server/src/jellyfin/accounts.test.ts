@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { seedBrowse } from "../api/view-fixtures.ts";
 import { server } from "../auth/access.ts";
+import { setLibraryAccess } from "../auth/admin.ts";
 import { createIntegrationKey } from "../auth/integration-keys.ts";
 import { checkPermission } from "../auth/permissions.ts";
 import { issueSession } from "../auth/sessions.ts";
@@ -346,6 +347,42 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
           (rule) => rule.userId === seed.viewer.id && rule.libraryId !== null,
         ),
       ).toEqual([]);
+      await setLibraryAccess(db, seed.admin.id, {
+        libraryId: deniedFolder.id,
+        userId: seed.viewer.id,
+        allowed: false,
+      });
+      const restricted: {
+        Policy: { EnableAllFolders: boolean; EnabledFolders: string[] };
+      } = await (await call("/Users/Me")).json();
+      expect(restricted.Policy.EnableAllFolders).toBe(false);
+      expect(restricted.Policy.EnabledFolders).toContain(
+        allowedFolder.id.replaceAll("-", ""),
+      );
+      expect(restricted.Policy.EnabledFolders).not.toContain(
+        deniedFolder.id.replaceAll("-", ""),
+      );
+      expect(
+        (
+          await call(
+            `/Users/${seed.viewer.id}/Policy`,
+            admin,
+            restricted.Policy,
+          )
+        ).status,
+      ).toBe(204);
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: allowedFolder.id,
+        }),
+      ).toBe(true);
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: deniedFolder.id,
+        }),
+      ).toBe(false);
       for (const allowed of [false, true]) {
         expect(
           (
