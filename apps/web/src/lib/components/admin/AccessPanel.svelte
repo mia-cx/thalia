@@ -54,12 +54,32 @@ const ruleKey = (rule: Rule) =>
 
 const subjectLabel = $derived.by(() => {
   const [type, id] = subjectSel.split(":");
-  if (type === "user")
-    return (users.data ?? []).find((user) => user.id === id)?.displayName;
+  if (type === "user") {
+    const user = (users.data ?? []).find((user) => user.id === id);
+    return user && `${user.displayName} (@${user.username})`;
+  }
   if (type === "group")
     return pickableGroups.find((group) => group.id === id)?.name;
   return undefined;
 });
+
+// displayName is not unique, so user subjects name themselves by username.
+const userLabel = (rule: Rule) =>
+  rule.subject.type === "user"
+    ? (users.data ?? []).find((user) => user.id === rule.subject.id)?.username
+    : undefined;
+
+const directCaption = (rule: Rule, label: string) =>
+  rule.subject.type === "group"
+    ? `Group · ${label}`
+    : userLabel(rule) !== undefined
+      ? `@${userLabel(rule)} · ${label}`
+      : `User · ${label}`;
+
+const inheritedCaption = (rule: Rule, label: string) =>
+  rule.subject.type === "user" && userLabel(rule) !== undefined
+    ? `@${userLabel(rule)} · ${label} · from ${source(rule)}`
+    : `${label} · from ${source(rule)}`;
 
 const source = (rule: Rule) =>
   rule.object.type === "server" ? "the server" : rule.object.name;
@@ -126,10 +146,7 @@ async function addRule(event: SubmitEvent) {
   >
     {#each rules.data?.direct ?? [] as rule, index (ruleKey(rule))}
       {@const label = permissionLabels[rule.action]}
-      <ListRow
-        title={rule.subject.name}
-        caption="{rule.subject.type === 'user' ? 'User' : 'Group'} · {label}"
-      >
+      <ListRow title={rule.subject.name} caption={directCaption(rule, label)}>
         {#if rule.allowed}
           <Badge variant="outline">Allowed</Badge>
         {:else}
@@ -182,8 +199,12 @@ async function addRule(event: SubmitEvent) {
           <Select.Group>
             <Select.GroupHeading>Users</Select.GroupHeading>
             {#each users.data ?? [] as user (user.id)}
-              <Select.Item value="user:{user.id}" label={user.displayName}
-                >{user.displayName}</Select.Item
+              <Select.Item
+                value="user:{user.id}"
+                label="{user.displayName} (@{user.username})"
+                >{user.displayName}
+                <span class="text-label-secondary">@{user.username}</span
+                ></Select.Item
               >
             {/each}
           </Select.Group>
@@ -245,7 +266,7 @@ async function addRule(event: SubmitEvent) {
         <ListRow
           href={sourceHref(rule) ?? undefined}
           title={rule.subject.name}
-          caption="{permissionLabels[rule.action]} · from {source(rule)}"
+          caption={inheritedCaption(rule, permissionLabels[rule.action])}
         >
           {#if rule.allowed}
             <Badge variant="outline">Allowed</Badge>

@@ -85,9 +85,21 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const item = (label: string) =>
               page
                 .waitFor(
-                  `[...document.querySelectorAll('[data-slot=select-item]')].some(i => i.textContent.trim() === ${JSON.stringify(label)})`,
+                  `[...document.querySelectorAll('[data-slot=select-item]')].some(i => i.textContent.trim().startsWith(${JSON.stringify(label)}))`,
                 )
-                .then(() => click("[data-slot=select-item]", label));
+                .then(async () => {
+                  const point = await page.eval<{ x: number; y: number }>(
+                    `(() => { const el = [...document.querySelectorAll('[data-slot=select-item]')].find(i => i.textContent.trim().startsWith(${JSON.stringify(label)})); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
+                  );
+                  for (const type of ["mousePressed", "mouseReleased"] as const)
+                    await page.send("Input.dispatchMouseEvent", {
+                      type,
+                      x: point.x,
+                      y: point.y,
+                      button: "left",
+                      clickCount: 1,
+                    });
+                });
 
             await signIn(page, base, token, "/admin/users");
             await page.eval(fill("addUsername", "newbie"));
