@@ -1,4 +1,4 @@
-import { listItemViews } from "../api/views.ts";
+import { getItemView } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
 import {
   readClientPreference,
@@ -142,8 +142,7 @@ function reportRoute(
 }
 
 async function userDataOf({ db, caller }: UserContext, itemId: string) {
-  const [view] = (await listItemViews(db, caller.user.id, { ids: [itemId] }))
-    .items;
+  const view = await getItemView(db, caller.user.id, itemId);
   if (view === undefined) throw new AuthError("NOT_FOUND");
   return json(userData(view));
 }

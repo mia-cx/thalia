@@ -248,33 +248,33 @@ export function createArtworkHandler(
           ? requestedFormat
           : undefined;
       if (caller !== undefined) {
-        // Auth enabled: the caller needs view on the artwork owner's Library.
+        // Version artwork inherits the owning Item's Access rules.
         const [row] = await db
           .select({ itemId: artwork.itemId, versionId: artwork.versionId })
           .from(artwork)
           .where(eq(artwork.id, id))
           .limit(1);
-        let libraryId: string | null = null;
+        let itemId: string | null = null;
         if (row?.itemId) {
           const [owner] = await db
-            .select({ libraryId: items.libraryId })
+            .select({ id: items.id })
             .from(items)
             .where(eq(items.id, row.itemId))
             .limit(1);
-          libraryId = owner?.libraryId ?? null;
+          itemId = owner?.id ?? null;
         } else if (row?.versionId) {
           const [owner] = await db
-            .select({ libraryId: versions.libraryId })
+            .select({ itemId: versions.itemId })
             .from(versions)
             .where(eq(versions.id, row.versionId))
             .limit(1);
-          libraryId = owner?.libraryId ?? null;
+          itemId = owner?.itemId ?? null;
         }
-        if (libraryId === null)
+        if (itemId === null)
           return jsonError(404, "NOT_FOUND", "Artwork not found.");
         await requirePermission(db, caller.user.id, "view", {
-          type: "library",
-          id: libraryId,
+          type: "item",
+          id: itemId,
         });
       }
       const release = await acquireSlot(request.signal);

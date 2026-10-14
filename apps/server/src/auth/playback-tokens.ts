@@ -170,12 +170,12 @@ async function gate(
   await enabledOwner(db, userId);
   await liveCredential(db, userId, credential);
   await requirePermission(db, userId, "view", {
-    type: "library",
-    id: session.libraryId,
+    type: "item",
+    id: session.itemId,
   });
   await requirePermission(db, userId, "play", {
-    type: "library",
-    id: session.libraryId,
+    type: "item",
+    id: session.itemId,
   });
 }
 
