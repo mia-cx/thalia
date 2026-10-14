@@ -243,6 +243,9 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       case "changed":
         return readIndex().then(sync);
       case "progress": {
+        // This tab's own transfer counts its bytes itself.
+        if (current?.record.versionId === message.versionId)
+          return Promise.resolve();
         const record = records.find(
           (entry) => entry.versionId === message.versionId,
         );
@@ -348,7 +351,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       current = undefined;
       pumping = false;
       notify();
-      postProgress(record);
+      if (!entry.skipped) postProgress(record);
       if (!entry.remove && !entry.skipped)
         await updateIndex((stored) => upsertRecord(stored, record));
       void pump();
