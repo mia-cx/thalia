@@ -26,6 +26,7 @@ import {
   setPermissionOverride,
   setUserGroups,
 } from "./permissions.ts";
+import { updateAccountAccess } from "./profile.ts";
 
 async function seed(db: Database) {
   const admin = await setupAdmin(db, {
@@ -63,6 +64,23 @@ async function createLibrary(db: Database, name: string) {
 }
 
 describe.skipIf(!databaseUrl)("auth admin", () => {
+  test("unknown folder ids refuse the whole account access update", () =>
+    withDatabase(async (db) => {
+      const { admin, viewer } = await seed(db);
+      const library = await createLibrary(db, "movies");
+      await updateAccountAccess(db, admin.id, viewer.id, {
+        enabledFolders: [library.id],
+      });
+      const before = await getUserAccess(db, admin.id, viewer.id);
+      await expect(
+        updateAccountAccess(db, admin.id, viewer.id, {
+          enabledFolders: [library.id, Bun.randomUUIDv7()],
+          permissionOverrides: { play: false },
+        }),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      expect(await getUserAccess(db, admin.id, viewer.id)).toEqual(before);
+    }));
+
   test("listUsers and listGroups return ordered rows for users:manage", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);

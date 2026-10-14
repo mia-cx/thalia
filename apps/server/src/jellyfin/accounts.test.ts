@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { seedBrowse } from "../api/view-fixtures.ts";
 import { server } from "../auth/access.ts";
-import { setLibraryAccess } from "../auth/admin.ts";
+import { readUserAccess, setLibraryAccess } from "../auth/admin.ts";
 import { createIntegrationKey } from "../auth/integration-keys.ts";
-import { checkPermission } from "../auth/permissions.ts";
+import { checkPermission, setPermissionOverride } from "../auth/permissions.ts";
 import { issueSession } from "../auth/sessions.ts";
-import { accessRules, users } from "../db/schema/index.ts";
+import { accessRules, libraries, users } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { createLibrary } from "../libraries/service.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { createJellyfinHandler } from "./http.ts";
 import { jellyfinRoutes } from "./routes.ts";
@@ -323,6 +322,10 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
       const folderRules = (await db.select().from(accessRules)).filter(
         (rule) => rule.userId === seed.viewer.id && rule.libraryId !== null,
       );
+      const existingFolders = await db
+        .select({ id: libraries.id })
+        .from(libraries);
+      expect(folderRules).toHaveLength(existingFolders.length);
       expect(
         folderRules.map((rule) => ({
           libraryId: rule.libraryId,
@@ -330,23 +333,14 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
           allowed: rule.allowed,
         })),
       ).toEqual(
-        expect.arrayContaining([
-          { libraryId: allowedFolder.id, action: "view", allowed: true },
-          { libraryId: deniedFolder.id, action: "view", allowed: false },
-        ]),
+        expect.arrayContaining(
+          existingFolders.map((folder) => ({
+            libraryId: folder.id,
+            action: "view",
+            allowed: folder.id === allowedFolder.id,
+          })),
+        ),
       );
-      const later = await createLibrary(db, seed.admin.id, {
-        name: "Later",
-        medium: "movies",
-        roots: ["/later"],
-      });
-      for (const action of ["view", "play", "download"] as const)
-        expect(
-          await checkPermission(db, seed.viewer.id, action, {
-            type: "library",
-            id: later.id,
-          }),
-        ).toBe(false);
       expect(
         (
           await call(`/Users/${seed.viewer.id}/Policy`, admin, {
@@ -363,13 +357,28 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
       expect(
         await checkPermission(db, seed.viewer.id, "view", {
           type: "library",
-          id: later.id,
+          id: deniedFolder.id,
         }),
       ).toBe(true);
       await setLibraryAccess(db, seed.admin.id, {
         libraryId: deniedFolder.id,
         userId: seed.viewer.id,
         allowed: false,
+      });
+      const access = await readUserAccess(db, seed.viewer.id);
+      const groupId = access.groupIds[0];
+      if (!groupId) throw new Error("Viewer Group missing.");
+      await setPermissionOverride(
+        db,
+        seed.admin.id,
+        seed.viewer.id,
+        "view",
+        false,
+      );
+      await setLibraryAccess(db, seed.admin.id, {
+        libraryId: allowedFolder.id,
+        groupId,
+        allowed: true,
       });
       const restricted: {
         Policy: { EnableAllFolders: boolean; EnabledFolders: string[] };
@@ -402,6 +411,33 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
           id: deniedFolder.id,
         }),
       ).toBe(false);
+      const savedRules = (await readUserAccess(db, seed.viewer.id))
+        .libraryAccess;
+      expect(savedRules).toEqual(
+        expect.arrayContaining([
+          { libraryId: allowedFolder.id, allowed: true },
+          { libraryId: deniedFolder.id, allowed: false },
+        ]),
+      );
+      expect(
+        (
+          await call(
+            `/Users/${seed.viewer.id}/Policy`,
+            admin,
+            restricted.Policy,
+          )
+        ).status,
+      ).toBe(204);
+      expect((await readUserAccess(db, seed.viewer.id)).libraryAccess).toEqual(
+        savedRules,
+      );
+      await setPermissionOverride(
+        db,
+        seed.admin.id,
+        seed.viewer.id,
+        "view",
+        null,
+      );
       for (const allowed of [false, true]) {
         expect(
           (

@@ -29,6 +29,41 @@ const groupFields = {
   builtIn: groups.builtIn,
 };
 
+/** Replaces user view rules for the Libraries present when a Jellyfin policy is saved. */
+export async function setFolderRules(
+  tx: Pick<Database, "select" | "insert" | "delete">,
+  userId: string,
+  enabled: readonly string[] | "all",
+) {
+  const folders =
+    enabled === "all"
+      ? []
+      : await tx.select({ id: libraries.id }).from(libraries);
+  if (
+    enabled !== "all" &&
+    enabled.some((id) => !folders.some((folder) => folder.id === id))
+  )
+    throw new AuthError("NOT_FOUND");
+  await tx
+    .delete(accessRules)
+    .where(
+      and(
+        eq(accessRules.userId, userId),
+        eq(accessRules.action, "view"),
+        isNotNull(accessRules.libraryId),
+      ),
+    );
+  if (enabled === "all" || folders.length === 0) return;
+  await tx.insert(accessRules).values(
+    folders.map((folder) => ({
+      userId,
+      libraryId: folder.id,
+      action: "view" as const,
+      allowed: enabled.includes(folder.id),
+    })),
+  );
+}
+
 /** Lists every user for a caller holding users:manage. */
 export async function listUsers(db: Database, actorId: string) {
   await requirePermission(db, actorId, "users:manage", server);
