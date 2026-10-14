@@ -503,7 +503,11 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     if (record.state === "queued") {
       record.state = "paused";
       notify();
-      await updateIndex((stored) => upsertRecord(stored, record));
+      await updateIndex((stored) =>
+        stored.map((entry) =>
+          entry.versionId === versionId ? { ...entry, state: "paused" } : entry,
+        ),
+      );
       return;
     }
     if (record.state !== "downloading") return;
@@ -511,7 +515,11 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       if (!held) return false;
       record.state = "paused";
       notify();
-      await updateIndex((stored) => upsertRecord(stored, record));
+      await updateIndex((stored) =>
+        stored.map((entry) =>
+          entry.versionId === versionId ? { ...entry, state: "paused" } : entry,
+        ),
+      );
       return true;
     });
     if (!held) {
@@ -531,7 +539,12 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       return;
     record.state = "queued";
     notify();
-    await updateIndex((stored) => upsertRecord(stored, record));
+    // Only the state field may move: another tab's entry can be newer.
+    await updateIndex((stored) =>
+      stored.map((entry) =>
+        entry.versionId === versionId ? { ...entry, state: "queued" } : entry,
+      ),
+    );
     void pump();
   }
 

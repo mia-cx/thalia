@@ -751,4 +751,52 @@ describe("downloads across tabs", () => {
     expect(finished?.state).toBe("complete");
     expect(finished?.written).toBe(64);
   });
+
+  test("a mid-transfer resume from a fresh tab never touches the file", async () => {
+    const root = new FakeDir();
+    const locks = new FakeLocks();
+    const [channelA, channelB] = channelPair();
+    const gate = deferred();
+    // 24 bytes arrive (16 committed, 8 staged), then the stream stalls.
+    const first = fakeFetch(bytes, {
+      chunk: 8,
+      gates: [undefined, undefined, undefined, gate.promise],
+    });
+    const second = fakeFetch(bytes, { chunk: 8 });
+    const a = tabStore(root, first.transport, locks, channelA);
+    await a.start(input);
+    await waitFor(() => fileOf(root)?.length === 16);
+    await Bun.sleep(20); // the third chunk lands staged but uncommitted
+    expect(fileOf(root)?.length).toBe(16);
+
+    // B opens mid-transfer and resumes the record; A still owns the lock.
+    const b = tabStore(root, second.transport, locks, channelB);
+    await b.restore();
+    await b.resume(input.versionId);
+    await Bun.sleep(20);
+    expect(second.calls).toHaveLength(0);
+
+    // A stale observer tab can still post an old progress frame for the
+    // transfer A owns; A's own accounting must not take it.
+    channelB.postMessage({
+      type: "progress",
+      versionId: input.versionId,
+      written: 0,
+      bytes: 64,
+      state: "downloading",
+    });
+    await Bun.sleep(10);
+
+    gate.resolve();
+    await waitFor(() => get(a).records[0]?.state === "complete");
+    expect(fileOf(root)).toEqual(bytes);
+    const stored = JSON.parse(
+      new TextDecoder().decode(
+        root.dirs.get("downloads")?.files.get("index.json"),
+      ),
+    ) as { versionId: string; state: string; written: number }[];
+    const record = stored.find((r) => r.versionId === input.versionId);
+    expect(record?.state).toBe("complete");
+    expect(record?.written).toBe(64);
+  });
 });
