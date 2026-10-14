@@ -23,10 +23,12 @@ import {
   artworkStoreConfig,
   describeArtworkStore,
 } from "../metadata/artwork-backends.ts";
+import { metadataProviders } from "../metadata/providers.ts";
 import {
   readPlaybackSettings,
   writePlaybackSettings,
 } from "../playback/settings.ts";
+import type { PluginRuntime } from "../plugins/runtime.ts";
 import {
   readProviderKeyNames,
   removeProviderKey,
@@ -82,16 +84,27 @@ const toUserAccess = (access: Awaited<ReturnType<typeof getUserAccess>>) => ({
   },
 });
 
+/** The Item kind each library medium needs a metadata provider for. */
+const mediumKinds = { movies: "movie", shows: "show" } as const;
+
 /** Reads the server settings without a caller check; the handler authorizes. */
-async function readServerSettings(db: Database) {
+async function readServerSettings(db: Database, plugins: PluginRuntime) {
   const config = await readAuthSettings(db);
   const providerKeys = await readProviderKeyNames(db);
+  const kinds = new Set(
+    (await metadataProviders(db, { plugins })).flatMap(
+      (provider) => provider.kinds,
+    ),
+  );
   return {
     trustedProxyAddresses: config.trustedProxyAddresses,
     artworkRequiresAuth: config.artworkRequiresAuth,
     oidcConfigured: config.oidc !== null,
     oidcClientSecretSet: config.oidcClientSecretSet,
     providerKeys,
+    metadataMediums: (["movies", "shows"] as const).filter((medium) =>
+      kinds.has(mediumKinds[medium]),
+    ),
     ...(await readPlaybackSettings(db)),
     idleWindow: (await readStoreSettings(db)).idleWindow,
     artworkStore: describeArtworkStore(artworkStoreConfig()),
@@ -374,7 +387,7 @@ export const settingsProcedures = {
             "server:manage",
             server,
           );
-          return readServerSettings(context.db);
+          return readServerSettings(context.db, context.plugins);
         }),
       ),
     ),
@@ -412,7 +425,7 @@ export const settingsProcedures = {
             });
           if (idleWindow !== undefined)
             await setIdleWindow(db, actorId, idleWindow);
-          return readServerSettings(db);
+          return readServerSettings(db, context.plugins);
         }),
       ),
     ),
@@ -433,7 +446,7 @@ export const settingsProcedures = {
             input.name,
             input.value,
           );
-          return readServerSettings(context.db);
+          return readServerSettings(context.db, context.plugins);
         }),
       ),
     ),
@@ -449,7 +462,7 @@ export const settingsProcedures = {
             context.caller.user.id,
             input.name,
           );
-          return readServerSettings(context.db);
+          return readServerSettings(context.db, context.plugins);
         }),
       ),
     ),

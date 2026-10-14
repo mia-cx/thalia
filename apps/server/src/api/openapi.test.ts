@@ -69,6 +69,7 @@ describe("openapi document", () => {
         "/groups/{id}/permissions",
         "/settings",
         "/settings/providers/{name}",
+        "/libraries/viewable",
         "/libraries/{id}/scan-status",
         "/folders",
         "/folders/preview",

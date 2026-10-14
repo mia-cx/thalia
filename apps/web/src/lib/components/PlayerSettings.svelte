@@ -11,6 +11,7 @@ import { boosts, speeds } from "$lib/player-prefs.ts";
 import type { createPlayer, PlayerState } from "$lib/player-state.ts";
 import {
   boostLabel,
+  effectiveQuality,
   qualityEntries,
   qualityValue,
   speedLabel,
@@ -61,7 +62,7 @@ const rows = $derived.by((): Row[] => {
     heading: "Quality",
     value: qualityValue(playerState, quality),
     options: qualityEntries(quality, versions),
-    current: playerState.quality,
+    current: effectiveQuality(playerState.quality, quality),
     choose: (option) =>
       void player.chooseQuality(option.value, option.versionId),
   });

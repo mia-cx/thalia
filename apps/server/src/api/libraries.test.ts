@@ -5,10 +5,17 @@ import { eq } from "drizzle-orm";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { sessionCookieName } from "../auth/http.ts";
+import { setPermissionOverride } from "../auth/permissions.ts";
 import { createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { files, items, libraries, versions } from "../db/schema/index.ts";
+import {
+  accessRules,
+  files,
+  items,
+  libraries,
+  versions,
+} from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { listJobs } from "../jobs/queue.ts";
@@ -133,6 +140,115 @@ async function populate(root: string) {
 }
 
 describe.skipIf(!databaseUrl)("libraries api", () => {
+  test("viewable returns only the viewer's allowed libraries over RPC and REST", () =>
+    withDatabase(async (db, url) => {
+      const { admin } = await seed(db);
+      const viewer = await createLocalUser(db, admin.id, {
+        username: "viewer",
+        password: "viewer-pass",
+      });
+      const { token } = await createApiKey(db, viewer.id, "viewer");
+      const [allowed, denied] = await db
+        .insert(libraries)
+        .values([
+          { name: "Allowed", medium: "movies" },
+          { name: "Denied", medium: "shows" },
+        ])
+        .returning();
+      if (!allowed || !denied)
+        throw new Error("Library insert returned no row.");
+      await db.insert(accessRules).values({
+        libraryId: denied.id,
+        userId: viewer.id,
+        action: "view",
+        allowed: false,
+      });
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const base = `http://127.0.0.1:${server.apiServer?.port}`;
+        const headers = { authorization: `Bearer ${token}` };
+        const client = createThaliaClient({ origin: base, headers });
+        const expected = [
+          { id: allowed.id, name: allowed.name, medium: allowed.medium },
+        ];
+        expect(await client.libraries.viewable()).toEqual(expected);
+        const response = await fetch(`${base}/api/libraries/viewable`, {
+          headers,
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual(expected);
+        expect((await fetch(`${base}/api/libraries/viewable`)).status).toBe(
+          401,
+        );
+        expect((await fetch(`${base}/api/libraries`, { headers })).status).toBe(
+          403,
+        );
+        expect(
+          (await fetch(`${base}/api/libraries/${allowed.id}`, { headers }))
+            .status,
+        ).toBe(403);
+      } finally {
+        await server.stop();
+      }
+    }));
+
+  test("viewable returns every library for an admin, ordered by medium then name", () =>
+    withDatabase(async (db, url) => {
+      const { token } = await seed(db);
+      const [alphaShows, zuluMovies, zuluShows, alphaMovies] = await db
+        .insert(libraries)
+        .values([
+          { name: "Alpha Shows", medium: "shows" },
+          { name: "Zulu Movies", medium: "movies" },
+          { name: "Zulu Shows", medium: "shows" },
+          { name: "Alpha Movies", medium: "movies" },
+        ])
+        .returning({
+          id: libraries.id,
+          name: libraries.name,
+          medium: libraries.medium,
+        });
+      if (!alphaShows || !zuluMovies || !zuluShows || !alphaMovies)
+        throw new Error("Library insert returned no row.");
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const client = createThaliaClient({
+          origin: `http://127.0.0.1:${server.apiServer?.port}`,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(await client.libraries.viewable()).toEqual([
+          alphaMovies,
+          zuluMovies,
+          alphaShows,
+          zuluShows,
+        ]);
+      } finally {
+        await server.stop();
+      }
+    }));
+
+  test("viewable returns an empty array when the caller may view nothing", () =>
+    withDatabase(async (db, url) => {
+      const { admin } = await seed(db);
+      const viewer = await createLocalUser(db, admin.id, {
+        username: "viewer",
+        password: "viewer-pass",
+      });
+      await setPermissionOverride(db, admin.id, viewer.id, "view", false);
+      await db.insert(libraries).values({ name: "Movies", medium: "movies" });
+      const { token } = await createApiKey(db, viewer.id, "viewer");
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const client = createThaliaClient({
+          origin: `http://127.0.0.1:${server.apiServer?.port}`,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(await client.libraries.viewable()).toEqual([]);
+      } finally {
+        await server.stop();
+      }
+    }));
+
   // Starting the all role includes the real transcoder startup trial.
   test(
     "create, read, update, scan and delete over RPC and REST",

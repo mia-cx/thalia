@@ -100,7 +100,14 @@ export const ItemDetail = Schema.Struct({
   children: Schema.Array(DetailChild),
 });
 
-/** The library shape returned by library endpoints. */
+/** The library fields visible to callers who may browse it. */
+export const ViewableLibrary = Schema.Struct({
+  id: Schema.UUID,
+  name: Schema.String,
+  medium: Schema.Literal("movies", "shows"),
+});
+
+/** The library shape returned by administration endpoints. */
 export const Library = Schema.Struct({
   id: Schema.UUID,
   name: Schema.String,
@@ -296,6 +303,7 @@ export const ServerSettings = Schema.Struct({
   oidcConfigured: Schema.Boolean,
   oidcClientSecretSet: Schema.Boolean,
   providerKeys: Schema.Array(Schema.String),
+  metadataMediums: Schema.Array(Schema.Literal("movies", "shows")),
   bitrateCapBps: Schema.NullOr(Schema.Int),
   allowCpu4k: Schema.Boolean,
   idleWindow: Schema.Struct({ start: Schema.String, end: Schema.String }),
