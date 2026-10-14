@@ -47,18 +47,26 @@ let generation = 0;
 // a late Show more can't append onto a reconciled list, and the reverse.
 const serial = serialQueue();
 
+// Each opening owns one controller; closing aborts it so a slow request
+// frees the queue instead of blocking the next opening's first page.
+let controller = new AbortController();
+
 async function loadMore() {
   if (gap === undefined) return;
   const ticket = generation;
   const gapKey = gap.key;
   const after = cursor;
+  const signal = controller.signal;
   loading = true;
   try {
-    const page = await client.libraries.metadataGapItems({
-      libraryId,
-      gap: gapKey,
-      ...(after === null ? {} : { cursor: after }),
-    });
+    const page = await client.libraries.metadataGapItems(
+      {
+        libraryId,
+        gap: gapKey,
+        ...(after === null ? {} : { cursor: after }),
+      },
+      { signal },
+    );
     if (ticket !== generation) return;
     items = [...items, ...page.items];
     cursor = page.cursor;
@@ -70,27 +78,31 @@ async function loadMore() {
   }
 }
 
-// While open, a library.changed bumps `revision` and the list reconciles from
-// the first page: enough pages to cover what was loaded, then one assignment
-// so nothing flashes and Show more keeps paging from a consistent cursor.
 // The server's largest page: reconciles fetch few, wide pages.
 const reconcilePageSize = 100;
 
+// While open, a library.changed bumps `revision` and the list reconciles from
+// the first page: enough pages to cover what was loaded, then one assignment
+// so nothing flashes and Show more keeps paging from a consistent cursor.
 async function reconcile() {
   if (gap === undefined) return;
   const ticket = generation;
   const gapKey = gap.key;
+  const signal = controller.signal;
   const wanted = items.length;
   const next: MetadataGapItem[] = [];
   let after: string | null = null;
   try {
     do {
-      const page = await client.libraries.metadataGapItems({
-        libraryId,
-        gap: gapKey,
-        limit: reconcilePageSize,
-        ...(after === null ? {} : { cursor: after }),
-      });
+      const page = await client.libraries.metadataGapItems(
+        {
+          libraryId,
+          gap: gapKey,
+          limit: reconcilePageSize,
+          ...(after === null ? {} : { cursor: after }),
+        },
+        { signal },
+      );
       next.push(...page.items);
       after = page.cursor;
       if (ticket !== generation) return;
@@ -136,7 +148,9 @@ let seenRevision = -1;
 // reset and first load are untracked so writing cursor/items doesn't retrigger.
 $effect(() => {
   generation += 1;
+  controller.abort();
   if (!open) return;
+  controller = new AbortController();
   untrack(() => {
     items = [];
     cursor = null;
