@@ -74,6 +74,7 @@ function sessionTitle(session: SessionRow): string {
 
 let capInput = $state<string | null>(null);
 let ratingInput = $state<string | null>(null);
+let preferDirectStream = $state<boolean | null>(null);
 let settingsBusy = $state(false);
 let settingsFailure = $state<FailureShape | undefined>(undefined);
 
@@ -117,6 +118,7 @@ function resetRouteState() {
   routeGeneration += 1;
   capInput = null;
   ratingInput = null;
+  preferDirectStream = null;
   settingsFailure = undefined;
   settingsBusy = false;
   groupSel = {};
@@ -144,6 +146,9 @@ const capValue = $derived(
 const ratingValue = $derived(
   ratingInput ?? access.data?.settings.contentRatingCeiling ?? "",
 );
+const directStreamValue = $derived(
+  preferDirectStream ?? access.data?.settings.preferDirectStream ?? false,
+);
 const groupsLocked = $derived(
   access.data !== undefined && access.data.user.disabledAt !== null,
 );
@@ -168,18 +173,21 @@ async function saveSettings(event: SubmitEvent) {
       return;
     }
     const rating = submittedRating.trim();
+    const submittedDirectStream = directStreamValue;
     const updated = await serial(target, () =>
       client.users.setSettings({
         id: target,
         bitrateCapBps: capNumber,
         contentRatingCeiling: rating === "" ? null : rating,
+        preferDirectStream: submittedDirectStream,
       }),
     );
     if (!currentVisit(target, generation)) return;
     access.set(updated);
     if (capInput === submittedCap) capInput = null;
     if (ratingInput === submittedRating) ratingInput = null;
-    toast.success("Playback limits saved");
+    if (preferDirectStream === submittedDirectStream) preferDirectStream = null;
+    toast.success("Playback settings saved");
   } catch (error) {
     if (currentVisit(target, generation)) settingsFailure = readFailure(error);
   } finally {
@@ -482,7 +490,7 @@ async function revoke(sessionId: string) {
   </FormGroup>
 
   <FormGroup
-    title="Playback limits"
+    title="Playback"
     onsubmit={saveSettings}
     failure={settingsFailure}
     description="Leave a field empty for no limit."
@@ -503,6 +511,18 @@ async function revoke(sessionId: string) {
         />
         <span class="text-subheadline text-label-secondary">Mbit/s</span>
       </div>
+    </FormRow>
+    <FormRow
+      label="Prefer direct stream"
+      for="preferDirectStream"
+      hint="Play the best quality as one stream instead of adapting to the connection."
+    >
+      <Switch
+        id="preferDirectStream"
+        checked={directStreamValue}
+        onCheckedChange={(checked) => (preferDirectStream = checked)}
+        disabled={!access.data || settingsBusy}
+      />
     </FormRow>
     <FormRow label="Content rating ceiling" for="ratingCeiling">
       <Input
