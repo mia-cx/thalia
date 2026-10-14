@@ -31,13 +31,24 @@ export type DownloadsSnapshot = {
 };
 export type DownloadsDeps = {
   root: () => Promise<FileSystemDirectoryHandle>;
+  open: (versionId: string) => Promise<DownloadFile>;
   fetch: typeof fetch;
   storage: Pick<StorageManager, "persist" | "persisted" | "estimate">;
   /** Serializes index reads-writes and Version transfers across tabs; absent means single-tab. */
   locks?: Pick<LockManager, "request">;
   /** Carries index-change, progress and control messages between tabs. */
   channel?: Pick<BroadcastChannel, "postMessage" | "addEventListener">;
-  commitBytes?: number;
+};
+
+/** One Version's file in browser storage, written in place. */
+export type DownloadFile = {
+  /** Bytes durably on disk now. */
+  size(): Promise<number>;
+  write(bytes: Uint8Array, at: number): Promise<void>;
+  /** Makes everything written so far durable. */
+  flush(): Promise<void>;
+  truncate(size: number): Promise<void>;
+  close(): Promise<void>;
 };
 
 export type Downloads = Readable<DownloadsSnapshot> & {
@@ -48,7 +59,8 @@ export type Downloads = Readable<DownloadsSnapshot> & {
   remove(versionId: string): Promise<void>;
 };
 
-const defaultCommitBytes = 64 * 1024 * 1024;
+const flushBytes = 8 * 1024 * 1024;
+const flushMs = 2000;
 const notifyMs = 250;
 const indexLock = "thalia-downloads-index";
 const fileLock = (versionId: string) => `thalia-download:${versionId}`;
@@ -69,11 +81,10 @@ type ChannelMessage =
  * named by its id, and `downloads/index.json` holds the records shared by all
  * tabs. Index writes are read-modify-write under the index lock so two tabs
  * never clobber each other's records; every transfer runs under a per-Version
- * lock so only one tab writes a file. OPFS writables land only on close, so a
- * long transfer commits by closing and reopening with `keepExistingData`.
+ * lock so only one tab writes a file. The injected file writes in place and
+ * flushes every 8 MiB or two seconds, keeping reload loss small without copies.
  */
 export function createDownloads(deps: DownloadsDeps): Downloads {
-  const commitBytes = deps.commitBytes ?? defaultCommitBytes;
   const store = writable<DownloadsSnapshot>({
     ready: false,
     unavailable: false,
@@ -376,13 +387,25 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       record.state = "downloading";
       notify();
       postProgress(record);
-      const dir = await directory();
-      const handle = await dir.getFileHandle(record.versionId, {
-        create: true,
-      });
-      let offset = (await handle.getFile()).size;
-      record.written = offset;
-      let writable = await handle.createWritable({ keepExistingData: true });
+      const file = await deps.open(record.versionId);
+      let offset = 0;
+      let flushed = 0;
+      let flushError: unknown;
+      let flushChain = Promise.resolve();
+      const flush = () => {
+        flushChain = flushChain.then(async () => {
+          const written = offset;
+          await file.flush();
+          flushed = written;
+        });
+        return flushChain;
+      };
+      const timer = setInterval(() => {
+        void flush().catch((error: unknown) => {
+          flushError = error;
+          entry.controller.abort();
+        });
+      }, flushMs);
       const url = `/api/items/${record.itemId}/versions/${record.versionId}/download`;
       const ask = (from: number | null, etag: string | null) =>
         deps.fetch(url, {
@@ -397,6 +420,9 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           credentials: "same-origin",
         });
       try {
+        offset = await file.size();
+        flushed = offset;
+        record.written = offset;
         const sentEtag = record.etag;
         let response = await ask(offset > 0 ? offset : null, sentEtag);
         let responseEtag = response.headers.get("etag");
@@ -420,12 +446,12 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
         }
         let total: number | null = null;
         if (matched && range !== null) {
-          await writable.seek(offset);
           const slash = range.indexOf("/");
           if (slash >= 0) total = Number(range.slice(slash + 1));
         } else if (response.status === 200) {
-          await writable.truncate(0);
+          await file.truncate(0);
           offset = 0;
+          flushed = 0;
           record.written = 0;
           const length = response.headers.get("content-length");
           if (length !== null) total = Number(length);
@@ -433,7 +459,6 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           // If-Range. bytes 0 stands for unknown until the body ends.
           else record.bytes = 0;
         } else {
-          await writable.close();
           // A 416 at exactly the file's size means the bytes all landed but
           // the index never recorded the completion.
           record.state =
@@ -446,31 +471,29 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           return;
         }
         if (total !== null && Number.isFinite(total)) record.bytes = total;
+        // Keep the validator even if the page closes before the next flush.
+        await updateIndex((stored) => upsertRecord(stored, record));
         if (response.body === null)
           throw new Error("Download response has no body.");
         const reader = response.body.getReader();
-        let committed = record.written;
         let lastNotify = 0;
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          await writable.write(value);
-          record.written += value.byteLength;
+          const length = value.byteLength;
+          await file.write(value, offset);
+          offset += length;
+          record.written = offset;
           const now = Date.now();
           if (now - lastNotify >= notifyMs) {
             lastNotify = now;
             notify();
             postProgress(record);
           }
-          if (record.written - committed >= Math.max(commitBytes, committed)) {
-            await writable.close();
-            committed = record.written;
-            await updateIndex((stored) => upsertRecord(stored, record));
-            writable = await handle.createWritable({ keepExistingData: true });
-            await writable.seek(committed);
-          }
+          if (offset - flushed >= flushBytes) await flush();
         }
-        await writable.close();
+        if (flushError !== undefined) throw flushError;
+        await flush();
         // An unknown size means a clean end is the size.
         if (record.bytes === 0) record.bytes = record.written;
         record.state = record.written === record.bytes ? "complete" : "failed";
@@ -478,8 +501,9 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
         notify();
         postProgress(record);
       } catch (error) {
+        entry.controller.abort();
         try {
-          await writable.close();
+          await flush();
         } catch {}
         if (entry.remove) return;
         record.state = entry.pause ? "paused" : "failed";
@@ -487,6 +511,18 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
         postProgress(record);
         if (error instanceof Error && !entry.pause && !entry.remove)
           console.error(error);
+      } finally {
+        clearInterval(timer);
+        // Retry a failed periodic flush before releasing the exclusive handle.
+        try {
+          await flushChain;
+        } finally {
+          try {
+            await file.flush();
+          } finally {
+            await file.close();
+          }
+        }
       }
     });
   }

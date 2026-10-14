@@ -60,6 +60,9 @@ describe.skipIf(!databaseUrl || browser === undefined)("web downloads", () => {
         let server: Awaited<ReturnType<typeof startThalia>> | undefined;
         const page = await openPage();
         try {
+          await page.send("Emulation.setFocusEmulationEnabled", {
+            enabled: true,
+          });
           const folder = "Arrival (2016)";
           const file = join(libraryRoot, folder, "Arrival.mkv");
           await mkdir(join(libraryRoot, folder), { recursive: true });
@@ -95,11 +98,31 @@ describe.skipIf(!databaseUrl || browser === undefined)("web downloads", () => {
           });
           await page.eval(clickLabel("Download"));
           await page.waitFor(byLabelPrefix("Downloading"), 30_000);
+          // The two-second flush must land before killing the dedicated worker.
+          await Bun.sleep(2500);
+          await page.waitFor(`(async () => {
+            const root = await navigator.storage.getDirectory();
+            const dir = await root.getDirectoryHandle("downloads");
+            return (await (await dir.getFileHandle(${JSON.stringify(versionId)})).getFile()).size > 0;
+          })()`);
           await page.send("Page.reload", { ignoreCache: true });
           await page.waitFor("document.readyState === 'complete'");
 
           await page.goto(`${base}/downloads`);
           await page.waitFor(byLabel("Resume download"), 30_000);
+          const restoredSize = await page.eval<number>(`(async () => {
+            const root = await navigator.storage.getDirectory();
+            const dir = await root.getDirectoryHandle("downloads");
+            return (await (await dir.getFileHandle(${JSON.stringify(versionId)})).getFile()).size;
+          })()`);
+          expect(restoredSize).toBeGreaterThan(0);
+          const ranges: string[] = [];
+          page.on<{
+            request: { url: string; headers: Record<string, string> };
+          }>("Network.requestWillBeSent", ({ request }) => {
+            if (request.url.endsWith(`/versions/${versionId}/download`))
+              ranges.push(request.headers.Range ?? request.headers.range ?? "");
+          });
           await page.send("Network.emulateNetworkConditions", {
             offline: false,
             latency: 0,
@@ -108,6 +131,7 @@ describe.skipIf(!databaseUrl || browser === undefined)("web downloads", () => {
           });
           await page.eval(clickLabel("Resume download"));
           await page.waitFor(byLabel("Delete download"), 60_000);
+          expect(ranges).toContain(`bytes=${restoredSize}-`);
 
           const opfs = await page.eval<{ hash: string; index: string }>(
             `(async () => {

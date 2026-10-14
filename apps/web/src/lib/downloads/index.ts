@@ -1,3 +1,4 @@
+import { downloadFiles } from "./file-client.ts";
 import {
   createDownloads,
   type DownloadInput,
@@ -22,6 +23,11 @@ function downloads_(): Downloads {
   if (instance === undefined)
     instance = createDownloads({
       root: () => navigator.storage.getDirectory(),
+      open: downloadFiles(
+        new Worker(new URL("./file-worker.ts", import.meta.url), {
+          type: "module",
+        }),
+      ),
       fetch: ((input, init) => fetch(input, init)) as typeof fetch,
       storage: navigator.storage,
       locks: "locks" in navigator ? navigator.locks : undefined,

@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { get } from "svelte/store";
-import { createDownloads } from "./store.ts";
+import { createDownloads, type DownloadFile } from "./store.ts";
 
 // An in-memory OPFS stand-in at the FileSystemDirectoryHandle boundary:
 // writables stage bytes that swap into the file only on close().
@@ -82,6 +82,8 @@ class FakeFileHandle {
 class FakeDir {
   readonly dirs = new Map<string, FakeDir>();
   readonly files = new Map<string, Uint8Array>();
+  readonly live = new Map<string, Uint8Array>();
+  readonly writers: MemoryDownload[] = [];
   async getDirectoryHandle(name: string, options?: { create?: boolean }) {
     let dir = this.dirs.get(name);
     if (dir === undefined) {
@@ -101,9 +103,53 @@ class FakeDir {
     return new FakeFileHandle(this, name);
   }
   async removeEntry(name: string) {
+    this.live.delete(name);
     if (this.dirs.delete(name) || this.files.delete(name)) return;
     throw new DOMException("Not found.", "NotFoundError");
   }
+}
+
+/** In-place bytes are visible immediately; only flush survives a simulated crash. */
+class MemoryDownload implements DownloadFile {
+  private data: Uint8Array;
+  crashed = false;
+  closed = false;
+  constructor(
+    private dir: FakeDir,
+    private id: string,
+  ) {
+    this.data = dir.files.get(id)?.slice() ?? new Uint8Array(0);
+    dir.files.set(id, this.data.slice());
+    dir.writers.push(this);
+  }
+  async size() {
+    return this.data.length;
+  }
+  async write(bytes: Uint8Array, at: number) {
+    const grown = new Uint8Array(Math.max(this.data.length, at + bytes.length));
+    grown.set(this.data);
+    grown.set(bytes, at);
+    this.data = grown;
+    this.dir.live.set(this.id, this.data);
+  }
+  async truncate(size: number) {
+    this.data = this.data.slice(0, size);
+    this.dir.live.set(this.id, this.data);
+  }
+  async flush() {
+    if (!this.crashed) this.dir.files.set(this.id, this.data.slice());
+  }
+  async close() {
+    this.closed = true;
+    this.dir.live.delete(this.id);
+  }
+}
+
+async function openFake(root: FakeDir, id: string): Promise<DownloadFile> {
+  return new MemoryDownload(
+    await root.getDirectoryHandle("downloads", { create: true }),
+    id,
+  );
 }
 
 type FetchCall = {
@@ -190,8 +236,8 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function waitFor(condition: () => boolean) {
-  for (let i = 0; i < 500; i++) {
+async function waitFor(condition: () => boolean, attempts = 500) {
+  for (let i = 0; i < attempts; i++) {
     if (condition()) return;
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
@@ -216,14 +262,15 @@ function makeStore(
 ) {
   return createDownloads({
     root: async () => root as unknown as FileSystemDirectoryHandle,
+    open: (id) => openFake(root, id),
     fetch: transport,
     storage,
-    commitBytes: 16,
   });
 }
 
 function fileOf(root: FakeDir) {
-  return root.dirs.get("downloads")?.files.get(input.versionId);
+  const dir = root.dirs.get("downloads");
+  return dir?.live.get(input.versionId) ?? dir?.files.get(input.versionId);
 }
 
 /** Writes an index.json and partial file into a fake root, as a reload would find them. */
@@ -263,7 +310,7 @@ describe("downloads store", () => {
     ]);
   });
 
-  test("pause commits and resume continues with a Range header", async () => {
+  test("pause flushes and resume continues with a Range header", async () => {
     const root = new FakeDir();
     const gate = deferred();
     const { transport, calls } = fakeFetch(bytes, {
@@ -273,14 +320,20 @@ describe("downloads store", () => {
     const { storage } = fakeStorage();
     const store = makeStore(root, transport, storage);
     await store.start(input);
-    // Two chunks committed (8 + 8 = 16 bytes), the third is still gated.
+    // Two chunks are written; pause must flush them while the third is gated.
     await waitFor(() => fileOf(root)?.length === 16);
+    expect(root.dirs.get("downloads")?.files.get(input.versionId)?.length).toBe(
+      0,
+    );
     const pausing = store.pause(input.versionId);
     gate.resolve();
     await pausing;
     expect(get(store).records[0]?.state).toBe("paused");
     expect(get(store).records[0]?.written).toBe(16);
     expect(fileOf(root)?.length).toBe(16);
+    expect(root.dirs.get("downloads")?.files.get(input.versionId)?.length).toBe(
+      16,
+    );
 
     await store.resume(input.versionId);
     await waitFor(() => get(store).records[0]?.state === "complete");
@@ -305,12 +358,13 @@ describe("downloads store", () => {
     expect(fileOf(root)?.length).toBe(8);
 
     // The resumed request ignores the Range and answers 200: restart whole.
-    const second = fakeFetch(bytes, { chunk: 8, ignoreRange: true });
+    const replacement = bytes.subarray(0, 4);
+    const second = fakeFetch(replacement, { chunk: 8, ignoreRange: true });
     const restarted = createDownloads({
       root: async () => root as unknown as FileSystemDirectoryHandle,
+      open: (id) => openFake(root, id),
       fetch: ((input, init) => second.transport(input, init)) as typeof fetch,
       storage,
-      commitBytes: 16,
     });
     // Share the same store's records is impossible; resume through a fresh
     // transfer by calling resume on a store that restored the index.
@@ -318,7 +372,81 @@ describe("downloads store", () => {
     await restarted.resume(input.versionId);
     await waitFor(() => get(restarted).records[0]?.state === "complete");
     expect(second.calls[0]?.range).toBe("bytes=8-");
-    expect(fileOf(root)).toEqual(bytes);
+    expect(fileOf(root)).toEqual(replacement);
+  });
+
+  test("reload drops unflushed bytes and resumes from the last 8 MiB flush", async () => {
+    const root = new FakeDir();
+    const chunk = 1024 * 1024;
+    const data = Uint8Array.from({ length: 12 * chunk }, (_, i) => i % 251);
+    const gate = deferred();
+    const first = fakeFetch(data, {
+      chunk,
+      gates: [...Array(9), gate.promise],
+    });
+    const store = makeStore(root, first.transport, fakeStorage().storage);
+    await store.start({ ...input, bytes: data.length });
+    await waitFor(() => fileOf(root)?.length === 9 * chunk);
+    const dir = root.dirs.get("downloads");
+    expect(dir?.files.get(input.versionId)?.length).toBe(8 * chunk);
+    // Kill the writer without flushing its final MiB, as a page reload would.
+    for (const writer of dir?.writers ?? []) writer.crashed = true;
+    await store.pause(input.versionId);
+    gate.resolve();
+    const second = fakeFetch(data, { chunk });
+    const restored = makeStore(root, second.transport, fakeStorage().storage);
+    await restored.restore();
+    expect(get(restored).records[0]?.written).toBe(8 * chunk);
+    await restored.resume(input.versionId);
+    await waitFor(() => get(restored).records[0]?.state === "complete");
+    expect(second.calls[0]?.range).toBe(`bytes=${8 * chunk}-`);
+    expect(fileOf(root)).toEqual(data);
+  });
+
+  test("a stalled small transfer flushes within two seconds", async () => {
+    const root = new FakeDir();
+    const gate = deferred();
+    const first = fakeFetch(bytes, {
+      chunk: 8,
+      gates: [undefined, gate.promise],
+    });
+    const store = makeStore(root, first.transport, fakeStorage().storage);
+    await store.start(input);
+    await waitFor(
+      () =>
+        root.dirs.get("downloads")?.files.get(input.versionId)?.length === 8,
+      3000,
+    );
+    await store.pause(input.versionId);
+    gate.resolve();
+  });
+
+  test("a network error flushes received bytes and closes the file", async () => {
+    const root = new FakeDir();
+    let fail!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes.subarray(0, 8));
+        fail = () => controller.error(new Error("Connection lost."));
+      },
+    });
+    const transport = (async () =>
+      new Response(body, {
+        headers: { "content-length": String(bytes.length) },
+      })) as unknown as typeof fetch;
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const store = makeStore(root, transport, fakeStorage().storage);
+      await store.start(input);
+      await waitFor(() => fileOf(root)?.length === 8);
+      fail();
+      await waitFor(() => get(store).records[0]?.state === "failed");
+      const dir = root.dirs.get("downloads");
+      expect(dir?.files.get(input.versionId)).toEqual(bytes.subarray(0, 8));
+      expect(dir?.writers[0]?.closed).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test("remove deletes the file and record, paused or complete", async () => {
@@ -343,9 +471,9 @@ describe("downloads store", () => {
     const again = fakeFetch(bytes);
     const complete = createDownloads({
       root: async () => root as unknown as FileSystemDirectoryHandle,
+      open: (id) => openFake(root, id),
       fetch: ((input, init) => again.transport(input, init)) as typeof fetch,
       storage,
-      commitBytes: 16,
     });
     await complete.restore();
     await complete.start(input);
@@ -375,9 +503,9 @@ describe("downloads store", () => {
     const resumed = fakeFetch(bytes, { chunk: 8 });
     const restored = createDownloads({
       root: async () => root as unknown as FileSystemDirectoryHandle,
+      open: (id) => openFake(root, id),
       fetch: ((input, init) => resumed.transport(input, init)) as typeof fetch,
       storage,
-      commitBytes: 16,
     });
     await restored.restore();
     const snapshot = get(restored);
@@ -459,9 +587,9 @@ describe("downloads store", () => {
     const { storage } = fakeStorage();
     const done = createDownloads({
       root: async () => root as unknown as FileSystemDirectoryHandle,
+      open: (id) => openFake(root, id),
       fetch: answer416 as unknown as typeof fetch,
       storage,
-      commitBytes: 16,
     });
     await done.resume(input.versionId);
     await waitFor(() => get(done).records[0]?.state === "complete");
@@ -475,9 +603,9 @@ describe("downloads store", () => {
     );
     const broken = createDownloads({
       root: async () => short as unknown as FileSystemDirectoryHandle,
+      open: (id) => openFake(short, id),
       fetch: answer416 as unknown as typeof fetch,
       storage,
-      commitBytes: 16,
     });
     await broken.resume(input.versionId);
     await waitFor(() => get(broken).records[0]?.state === "failed");
@@ -489,9 +617,9 @@ describe("downloads store", () => {
       root: async () => {
         throw new DOMException("OPFS denied.", "SecurityError");
       },
+      open: (id) => openFake(new FakeDir(), id),
       fetch: fakeFetch(bytes).transport,
       storage,
-      commitBytes: 16,
     });
     await store.restore();
     const snapshot = get(store);
@@ -558,9 +686,9 @@ describe("downloads store", () => {
     const second = fakeFetch(changed, { chunk: 8, etag: "tag-two" });
     const resumed = createDownloads({
       root: async () => root as unknown as FileSystemDirectoryHandle,
+      open: (id) => openFake(root, id),
       fetch: ((input, init) => second.transport(input, init)) as typeof fetch,
       storage,
-      commitBytes: 16,
     });
     await resumed.restore();
     expect(get(resumed).records[0]?.etag).toBe("tag-one");
@@ -664,11 +792,11 @@ describe("downloads across tabs", () => {
   ) {
     return createDownloads({
       root: async () => root as unknown as FileSystemDirectoryHandle,
+      open: (id) => openFake(root, id),
       fetch: transport,
       storage,
       locks: locks as unknown as Pick<LockManager, "request">,
       channel,
-      commitBytes: 16,
     });
   }
 
@@ -771,7 +899,7 @@ describe("downloads across tabs", () => {
         ),
       ) as { versionId: string; state: string; written: number }[];
     const denied = indexText().find((r) => r.versionId === input.versionId);
-    expect(denied?.state).toBe("queued");
+    expect(denied?.state).toBe("downloading");
     expect(denied?.written).toBe(16);
 
     gate.resolve();
@@ -787,7 +915,7 @@ describe("downloads across tabs", () => {
     const locks = new FakeLocks();
     const [channelA, channelB] = channelPair();
     const gate = deferred();
-    // 24 bytes arrive (16 committed, 8 staged), then the stream stalls.
+    // 24 bytes arrive in place, then the stream stalls.
     const first = fakeFetch(bytes, {
       chunk: 8,
       gates: [undefined, undefined, undefined, gate.promise],
@@ -795,9 +923,8 @@ describe("downloads across tabs", () => {
     const second = fakeFetch(bytes, { chunk: 8 });
     const a = tabStore(root, first.transport, locks, channelA);
     await a.start(input);
-    await waitFor(() => fileOf(root)?.length === 16);
-    await Bun.sleep(20); // the third chunk lands staged but uncommitted
-    expect(fileOf(root)?.length).toBe(16);
+    await waitFor(() => (fileOf(root)?.length ?? 0) >= 16);
+    await waitFor(() => fileOf(root)?.length === 24);
 
     // B opens mid-transfer and resumes the record; A still owns the lock.
     const b = tabStore(root, second.transport, locks, channelB);
