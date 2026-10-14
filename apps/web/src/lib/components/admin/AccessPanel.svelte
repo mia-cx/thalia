@@ -52,6 +52,15 @@ const pickableGroups = $derived(
 const ruleKey = (rule: Rule) =>
   `${rule.subject.type}:${rule.subject.id}:${rule.action}`;
 
+const subjectLabel = $derived.by(() => {
+  const [type, id] = subjectSel.split(":");
+  if (type === "user")
+    return (users.data ?? []).find((user) => user.id === id)?.displayName;
+  if (type === "group")
+    return pickableGroups.find((group) => group.id === id)?.name;
+  return undefined;
+});
+
 const source = (rule: Rule) =>
   rule.object.type === "server" ? "the server" : rule.object.name;
 
@@ -163,7 +172,9 @@ async function addRule(event: SubmitEvent) {
         onValueChange={(next) => (subjectSel = next)}
       >
         <Select.Trigger id="access-subject">
-          <Select.Value placeholder="Pick a user or group" />
+          <Select.Value
+            >{subjectLabel ?? "Pick a user or group"}</Select.Value
+          >
         </Select.Trigger>
         <Select.Content>
           <Select.Group>
@@ -192,7 +203,7 @@ async function addRule(event: SubmitEvent) {
         onValueChange={(next) => (actionSel = next as Rule["action"])}
       >
         <Select.Trigger id="access-action">
-          <Select.Value />
+          <Select.Value>{permissionLabels[actionSel]}</Select.Value>
         </Select.Trigger>
         <Select.Content>
           {#each objectActions as action (action)}
@@ -210,7 +221,8 @@ async function addRule(event: SubmitEvent) {
         onValueChange={(next) => (accessSel = next)}
       >
         <Select.Trigger id="access-access">
-          <Select.Value />
+          <Select.Value>{accessSel === "allow" ? "Allow" : "Deny"}</Select.Value
+          >
         </Select.Trigger>
         <Select.Content>
           <Select.Item value="allow" label="Allow">Allow</Select.Item>
