@@ -501,6 +501,98 @@ describe.skipIf(!databaseUrl || browser === undefined)(
         }),
       ));
 
+    test("a Try again queued behind a reconcile retries the current cursor", () =>
+      withFolder((folder) =>
+        withDatabase(async (db, url) => {
+          if (browser === undefined) throw new Error("Expected a browser.");
+          await migrateDatabase(db);
+          const token = await seedAdmin(db, "overview-browser-retry2");
+          const library = await seedGapLibrary(db, folder);
+          const server = await startThalia("api", {
+            databaseUrl: url,
+            port: 0,
+            pluginOptions: { directory: `${folder}/installed` },
+          });
+          const page = await openPage();
+          const exceptions: string[] = [];
+          try {
+            const base = `http://127.0.0.1:${server.apiServer?.port}`;
+            await signIn(page, base, token, "/admin/overview");
+            page.on("Runtime.exceptionThrown", (e: unknown) =>
+              exceptions.push(JSON.stringify(e)),
+            );
+            await page.waitFor(
+              "[...document.querySelectorAll('button')].some(b => b.textContent.includes('No poster'))",
+            );
+            await page.eval(
+              "[...document.querySelectorAll('button')].find(b => b.textContent.includes('No poster'))?.click()",
+            );
+            await page.waitFor(
+              "document.querySelectorAll('[data-slot=dialog-content] a').length === 24",
+            );
+
+            // Fail the Show more request; hold whatever comes after.
+            const held: { requestId: string }[] = [];
+            let failedOnce = false;
+            await page.send("Fetch.enable", {
+              patterns: [
+                { urlPattern: "*metadataGapItems*", requestStage: "Request" },
+              ],
+            });
+            page.on("Fetch.requestPaused", (p: { requestId: string }) => {
+              if (!failedOnce) {
+                failedOnce = true;
+                void page.send("Fetch.failRequest", {
+                  requestId: p.requestId,
+                  errorReason: "Failed",
+                });
+                return;
+              }
+              held.push({ requestId: p.requestId });
+            });
+            await page.eval(clickButton("Show more"));
+            await page.waitFor(
+              "[...document.querySelectorAll('[data-slot=dialog-content] button')].some(b => b.textContent.trim() === 'Try again')",
+            );
+
+            // Hold the reconcile; Try again queues behind it.
+            await publishEvent(db, {
+              kind: "library.changed",
+              libraryId: library.id,
+            });
+            await waitForHeld(held);
+            await page.eval(
+              clickButton(
+                "Try again",
+                "document.querySelector('[data-slot=dialog-content]')",
+              ),
+            );
+            for (const { requestId } of held)
+              await page.send("Fetch.continueRequest", { requestId });
+
+            // The reconcile lands all 25; the queued retry sees the null
+            // cursor and does not append anything.
+            await page.waitFor(
+              "document.querySelectorAll('[data-slot=dialog-content] a').length === 25",
+            );
+            await Bun.sleep(500);
+            const titles = await page.eval<string[]>(dialogTitles);
+            expect(new Set(titles).size).toBe(25);
+            expect(titles).toHaveLength(25);
+            expect(await page.eval<boolean>(showMorePresent)).toBe(false);
+            expect(
+              await page.eval<boolean>(
+                "[...document.querySelectorAll('[data-slot=dialog-content] button')].every(b => b.textContent.trim() !== 'Try again')",
+              ),
+            ).toBe(true);
+            expect(exceptions).toEqual([]);
+          } finally {
+            await page.close();
+            await server.stop();
+          }
+        }),
+      ));
+
     test("a failed reconcile keeps its rows and Try again refetches cleanly", () =>
       withFolder((folder) =>
         withDatabase(async (db, url) => {

@@ -97,13 +97,12 @@ async function loadFirst() {
   }
 }
 
-/** The next page; a no-op once the list is fully loaded. */
-const showMore = (): Promise<void> =>
-  cursor === null ? Promise.resolve() : showMoreAt(cursor);
-
-/** Fetches the page after `after` and appends it. */
-async function showMoreAt(after: string) {
+/** The next page; a no-op once the list is fully loaded. Reads `cursor`
+ * when it runs, so a retry always follows the current list. */
+async function showMore() {
   if (gap === undefined) return;
+  const after = cursor;
+  if (after === null) return;
   const ticket = generation;
   const signal = controller.signal;
   loading = true;
@@ -117,8 +116,7 @@ async function showMoreAt(after: string) {
   } catch (error) {
     if (ticket === generation) {
       failure = readFailure(error);
-      // Retry the page that failed, not whatever cursor is current then.
-      retry = () => showMoreAt(after);
+      retry = showMore;
     }
   } finally {
     if (ticket === generation) loading = false;
