@@ -181,6 +181,21 @@ describe.skipIf(!databaseUrl)("downloads", () => {
           expect(ranged.headers.get("content-range")).toBe("bytes 10-35/36");
           expect(await ranged.text()).toBe(fixtureBytes.slice(10));
 
+          const etag = full.headers.get("etag");
+          expect(etag).not.toBeNull();
+          const resumed = await fetch(`${base}${path}`, {
+            headers: { cookie, range: "bytes=10-", "if-range": etag as string },
+          });
+          expect(resumed.status).toBe(206);
+          expect(await resumed.text()).toBe(fixtureBytes.slice(10));
+
+          const stale = await fetch(`${base}${path}`, {
+            headers: { cookie, range: "bytes=10-", "if-range": '"stale"' },
+          });
+          expect(stale.status).toBe(200);
+          expect(stale.headers.get("content-range")).toBeNull();
+          expect(await stale.text()).toBe(fixtureBytes);
+
           const head = await fetch(`${base}${path}`, {
             method: "HEAD",
             headers: { cookie },

@@ -117,7 +117,7 @@ export async function serveVersionFile(
   userId: string,
   itemId: string,
   versionId: string,
-  options?: { attachment?: boolean },
+  options?: { attachment?: boolean; ifRange?: string | null },
 ) {
   const { path } = await locateVersionFile(db, userId, itemId, versionId);
   if (path === undefined)
@@ -140,7 +140,16 @@ export async function serveVersionFile(
     );
   }
   const file = Bun.file(path);
+  // ETag covers the bytes' identity: size plus mtime. A rescan can replace a
+  // file in place under the same ids, and a resume must not splice tails.
+  const etag = `"${file.size}-${Math.trunc(file.lastModified)}"`;
+  headers.set("etag", etag);
+  headers.set("last-modified", new Date(file.lastModified).toUTCString());
   headers.set("content-length", String(file.size));
+  // A stale If-Range makes the whole file the answer; only a buffered body
+  // escapes Bun's own Range handling, which fires on file and stream bodies.
+  if (options?.ifRange != null && options.ifRange !== etag)
+    return new Response(await file.arrayBuffer(), { headers });
   return new Response(file, { headers });
 }
 
@@ -248,6 +257,7 @@ export function createDownloadHandler(db: Database) {
       });
       return await serveVersionFile(db, userId, itemId, versionId, {
         attachment: true,
+        ifRange: request.headers.get("if-range"),
       });
     } catch (error) {
       return errorResponse(error);
