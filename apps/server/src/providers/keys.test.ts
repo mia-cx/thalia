@@ -1,12 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { items } from "../db/schema/index.ts";
+import { items, jobs, providerIds } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { insertItem } from "../db/tree.ts";
+import { createJobQueue } from "../jobs/queue.ts";
+import { createJobRegistry } from "../jobs/registry.ts";
 import { insertLibraries } from "../libraries/testing.ts";
+import { queueProviderFetch, registerMetadataJobs } from "../metadata/jobs.ts";
+import {
+  tvdbEpisodePages,
+  tvdbResponse,
+  tvdbSeries,
+} from "../metadata/tvdb-fixtures.ts";
 import {
   readProviderKeyNames,
   removeProviderKey,
@@ -25,7 +33,192 @@ async function seed(db: Database) {
   return { admin, viewer };
 }
 
+/** A Show tree whose pending descendants share one provider fetch. */
+async function seedShow(db: Database, libraryId: string) {
+  const show = await insertItem(db, {
+    libraryId,
+    kind: "show",
+    title: "Breaking Bad",
+    canonicalFolder: "Breaking Bad",
+    extension: {},
+  });
+  const season = await insertItem(db, {
+    libraryId,
+    kind: "season",
+    parentId: show.id,
+    title: "Season 1",
+    canonicalFolder: "Breaking Bad/Season 01",
+    extension: { seasonNumber: 1 },
+  });
+  const episode = await insertItem(db, {
+    libraryId,
+    kind: "episode",
+    parentId: season.id,
+    title: "Episode 1",
+    canonicalFolder: "Breaking Bad/Season 01",
+    extension: { episodeNumber: 1, episodeEndNumber: null },
+  });
+  return { show, season, episode };
+}
+
 describe.skipIf(!databaseUrl)("provider keys", () => {
+  test("saving keys fetches pending movies and Show trees without a rescan or duplicate jobs", async () => {
+    const previous = Bun.env.TMDB_API_KEY;
+    delete Bun.env.TMDB_API_KEY;
+    try {
+      await withDatabase(async (db) => {
+        const { admin } = await seed(db);
+        const [movieLibrary, showLibrary] = await insertLibraries(db, [
+          { name: "Movies", medium: "movies", rootPath: "/m" },
+          { name: "Shows", medium: "shows", rootPath: "/s" },
+        ]);
+        if (!movieLibrary || !showLibrary)
+          throw new Error("Fixture libraries missing.");
+        const movie = await insertItem(db, {
+          libraryId: movieLibrary.id,
+          kind: "movie",
+          title: "Alien",
+          canonicalFolder: "Alien",
+          extension: {},
+        });
+        const { show, season, episode } = await seedShow(db, showLibrary.id);
+        await db.insert(providerIds).values([
+          { itemId: movie.id, provider: "tmdb", value: "348" },
+          { itemId: show.id, provider: "tvdb", value: "81189" },
+        ]);
+        const request = (async (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ) => {
+          const url = new URL(String(input));
+          if (url.hostname === "api.themoviedb.org")
+            return Response.json({
+              id: 348,
+              title: "Alien",
+              overview: "A movie match.",
+            });
+          if (url.pathname.endsWith("/extended"))
+            return Response.json({
+              data: {
+                ...tvdbSeries,
+                status: { name: "Ended" },
+                image: null,
+                artworks: [],
+                seasons: tvdbSeries.seasons.map((entry) => ({
+                  ...entry,
+                  image: null,
+                })),
+              },
+            });
+          if (url.pathname.endsWith("/episodes/official"))
+            return Response.json({
+              data: {
+                episodes: tvdbEpisodePages
+                  .flat()
+                  .map((entry) => ({ ...entry, image: null })),
+              },
+            });
+          return tvdbResponse(url, init);
+        }) as typeof fetch;
+        const queue = createJobQueue(db);
+        const registry = createJobRegistry();
+        registerMetadataJobs(db, registry, request);
+        const runFetches = async () => {
+          for (;;) {
+            const job = await queue.claim(["provider-fetch"]);
+            if (!job) return;
+            await registry.run(job);
+            await queue.complete(job);
+          }
+        };
+        await queueProviderFetch(db, movie.id);
+        await queueProviderFetch(db, show.id);
+        await runFetches();
+        expect(
+          (await db.select().from(items)).every(
+            (item) => item.metadataState === "pending",
+          ),
+        ).toBe(true);
+        expect(
+          (await db.select().from(jobs)).every(
+            (job) => job.state === "completed",
+          ),
+        ).toBe(true);
+
+        const queuedFetches = () =>
+          db
+            .select()
+            .from(jobs)
+            .where(
+              and(eq(jobs.type, "provider-fetch"), eq(jobs.state, "queued")),
+            )
+            .orderBy(jobs.id);
+        await setProviderKey(db, admin.id, "tmdb", "tmdb-key");
+        expect((await queuedFetches()).map((job) => job.payload)).toEqual([
+          { type: "provider-fetch", itemId: movie.id },
+        ]);
+        await setProviderKey(db, admin.id, "tvdb", "tvdb-key");
+        const queued = await queuedFetches();
+        expect(queued.map((job) => job.payload)).toEqual([
+          { type: "provider-fetch", itemId: movie.id },
+          { type: "provider-fetch", itemId: show.id },
+        ]);
+        await setProviderKey(db, admin.id, "tmdb", "tmdb-key");
+        await setProviderKey(db, admin.id, "tvdb", "tvdb-key");
+        expect((await queuedFetches()).map((job) => job.id)).toEqual(
+          queued.map((job) => job.id),
+        );
+        await runFetches();
+        expect(
+          (await db.select().from(items)).every(
+            (item) => item.metadataState === "matched",
+          ),
+        ).toBe(true);
+        const descendants = await db
+          .select()
+          .from(items)
+          .where(inArray(items.id, [season.id, episode.id]))
+          .orderBy(items.kind);
+        expect(descendants.map((item) => item.title)).toEqual([
+          "Season 1",
+          "Pilot",
+        ]);
+        await setProviderKey(db, admin.id, "tmdb", "tmdb-key");
+        await setProviderKey(db, admin.id, "tvdb", "tvdb-key");
+        expect(await queuedFetches()).toHaveLength(0);
+      });
+    } finally {
+      if (previous === undefined) delete Bun.env.TMDB_API_KEY;
+      else Bun.env.TMDB_API_KEY = previous;
+    }
+  });
+
+  for (const kind of ["season", "episode"] as const)
+    test(`a pending ${kind} queues its matched Show once`, () =>
+      withDatabase(async (db) => {
+        const { admin } = await seed(db);
+        const [library] = await insertLibraries(db, {
+          name: "Shows",
+          medium: "shows",
+          rootPath: "/s",
+        });
+        if (!library) throw new Error("Fixture library missing.");
+        const tree = await seedShow(db, library.id);
+        await db.update(items).set({ metadataState: "matched" });
+        await db
+          .update(items)
+          .set({ metadataState: "pending" })
+          .where(eq(items.id, tree[kind].id));
+        await setProviderKey(db, admin.id, "tvdb", "tvdb-key");
+        await setProviderKey(db, admin.id, "tvdb", "tvdb-key");
+        expect(await db.select().from(jobs)).toMatchObject([
+          {
+            payload: { type: "provider-fetch", itemId: tree.show.id },
+            state: "queued",
+          },
+        ]);
+      }));
+
   test("set, list, overwrite and remove key names only", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
