@@ -36,7 +36,7 @@ Environment variables only bootstrap a process. Everything else lives in Postgre
 | `THALIA_NPM_REGISTRY` | `api`, `worker`, `all` | `https://registry.npmjs.org` | Where npm plugin specs resolve. |
 | `TMDB_API_KEY` | `worker`, `all` | none | TMDB's v3 API key, the 32-character one, not the Read Access Token. Used only when Thalia's settings hold no TMDB key, neither a provider key nor the legacy `metadata.tmdb.apiKey`. |
 | `THALIA_API_URL` | `watcher` | required | The api's origin, such as `http://thalia.lan:3000`. |
-| `THALIA_WATCHER_TOKEN` | `watcher` | required | An API key whose owner has `manage-libraries`. |
+| `THALIA_WATCHER_TOKEN` | `watcher` | required | An API key whose owner has `libraries:manage`. |
 | `THALIA_WATCH` | `watcher` | required | `<root-id>=<absolute path>` pairs, separated by commas. A root id is shown on the Library page. A watcher claims a Library's scans only when it watches every root of that Library. |
 
 The compose files read three more. They configure Docker, not Thalia.

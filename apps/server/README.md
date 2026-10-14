@@ -100,7 +100,7 @@ Item, progress and playback writes enqueue one `plugin` job per event and per en
 
 Routes are served at `/plugins/<name>/<path>`, a scoped name taking two segments, for GET and POST. The handler gets the caller's user id when a session or API key authenticates, and null otherwise. POST passes the same origin check as API mutations. Plugin metadata providers join provider-fetch and take part in matching once their id is in the metadata `providerOrder`. Plugin subtitle providers join every subtitle-fetch next to OpenSubtitles. Plugin home shelves appear on Home after the medium shelves; `GET /api/shelves/item/{id}` lists item shelves. Both show only items the caller may view.
 
-`plugins.*` and `registries.*` are the admin procedures, all behind `manage-server`: list, preview a source, install at the previewed integrity, enable and disable, files switches, config, and adding, listing and removing registries.
+`plugins.*` and `registries.*` are the admin procedures, all behind `plugins:manage`: list, preview a source, install at the previewed integrity, enable and disable, files switches, config, and adding, listing and removing registries.
 
 ## Transcoder
 
@@ -132,7 +132,7 @@ A library's policy names the rungs Thalia stores next to each source and an opti
 | `libraries.setStoredVersions` | PUT `/api/libraries/{id}/stored-versions` | `id`, nullable `policy` | `{ policy }` |
 | `items.requestStoredVersion` | POST `/api/items/{id}/stored-versions` | `id`, `rung` | `{ queued }`, false when the rung is complete or already queued |
 
-All three need `manage-transcoding`. A manual request names a rung the policy defines and skips only its condition. An unknown rung answers 400, a rung the source cannot make answers 409.
+All three need `transcoding:manage`. A manual request names a rung the policy defines and skips only its condition. An unknown rung answers 400, a rung the source cannot make answers 409.
 
 Every folder scan queues the wanted rungs of each Item's best aligned source and deletes the rows of rungs the policy no longer names. A low-priority `store` sweep job on a worker then removes their folders and any `<file>.thalia` folder whose source left the disk, because the api, which runs a watcher's scans, may only read the share. Replacing a policy reconciles the whole library at once.
 
@@ -147,9 +147,9 @@ When a plan is not direct play, the complete stored rungs that pass the client b
 | `playback.sessions` | GET `/api/playback/sessions` | None | `PlaybackSession[]`, newest first |
 | `store.status` | GET `/api/store/status` | None | `{ running, queued: { total, next } }` |
 
-`playback.sessions` needs `manage-server`. It lists sessions that are not stopped and reported in the last five minutes: state, play method, user, client and device, the Item as a browse card, rungs and the transcoder node name. Rungs are the stored rung names for a stored session, the output height for a live transcode such as `720p`, and `source` otherwise. A plan records the client and device of the caller's login, or an API key's name as the client, and publishes `session.state` `starting`, so a dashboard on `events.stream` sees a session arrive and leave.
+`playback.sessions` needs `server:manage`. It lists sessions that are not stopped and reported in the last five minutes: state, play method, user, client and device, the Item as a browse card, rungs and the transcoder node name. Rungs are the stored rung names for a stored session, the output height for a live transcode such as `720p`, and `source` otherwise. A plan records the client and device of the caller's login, or an API key's name as the client, and publishes `session.state` `starting`, so a dashboard on `events.stream` sees a session arrive and leave.
 
-`store.status` needs `manage-transcoding`. Each running store encode reports its Item, rung, and the segments finished against the timeline's total, counted in the rung folder on the library share. The queue reports its total and the next ten encodes in run order with their run-after time; a job booked for the next idle window shows that window's start. Sweeps are left out.
+`store.status` needs `transcoding:manage`. Each running store encode reports its Item, rung, and the segments finished against the timeline's total, counted in the rung folder on the library share. The queue reports its total and the next ten encodes in run order with their run-after time; a job booked for the next idle window shows that window's start. Sweeps are left out.
 
 ## Auth
 
@@ -169,7 +169,7 @@ Use a private bind address, firewall or restricted ingress during setup. Expose 
 | GET | `/api/auth/me` | None | `user`, `credential` |
 | POST | `/api/auth/logout` | None | Revokes the current session or API key and returns `ok` |
 
-Invite creation requires `manage-users` and accepts bearer or session-cookie auth. Invite tokens are random, stored only as SHA-256 digests, expire, and work once.
+Invite creation requires `users:manage` and accepts bearer or session-cookie auth. Invite tokens are random, stored only as SHA-256 digests, expire, and work once.
 Invite acceptance and new OIDC accounts require a live invite. Existing OIDC subjects log in directly.
 The two OIDC routes answer a browser, so a failure is a 303 to `/login?error=<code>`, where the code is the lowercased error code such as `oidc_failed`, or `internal_error`.
 Only `email_verified: true` can link an existing account. An unverified email never links, but a matching live invite can create a separate account.
@@ -194,10 +194,12 @@ POST requests reject a foreign Origin or cross-site Fetch Metadata. Native clien
 
 Server callers use these functions after authenticating the actor:
 
-- `accounts.ts`: `setupAdmin` and `createLocalUser`. Only setup accepts anonymous account creation; later users require `manage-users`.
-- `permissions.ts`: `checkPermission` and `requirePermission` for every later service. Group permissions form a union, then user overrides apply. Library rows override global view, and a matching library deny wins. Built-in admins bypass checks; disabled users do not. The names are `view`, `play`, `download` (direct file downloads over the Jellyfin `/Items/{id}/Download` route), `manage-libraries`, `manage-metadata`, `manage-subtitles`, `manage-users`, `manage-plugins`, `manage-transcoding` and `manage-server`.
+- `accounts.ts`: `setupAdmin` and `createLocalUser`. Only setup accepts anonymous account creation; later users require `users:manage`.
+- `access.ts`: the pure Access rule resolver. The most specific object decides; on that object a user's rule beats Groups, and deny wins between Groups. Every Action except `view` also requires `view` on the same object.
+- `permissions.ts`: `checkPermission` and `requirePermission` take an explicit server or Library object. Built-in admins bypass rules; disabled users do not. The Actions are `view`, `play`, `download`, `metadata:edit`, `subtitles:edit`, `libraries:manage`, `users:manage`, `plugins:manage`, `transcoding:manage` and `server:manage`. The last five can only name the server. Group editor checks write server allow rules, user overrides write server allow/deny rules, and Library access writes Library `view` rules. Inherit deletes the rule.
+- Jellyfin policy maps `EnableAllFolders` and `EnabledFolders` to user Library `view` rules. `EnableMediaPlayback` and `EnableContentDownloading` write user `play` and `download` rules on the server.
 - `permissions.ts`: `createGroup`, `setUserGroups` and `setPermissionOverride` require built-in admin membership. A null override restores inheritance. Membership replacement serializes on the admins group and rejects removal of the final enabled admin with `CONFLICT`.
-- `sessions.ts`: `login`, `authenticate`, `listSessions`, `revokeSession`, `createApiKey`, `listApiKeys` and `revokeApiKey`. Listing and revocation require ownership or `manage-users`. API keys belong to their creator and carry an integration name.
+- `sessions.ts`: `login`, `authenticate`, `listSessions`, `revokeSession`, `createApiKey`, `listApiKeys` and `revokeApiKey`. Listing and revocation require ownership or `users:manage`. API keys belong to their creator and carry an integration name.
 
 These files live under `src/auth`. Call `login(db, input, address)` with the resolved client address, not a forwarded header string.
 The setup transaction holds a Postgres advisory lock. Its `auth.setupComplete` settings marker keeps setup closed after account deletion.
@@ -334,7 +336,7 @@ Procedures accept the same `Authorization: Bearer <token>` or `thalia_session` c
 `me` is the only auth route wrapped as a procedure. Setup, login and logout stay on the auth handler because they set cookies, check Origin and consume login windows.
 
 `setup.status` is the only unauthenticated procedure. The first-run wizard asks it before any account exists, and it leaks one boolean that `POST /api/auth/setup` already leaks through its 409. The login page also reads whether OIDC is configured and its button name, which `GET /api/auth/oidc/login` already reveals.
-The other admin procedures check permissions inside the auth slice: `manage-users` for user reads and settings, `manage-server` for server settings, and built-in admin membership for group and library access writes.
+The other admin procedures check permissions inside the auth slice: `users:manage` for user reads and settings, `server:manage` for server settings, and built-in admin membership for group and library access writes.
 
 `users.get` and the four `users.set*` mutations all answer the full `UserAccess` shape, so the per-user screen refreshes in one round trip. The mutations read that shape back without re-checking the caller, which exposes nothing new because reaching that line already required passing the write's own check; it lets an admin demote themselves and still receive the saved state.
 `users.setOverride` restores inheritance on a null `allowed`. `users.setLibraryAccess` writes user rows only; group access rows stay unexposed in this slice.
@@ -357,7 +359,7 @@ The list connection is `{ items, cursor }`. `sort` is `added` by default, newest
 Without a `libraryId` the list is scoped to the libraries the caller may view, with the auth slice's own precedence rules, and answers 403 when that set is empty.
 The default page is 24 and `limit` caps at 100. An unparseable cursor answers 400.
 
-`items.refresh` queues a provider-fetch for one Item and needs `manage-libraries`. It runs at priority 1, ahead of background scans at 0. When a due fetch for the Item is already queued, it raises that job to priority 1 and returns its id instead of adding another. A refresh of a Show re-fetches its whole tree. An unknown id answers 404.
+`items.refresh` queues a provider-fetch for one Item and needs `libraries:manage`. It runs at priority 1, ahead of background scans at 0. When a due fetch for the Item is already queued, it raises that job to priority 1 and returns its id instead of adding another. A refresh of a Show re-fetches its whole tree. An unknown id answers 404.
 
 `items.search` matches the titles of Movies and Shows in the libraries the caller may view, with pg_trgm. Trigram similarity forgives a misspelling, so `Interstelar` finds `Interstellar`; word similarity lets a prefix or one word of a longer title match. Results come best match first, at most 24. `query` is trimmed, must keep 1 to 200 characters and may not contain NUL. A caller who may view no library gets an empty list.
 
@@ -382,7 +384,7 @@ Every response from either transport carries `Cache-Control: no-store` and `Vary
 Events live in the durable `events` table. Publishing inserts the row, prunes rows older than the ten-minute retention window and notifies the new id on the `thalia_events` channel, all in one transaction.
 Each api process holds one LISTEN and wakes its subscribers; every subscriber then reads its own rows. Postgres sees one listener per process, not per client.
 
-Every event reaches only its audience, on live delivery and on replay alike: `library.changed` needs view on that library, `job.progress` needs `manage-server`, and `session.state` and `segment.ready` reach the session's owner or a `manage-server` caller. An unknown kind is denied.
+Every event reaches only its audience, on live delivery and on replay alike: `library.changed` needs view on that library, `job.progress` needs `server:manage`, and `session.state` and `segment.ready` reach the session's owner or a `server:manage` caller. An unknown kind is denied.
 An open stream revalidates its credential every thirty seconds and again before any event that would be delivered past that deadline, so a revoked session or key, a disabled user or a permission change stops delivery within the interval and ends the stream — including mid-batch, where a suspended yield cannot stretch one validation over many rows.
 Audience decisions are memoised per event subject — the library, the job set or the session — and cleared whenever the credential refreshes, so a long replay costs one decision per subject rather than per row while staying within the same freshness bound.
 
@@ -396,7 +398,7 @@ The web app calls the API through `apps/web/src/lib/api.ts`, which imports the r
 
 ## Libraries and manual scans
 
-Library administration requires `manage-libraries` on every procedure. The API exposes RPC under `libraries` and these REST routes:
+Library administration requires `libraries:manage` on every procedure. The API exposes RPC under `libraries` and these REST routes:
 
 | Procedure | REST route | Input | Output |
 | --- | --- | --- | --- |
@@ -437,7 +439,7 @@ Scan tests generate short MKV fixtures with ffmpeg and compare their stream list
 
 Sonarr and Radarr report file changes through webhook routes so scans stay current between manual runs. Create one API key per integration through the auth service's `createApiKey`. The token is shown once and becomes the secret URL segment. Point Sonarr at `<thalia-origin>/api/webhooks/sonarr/<secret>` and Radarr at `<thalia-origin>/api/webhooks/radarr/<secret>` with POST. Enable Download or import, Rename, Episode File Delete and Series Delete in Sonarr, and Download or import, Rename, Movie File Delete and Movie Delete in Radarr.
 
-The secret must be a live API key owned by a caller with `manage-libraries`. Session tokens in the URL are rejected. Wrong, revoked or expired secrets answer 401. Treat the full webhook URL as a secret and redact it from logs. Accepted payloads answer 202 with the number of translated changes. Unknown Servarr event types are accepted with zero changes. Malformed payloads and paths outside the matching medium's Library answer 400. A change whose Item folder is the root queues a scan of `.`.
+The secret must be a live API key owned by a caller with `libraries:manage`. Session tokens in the URL are rejected. Wrong, revoked or expired secrets answer 401. Treat the full webhook URL as a secret and redact it from logs. Accepted payloads answer 202 with the number of translated changes. Unknown Servarr event types are accepted with zero changes. Malformed payloads and paths outside the matching medium's Library answer 400. A change whose Item folder is the root queues a scan of `.`.
 
 Absolute writer paths become root-relative paths and debounce for 10 seconds per Library directory. A burst of events queues one scan job under the Library concurrency key `library:<id>`.
 
@@ -450,7 +452,7 @@ The `api` and `all` roles run a directory-mtime repair pass after startup and ev
 Media on NFS gives the api no inotify events, so `--role watcher` runs on the storage host instead. It needs no database. Configure it with three variables:
 
 - `THALIA_API_URL`: the api origin, such as `http://thalia.lan:3000`.
-- `THALIA_WATCHER_TOKEN`: an API key owned by a caller with `manage-libraries`.
+- `THALIA_WATCHER_TOKEN`: an API key owned by a caller with `libraries:manage`.
 - `THALIA_WATCH`: `<root-id>=<absolute local path>` pairs separated by commas. A root id is shown on the Library page in the admin UI. A local path is that root's folder as the storage host sees it, so mount points may differ from the api's.
 
 The watcher watches each root recursively. After a file stays quiet for 200 ms, it posts the add, move or delete to `POST /api/watcher/events` with a root-relative path. A path that appears with the inode of a vanished path is a move, so renames keep Item and Progress identity. The api keeps changes to the medium's own files and debounces them like webhook changes. A failed post is logged and dropped; the repair pass heals what it missed.
