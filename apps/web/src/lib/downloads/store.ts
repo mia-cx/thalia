@@ -20,6 +20,8 @@ export type DownloadRecord = {
 };
 export type DownloadsSnapshot = {
   ready: boolean;
+  /** OPFS refused or threw: downloads are unusable here. */
+  unavailable: boolean;
   records: DownloadRecord[];
   persisted: boolean | undefined;
   storage: { usage: number; quota: number; downloads: number } | undefined;
@@ -52,13 +54,16 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
   const commitBytes = deps.commitBytes ?? defaultCommitBytes;
   const store = writable<DownloadsSnapshot>({
     ready: false,
+    unavailable: false,
     records: [],
     persisted: undefined,
     storage: undefined,
   });
   const records: DownloadRecord[] = [];
   let ready = false;
+  let unavailable = false;
   let persisted: boolean | undefined;
+  let askedPersist = false;
   let usage = 0;
   let quota = 0;
   let estimated = false;
@@ -76,6 +81,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
   const notify = () =>
     store.set({
       ready,
+      unavailable,
       records: [...records],
       persisted,
       storage: estimated
@@ -124,7 +130,15 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
   function restore(): Promise<void> {
     if (restorePromise === undefined)
       restorePromise = (async () => {
-        const dir = await directory();
+        let dir: FileSystemDirectoryHandle;
+        try {
+          dir = await directory();
+        } catch {
+          unavailable = true;
+          ready = true;
+          notify();
+          return;
+        }
         let stored: DownloadRecord[] = [];
         try {
           const handle = await dir.getFileHandle("index.json");
@@ -158,8 +172,10 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
   async function start(
     input: Omit<DownloadRecord, "written" | "state">,
   ): Promise<void> {
+    await restore();
     if (records.some((record) => record.versionId === input.versionId)) return;
-    if (persisted === undefined) {
+    if (persisted !== true && !askedPersist) {
+      askedPersist = true;
       try {
         persisted = await deps.storage.persist();
       } catch {
@@ -240,7 +256,13 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
         if (length !== null) total = Number(length);
       } else {
         await writable.close();
-        record.state = "failed";
+        // A 416 at exactly the file's size means the bytes all landed but the
+        // index never recorded the completion.
+        record.state =
+          response.status === 416 && offset > 0 && offset === record.bytes
+            ? "complete"
+            : "failed";
+        if (record.state === "complete") await refreshEstimate();
         notify();
         return;
       }
@@ -289,6 +311,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
 
   /** Stops a queued or running download, keeping its bytes for resume. */
   async function pause(versionId: string): Promise<void> {
+    await restore();
     if (current?.record.versionId === versionId) {
       current.pause = true;
       current.controller.abort();
@@ -304,6 +327,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
 
   /** Returns a paused or failed record to the queue. */
   async function resume(versionId: string): Promise<void> {
+    await restore();
     const record = records.find((entry) => entry.versionId === versionId);
     if (
       record === undefined ||
@@ -318,6 +342,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
 
   /** Cancels an unfinished download or deletes a finished one, file and record. */
   async function remove(versionId: string): Promise<void> {
+    await restore();
     const index = records.findIndex((entry) => entry.versionId === versionId);
     if (index < 0) return;
     if (current?.record.versionId === versionId) {

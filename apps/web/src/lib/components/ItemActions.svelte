@@ -139,6 +139,7 @@ const downloadable = $derived(
   (detail.kind === "movie" || detail.kind === "episode") &&
     detail.canDownload &&
     downloadsSupported() &&
+    !$downloads.unavailable &&
     downloadVersion !== undefined,
 );
 const downloadRecord = $derived(
@@ -199,7 +200,9 @@ async function refreshMetadata() {
   }
 }
 
-onMount(() => void downloads.restore());
+onMount(() => {
+  if (downloadsSupported()) void downloads.restore();
+});
 onDestroy(() => refreshAbort?.abort());
 </script>
 

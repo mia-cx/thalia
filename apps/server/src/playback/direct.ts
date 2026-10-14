@@ -130,9 +130,13 @@ export async function serveVersionFile(
   if (options?.attachment === true) {
     const name = basename(path);
     const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+    const encoded = encodeURIComponent(name).replace(
+      /['()*]/g,
+      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+    );
     headers.set(
       "content-disposition",
-      `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+      `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`,
     );
   }
   const file = Bun.file(path);

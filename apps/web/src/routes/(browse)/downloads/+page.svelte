@@ -21,6 +21,7 @@ import {
 } from "$lib/downloads/index.ts";
 
 const supported = downloadsSupported();
+const unavailable = $derived($downloads.unavailable);
 const storage = $derived($downloads.storage);
 const records = $derived($downloads.records);
 const ready = $derived($downloads.ready);
@@ -62,7 +63,7 @@ async function update(call: () => Promise<void>) {
 <div class="pt-4 lg:pt-8">
   <h1 class="mb-5 pr-14 text-large-title lg:pr-0">Downloads</h1>
 
-  {#if !supported}
+  {#if !supported || unavailable}
     <p class="text-subheadline text-label-secondary">
       This browser can't save downloads.
     </p>
@@ -94,7 +95,7 @@ async function update(call: () => Promise<void>) {
         {/if}
       </FormGroup>
 
-      <FormGroup title="Downloads" loading={ready ? 0 : 2}>
+      <FormGroup loading={ready ? 0 : 2}>
         {#if ready && records.length === 0}
           <EmptyState icon={DownloadIcon} title="No downloads">
             <Button variant="secondary" href="/movies">Browse movies</Button>

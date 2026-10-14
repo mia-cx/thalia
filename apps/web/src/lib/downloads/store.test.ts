@@ -157,14 +157,16 @@ function fakeFetch(
   return { transport: transport as unknown as typeof fetch, calls };
 }
 
-function fakeStorage(options: { persist?: boolean; quota?: number } = {}) {
+function fakeStorage(
+  options: { persist?: boolean; persisted?: boolean; quota?: number } = {},
+) {
   const calls = { persist: 0 };
   const storage = {
     persist: async () => {
       calls.persist += 1;
       return options.persist ?? true;
     },
-    persisted: async () => options.persist ?? true,
+    persisted: async () => options.persisted ?? false,
     estimate: async () => ({ usage: 100, quota: options.quota ?? 1000 }),
   };
   return { storage, calls };
@@ -212,6 +214,20 @@ function makeStore(
 
 function fileOf(root: FakeDir) {
   return root.dirs.get("downloads")?.files.get(input.versionId);
+}
+
+/** Writes an index.json and partial file into a fake root, as a reload would find them. */
+async function seedIndex(
+  root: FakeDir,
+  records: Record<string, unknown>[],
+  file?: Uint8Array,
+) {
+  const dir = await root.getDirectoryHandle("downloads", { create: true });
+  dir.files.set(
+    "index.json",
+    new TextEncoder().encode(JSON.stringify(records)),
+  );
+  if (file !== undefined) dir.files.set(input.versionId, file);
 }
 
 describe("downloads store", () => {
@@ -389,5 +405,89 @@ describe("downloads store", () => {
       bytes,
     );
     expect(calls.persist).toBe(1);
+  });
+
+  test("after a restore, start asks persist() once and keeps its answer", async () => {
+    const root = new FakeDir();
+    const { transport } = fakeFetch(bytes, { chunk: 8 });
+    const { storage, calls } = fakeStorage({
+      persisted: false,
+      persist: true,
+    });
+    const store = makeStore(root, transport, storage);
+    await store.restore();
+    expect(get(store).persisted).toBe(false);
+    expect(calls.persist).toBe(0);
+    await store.start(input);
+    expect(calls.persist).toBe(1);
+    expect(get(store).persisted).toBe(true);
+    await store.start({
+      ...input,
+      versionId: "01900000-0000-7000-8000-000000000004",
+    });
+    expect(calls.persist).toBe(1);
+  });
+
+  test("start after a restore cannot duplicate a record", async () => {
+    const root = new FakeDir();
+    await seedIndex(
+      root,
+      [{ ...input, written: 8, state: "paused" }],
+      bytes.subarray(0, 8),
+    );
+    const { transport } = fakeFetch(bytes, { chunk: 8 });
+    const { storage } = fakeStorage();
+    const store = makeStore(root, transport, storage);
+    await store.start(input);
+    expect(get(store).records).toHaveLength(1);
+    expect(get(store).records[0]?.state).not.toBe("queued");
+  });
+
+  test("a 416 at the file's size completes; anywhere else it fails", async () => {
+    const root = new FakeDir();
+    await seedIndex(root, [{ ...input, written: 64, state: "paused" }], bytes);
+    const answer416 = async () => new Response(null, { status: 416 });
+    const { storage } = fakeStorage();
+    const done = createDownloads({
+      root: async () => root as unknown as FileSystemDirectoryHandle,
+      fetch: answer416 as unknown as typeof fetch,
+      storage,
+      commitBytes: 16,
+    });
+    await done.resume(input.versionId);
+    await waitFor(() => get(done).records[0]?.state === "complete");
+    expect(fileOf(root)).toEqual(bytes);
+
+    const short = new FakeDir();
+    await seedIndex(
+      short,
+      [{ ...input, written: 32, state: "paused" }],
+      bytes.subarray(0, 32),
+    );
+    const broken = createDownloads({
+      root: async () => short as unknown as FileSystemDirectoryHandle,
+      fetch: answer416 as unknown as typeof fetch,
+      storage,
+      commitBytes: 16,
+    });
+    await broken.resume(input.versionId);
+    await waitFor(() => get(broken).records[0]?.state === "failed");
+  });
+
+  test("a root that throws marks the store unavailable", async () => {
+    const { storage } = fakeStorage();
+    const store = createDownloads({
+      root: async () => {
+        throw new DOMException("OPFS denied.", "SecurityError");
+      },
+      fetch: fakeFetch(bytes).transport,
+      storage,
+      commitBytes: 16,
+    });
+    await store.restore();
+    const snapshot = get(store);
+    expect(snapshot.unavailable).toBe(true);
+    expect(snapshot.ready).toBe(true);
+    expect(snapshot.records).toEqual([]);
   });
 });

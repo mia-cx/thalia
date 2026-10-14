@@ -23,6 +23,7 @@ const fixtureBytes = "0123456789abcdefghijklmnopqrstuvwxyz";
 async function makeFixture() {
   const root = await mkdtemp(join(tmpdir(), "thalia-download-"));
   await writeFile(join(root, "movie.mp4"), fixtureBytes);
+  await writeFile(join(root, "it's (draft).mp4"), fixtureBytes);
   return {
     root,
     cleanup: () => rm(root, { recursive: true, force: true }),
@@ -110,7 +111,44 @@ async function seedDownload(db: Database, root: string) {
   // A second Item's Version: downloading it through the first Item's URL is a 404.
   const other = await insertItem("Other", "other");
   const otherVersion = await insertVersion(other);
-  return { admin, owner, token, library, item, version, file, otherVersion };
+  const [otherFile] = await db
+    .insert(files)
+    .values({
+      versionId: otherVersion.id,
+      itemId: other.id,
+      libraryId: library.id,
+      rootId: library.rootId,
+      path: "it's (draft).mp4",
+      order: 0,
+      bytes: 36n,
+      modifiedAt: new Date(),
+      container: "mp4",
+      durationSeconds: 120,
+    })
+    .returning();
+  if (!otherFile) throw new Error("File insert returned no row.");
+  await db.insert(streams).values({
+    versionId: otherVersion.id,
+    fileId: otherFile.id,
+    index: 0,
+    kind: "video",
+    codec: "h264",
+    width: 1920,
+    height: 1080,
+    bitrate: 5_000_000n,
+    hdr: "sdr",
+  });
+  return {
+    admin,
+    owner,
+    token,
+    library,
+    item,
+    version,
+    file,
+    other,
+    otherVersion,
+  };
 }
 
 describe.skipIf(!databaseUrl)("downloads", () => {
@@ -200,6 +238,17 @@ describe.skipIf(!databaseUrl)("downloads", () => {
           );
           expect(foreign.status).toBe(404);
           await foreign.body?.cancel();
+
+          // RFC 5987 encoding: ' ( ) * never pass through raw.
+          const named = await fetch(
+            `${base}${pathFor(fx.other.id, fx.otherVersion.id)}`,
+            { headers: { cookie } },
+          );
+          expect(named.status).toBe(200);
+          expect(named.headers.get("content-disposition")).toBe(
+            `attachment; filename="it's (draft).mp4"; filename*=UTF-8''it%27s%20%28draft%29.mp4`,
+          );
+          await named.body?.cancel();
 
           const missing = await fetch(
             `${base}${pathFor(Bun.randomUUIDv7(), fx.version.id)}`,
