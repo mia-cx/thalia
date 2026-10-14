@@ -266,11 +266,13 @@ describe("downloads store", () => {
     const { storage } = fakeStorage();
     const store = makeStore(root, transport, storage);
     await store.start(input);
-    await waitFor(() => (get(store).records[0]?.written ?? 0) >= 16);
+    // Two chunks committed (8 + 8 = 16 bytes), the third is still gated.
+    await waitFor(() => fileOf(root)?.length === 16);
     const pausing = store.pause(input.versionId);
     gate.resolve();
     await pausing;
     expect(get(store).records[0]?.state).toBe("paused");
+    expect(get(store).records[0]?.written).toBe(16);
     expect(fileOf(root)?.length).toBe(16);
 
     await store.resume(input.versionId);
@@ -357,7 +359,7 @@ describe("downloads store", () => {
     const { storage } = fakeStorage();
     const store = makeStore(root, first.transport, storage);
     await store.start(input);
-    await waitFor(() => (get(store).records[0]?.written ?? 0) >= 16);
+    await waitFor(() => fileOf(root)?.length === 16);
     const pausing = store.pause(input.versionId);
     gate.resolve();
     await pausing;

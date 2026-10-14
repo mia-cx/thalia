@@ -78,11 +78,12 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       }
     | undefined;
 
+  // Records mutate in place; snapshots copy them so subscribers re-render.
   const notify = () =>
     store.set({
       ready,
       unavailable,
-      records: [...records],
+      records: records.map((record) => ({ ...record })),
       persisted,
       storage: estimated
         ? {
