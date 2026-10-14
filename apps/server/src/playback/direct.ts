@@ -146,10 +146,13 @@ export async function serveVersionFile(
   headers.set("etag", etag);
   headers.set("last-modified", new Date(file.lastModified).toUTCString());
   headers.set("content-length", String(file.size));
-  // A stale If-Range makes the whole file the answer; only a buffered body
-  // escapes Bun's own Range handling, which fires on file and stream bodies.
+  // A stale If-Range makes the whole file the answer; pushing the stream
+  // through a TransformStream keeps it streaming while escaping Bun's own
+  // Range handling, which fires on file and stream bodies.
   if (options?.ifRange != null && options.ifRange !== etag)
-    return new Response(await file.arrayBuffer(), { headers });
+    return new Response(file.stream().pipeThrough(new TransformStream()), {
+      headers,
+    });
   return new Response(file, { headers });
 }
 
