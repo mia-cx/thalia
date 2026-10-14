@@ -5,6 +5,7 @@ import { refreshItem as queueItemRefresh } from "../metadata/jobs.ts";
 import { RungName } from "../stored/policy.ts";
 import { requestStoredVersion } from "../stored/service.ts";
 import { readStoreStatus } from "../stored/status.ts";
+import { accessProcedures } from "./access.ts";
 import {
   groupProcedures,
   settingsProcedures,
@@ -137,6 +138,7 @@ const streamEvents = authenticated
 
 /** The API router: procedures defined once, served over both RPC and REST. */
 export const thaliaRouter = {
+  access: accessProcedures,
   me,
   items: {
     list: listItems,
