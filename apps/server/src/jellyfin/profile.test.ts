@@ -56,6 +56,16 @@ describe("DeviceProfile translation", () => {
     expect(profile.hdr).toEqual(["sdr", "hdr10", "hlg"]);
   });
 
+  test("an http TranscodingProfile marks the profile progressive and counts its codecs", () => {
+    const profile = readDeviceProfile(deviceProfiles.progressive);
+    expect(profile.progressive).toBe(true);
+    expect(profile.videoCodecs.map((entry) => entry.codec)).toEqual(["h264"]);
+    expect(profile.audioCodecs.map((entry) => entry.codec)).toEqual(["aac"]);
+    // HLS-only and direct-play fixtures stay on HLS delivery.
+    for (const name of ["swiftfin", "infuse", "findroid"] as const)
+      expect(readDeviceProfile(deviceProfiles[name]).progressive).toBe(false);
+  });
+
   test("Findroid's empty profile accepts nothing, so no path plays", () => {
     const profile = readDeviceProfile(deviceProfiles.findroid);
     expect(profile).toMatchObject({

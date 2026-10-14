@@ -8,6 +8,8 @@ type Method = "direct-play" | "remux" | "transcode";
 /** A planned play of one Version: its method, the session query its URLs carry and its Stream selection. */
 export type PlannedSource = {
   method: Method;
+  /** How a remux or transcode reaches the client; null for direct play and unplanned sources. */
+  delivery: "progressive" | "hls" | null;
   /** `PlaySessionId`, `MediaSourceId`, the selection and the playback token; null when planning issued no token into a URL. */
   query: URLSearchParams | null;
   /** The audio Stream the session plays; null without audio. */
@@ -72,14 +74,17 @@ function mediaStream(
     stream.kind === "subtitle" ? toSubtitleStream(stream) : undefined;
   const text = subtitle?.kind === "text";
   // A direct play hands the client its own subtitles; HLS lists text tracks
-  // in the master playlist and burns the bitmap one in.
+  // in the master playlist and burns the bitmap one in, while a progressive
+  // stream serves text tracks on the side over the Subtitles route.
   const delivery =
     subtitle === undefined || planned === undefined
       ? undefined
       : planned.method === "direct-play"
         ? "Embed"
         : text
-          ? "Hls"
+          ? planned.delivery === "progressive"
+            ? "External"
+            : "Hls"
           : "Encode";
   const rate = frameRate(stream);
   return {
@@ -129,7 +134,8 @@ function mediaStream(
 /**
  * Builds a Jellyfin MediaSourceInfo for one Version. A planned source carries
  * the flags of its play method: direct play alone, remux as direct stream
- * plus transcoding, transcode alone, each HLS one with its TranscodingUrl.
+ * plus transcoding, transcode alone, each served over HLS or progressively
+ * with its TranscodingUrl.
  * An unplanned source, as `/Items/{id}` lists them, claims every method;
  * clients ask PlaybackInfo before they play it.
  */
@@ -139,7 +145,8 @@ export function mediaSource(
   planned?: PlannedSource | null,
 ) {
   const method = planned?.method;
-  const hls = method === "remux" || method === "transcode";
+  const transcode = method === "remux" || method === "transcode";
+  const progressive = transcode && planned?.delivery === "progressive";
   const duration = version.file.durationSeconds ?? version.durationSeconds;
   const audio = version.streams.filter((stream) => stream.kind === "audio");
   const subtitles = version.streams.filter(
@@ -176,7 +183,7 @@ export function mediaSource(
     IgnoreDts: false,
     IgnoreIndex: false,
     GenPtsInput: false,
-    SupportsTranscoding: planned === undefined || hls,
+    SupportsTranscoding: planned === undefined || transcode,
     SupportsDirectStream: planned === undefined || method === "remux",
     SupportsDirectPlay: planned === undefined || method === "direct-play",
     IsInfiniteStream: false,
@@ -219,11 +226,13 @@ export function mediaSource(
         : bitrates.reduce((sum, bitrate) => sum + bitrate, 0),
     RequiredHttpHeaders: {},
     TranscodingUrl:
-      hls && planned?.query != null
-        ? `/videos/${toGuid(itemId)}/master.m3u8?${planned.query}`
+      transcode && planned?.query != null
+        ? progressive
+          ? `/videos/${toGuid(itemId)}/stream.mp4?${planned.query}`
+          : `/videos/${toGuid(itemId)}/master.m3u8?${planned.query}`
         : undefined,
-    TranscodingSubProtocol: hls ? "hls" : "http",
-    TranscodingContainer: hls ? "mp4" : undefined,
+    TranscodingSubProtocol: transcode && !progressive ? "hls" : "http",
+    TranscodingContainer: transcode ? "mp4" : undefined,
     DefaultAudioStreamIndex: defaultAudio,
     DefaultSubtitleStreamIndex: defaultSubtitle,
     HasSegments: false,

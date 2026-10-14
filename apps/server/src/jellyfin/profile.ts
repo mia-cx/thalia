@@ -149,7 +149,8 @@ const positive = (value: string | null | undefined) => {
  * Translates a Jellyfin DeviceProfile into the engine's client profile.
  * DirectPlayProfiles give the containers and codecs a client opens as files,
  * an empty field meaning any, as in Jellyfin. HLS TranscodingProfiles add the codecs it decodes over HLS, first in
- * preference. Unconditional CodecProfiles narrow video profiles, level, size,
+ * preference; http TranscodingProfiles follow and mark the profile progressive.
+ * Unconditional CodecProfiles narrow video profiles, level, size,
  * audio channels and HDR flavours; a profile without any VideoRangeType
  * condition takes every flavour, as Jellyfin does. Embedded SubtitleProfiles
  * give the formats it draws. `maxStreamingBitrate` from the request wins over
@@ -165,9 +166,9 @@ export function readDeviceProfile(
   const isVideo = (entry: { type?: string | null }) =>
     (lowered(entry.type) ?? "video") === "video";
   const direct = (profile.directplayprofiles ?? []).filter(isVideo);
-  const hls = (profile.transcodingprofiles ?? []).filter(
-    (entry) => isVideo(entry) && lowered(entry.protocol) === "hls",
-  );
+  const transcode = (profile.transcodingprofiles ?? []).filter(isVideo);
+  const hls = transcode.filter((entry) => lowered(entry.protocol) === "hls");
+  const http = transcode.filter((entry) => lowered(entry.protocol) === "http");
   // Jellyfin reads an empty DirectPlayProfile field as any value, and
   // Swiftfin's direct play mode sends only the type.
   const directNames = (
@@ -185,6 +186,7 @@ export function readDeviceProfile(
   ) => [
     ...new Set([
       ...hls.flatMap((entry) => translate(kind, entry[field])),
+      ...http.flatMap((entry) => translate(kind, entry[field])),
       ...directNames(kind, field),
     ]),
   ];
@@ -280,5 +282,6 @@ export function readDeviceProfile(
       bitrate == null || !Number.isFinite(bitrate) || bitrate <= 0
         ? null
         : Math.floor(bitrate),
+    progressive: http.length > 0,
   };
 }
