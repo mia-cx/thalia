@@ -16,8 +16,8 @@ A user with `download` can save a movie or episode's original file into the brow
 - [x] Server: first-party download route with tests.
 - [x] Server: item detail carries `canDownload` and each Version's container and streams, with tests.
 - [x] Web: `lib/downloads` store over OPFS with unit tests.
-- [ ] Web: Download button on movie and episode pages.
-- [ ] Web: Downloads page and navigation entry.
+- [x] Web: Download button on movie and episode pages.
+- [x] Web: Downloads page and navigation entry.
 - [ ] Browser test: download through the button, reload mid-way, compare bytes.
 - [ ] Screenshots, lint, check.
 
