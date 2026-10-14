@@ -100,7 +100,14 @@ export const ItemDetail = Schema.Struct({
   children: Schema.Array(DetailChild),
 });
 
-/** The library shape returned by library endpoints. */
+/** The library fields visible to callers who may browse it. */
+export const ViewableLibrary = Schema.Struct({
+  id: Schema.UUID,
+  name: Schema.String,
+  medium: Schema.Literal("movies", "shows"),
+});
+
+/** The library shape returned by administration endpoints. */
 export const Library = Schema.Struct({
   id: Schema.UUID,
   name: Schema.String,
