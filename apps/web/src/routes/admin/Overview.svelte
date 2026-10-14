@@ -278,12 +278,16 @@ onDestroy(() => {
                 )
                 .join(" · ")}</span
             >
-            <Progress
-              value={filesystem.usedBytes}
-              max={filesystem.totalBytes}
-              aria-label="Used"
-              class="mt-2"
-            />
+            <span class="space-usage mt-2 block">
+              <Progress
+                value={filesystem.usedBytes}
+                max={filesystem.totalBytes}
+                aria-label="Space used"
+                aria-valuetext="{Math.round(
+                  (filesystem.usedBytes / filesystem.totalBytes) * 100,
+                )}% used"
+              />
+            </span>
           </FormRow>
         {:else}
           {@const root = filesystem.roots[0]}
@@ -348,3 +352,15 @@ onDestroy(() => {
     {/snippet}
   </FormGroup>
 </AdminPage>
+
+<style>
+  /* Forced colors strips the bar's fill; keep it and outline the track. */
+  @media (forced-colors: active) {
+    .space-usage :global([data-slot="progress"]) {
+      border: 1px solid CanvasText;
+    }
+    .space-usage :global([data-slot="progress-indicator"]) {
+      forced-color-adjust: none;
+    }
+  }
+</style>
