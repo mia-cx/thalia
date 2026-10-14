@@ -63,6 +63,18 @@ const startValue = $derived(
 );
 const endValue = $derived(windowEnd ?? settings.data?.idleWindow.end ?? "");
 
+const providerKeysNote = $derived.by(() => {
+  const missing = (["movies", "shows"] as const).filter(
+    (medium) => !settings.data?.metadataMediums.includes(medium),
+  );
+  if (settings.data === undefined || missing.length === 0) return undefined;
+  if (missing.length === 2)
+    return "No metadata source is set up, so posters and details won't load until you add a key named tmdb for movies or tvdb for shows.";
+  return missing[0] === "shows"
+    ? "Show posters and details won't load until you add a key named tvdb."
+    : "Movie posters and details won't load until you add a key named tmdb.";
+});
+
 const artworkBackends = {
   colocated: "Next to the media",
   "configured-path": "A directory",
@@ -400,9 +412,7 @@ async function removeKey(name: string) {
 
     <FormGroup
       title="Provider keys"
-      description={settings.data.metadataSourceConfigured
-        ? undefined
-        : "No metadata source is set up, so posters and details won't load until you add a key named tmdb for movies or tvdb for shows."}
+      description={providerKeysNote}
     >
       {#each settings.data.providerKeys as name (name)}
         <FormRow label={name} inline>

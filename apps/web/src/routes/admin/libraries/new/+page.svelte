@@ -20,9 +20,9 @@ const mediumNames: Record<Medium, string> = {
   movies: "Movies",
   shows: "Shows",
 };
-const metadataSources: Record<Medium, string> = {
-  movies: "TMDB",
-  shows: "TVDB",
+const metadataSources: Record<Medium, { noun: string; key: string }> = {
+  movies: { noun: "movie", key: "TMDB" },
+  shows: { noun: "show", key: "TVDB" },
 };
 
 let name = $state("");
@@ -89,8 +89,8 @@ async function submit(event: SubmitEvent) {
 </script>
 
 {#snippet noSource()}
-  No metadata source is set up, so posters and details won't load until you add
-  a {metadataSources[medium]} key in <a href="/admin/settings" class="text-tint hover:underline">General settings</a>.
+  No {metadataSources[medium].noun} metadata source is set up, so posters and
+  details won't load until you add a {metadataSources[medium].key} key in <a href="/admin/settings" class="text-tint hover:underline">General settings</a>.
 {/snippet}
 
 <AdminPage
@@ -99,7 +99,8 @@ async function submit(event: SubmitEvent) {
 >
   <form onsubmit={submit} class="flex flex-col gap-8">
     <FormGroup
-      description={settings.data?.metadataSourceConfigured === false
+      description={settings.data !== undefined &&
+      !settings.data.metadataMediums.includes(medium)
         ? noSource
         : undefined}
     >
