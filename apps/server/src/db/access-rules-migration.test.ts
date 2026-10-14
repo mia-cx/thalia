@@ -19,9 +19,11 @@ async function oldSchema(db: Database) {
     });
     const path = join(folder, "meta/_journal.json");
     const journal: { entries: { tag: string }[] } = await Bun.file(path).json();
-    journal.entries = journal.entries.filter(
-      (entry) => !entry.tag.startsWith("0023_"),
+    const cut = journal.entries.findIndex((entry) =>
+      entry.tag.startsWith("0023_"),
     );
+    if (cut < 0) throw new Error("The Access rules migration is missing.");
+    journal.entries = journal.entries.slice(0, cut);
     await writeFile(path, JSON.stringify(journal));
     await migrate(db, { migrationsFolder: folder });
   } finally {
@@ -137,6 +139,15 @@ describe.skipIf(!databaseUrl)("Access rules migration", () => {
           ]);
           await db.execute(
             sql`insert into library_access (id, library_id, user_id, group_id, allowed) values ${sql.join(libraryRows, sql`,`)}`,
+          );
+
+          // Legacy tables have independent primary keys, so their rule ids may coincide.
+          const sharedId = Bun.randomUUIDv7();
+          await db.execute(
+            sql`update user_permission_overrides set id = ${sharedId} where id = (select id from user_permission_overrides limit 1)`,
+          );
+          await db.execute(
+            sql`update library_access set id = ${sharedId} where id = (select id from library_access limit 1)`,
           );
 
           // Record the old implementation's decisions before applying the forward migration.

@@ -24,13 +24,13 @@ SELECT gen_random_uuid(), g.id,
 ON CONFLICT ON CONSTRAINT "access_rules_unique" DO NOTHING;
 --> statement-breakpoint
 INSERT INTO "access_rules" ("id", "user_id", "action", "allowed")
-SELECT id, user_id,
+SELECT gen_random_uuid(), user_id,
   CASE permission WHEN 'manage-metadata' THEN 'metadata:edit' WHEN 'manage-subtitles' THEN 'subtitles:edit'
     ELSE CASE WHEN permission LIKE 'manage-%' THEN substring(permission from 8) || ':manage' ELSE permission END END,
   allowed FROM user_permission_overrides;
 --> statement-breakpoint
 INSERT INTO "access_rules" ("id", "user_id", "group_id", "library_id", "action", "allowed")
-SELECT id, user_id, group_id, library_id, 'view', allowed FROM library_access;
+SELECT gen_random_uuid(), user_id, group_id, library_id, 'view', allowed FROM library_access;
 --> statement-breakpoint
 DROP TABLE "library_access" CASCADE;--> statement-breakpoint
 DROP TABLE "user_permission_overrides" CASCADE;--> statement-breakpoint
