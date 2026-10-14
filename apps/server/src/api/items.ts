@@ -291,8 +291,8 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
             asc(items.id),
           ]),
           checkPermission(db, caller.user.id, "download", {
-            type: "library",
-            id: card.libraryId,
+            type: "item",
+            id,
           }),
         ]),
       );

@@ -88,7 +88,7 @@ export const ItemDetail = Schema.Struct({
       character: Schema.NullOr(Schema.String),
     }),
   ),
-  /** Whether the caller may download a file of this Item's Library. */
+  /** Whether the caller may download this Item's files. */
   canDownload: Schema.Boolean,
   versions: Schema.Array(
     Schema.Struct({

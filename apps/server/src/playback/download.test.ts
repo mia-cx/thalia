@@ -7,7 +7,13 @@ import { setPermissionOverride } from "../auth/permissions.ts";
 import { login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { files, items, streams, versions } from "../db/schema/index.ts";
+import {
+  accessRules,
+  files,
+  items,
+  streams,
+  versions,
+} from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -292,6 +298,27 @@ describe.skipIf(!databaseUrl)("downloads", () => {
           );
           expect(denied.status).toBe(403);
           await denied.body?.cancel();
+
+          await db.insert(accessRules).values([
+            {
+              userId: fx.owner.id,
+              libraryId: fx.library.id,
+              action: "download",
+              allowed: true,
+            },
+            {
+              userId: fx.owner.id,
+              itemId: fx.item.id,
+              action: "download",
+              allowed: false,
+            },
+          ]);
+          const itemDenied = await fetch(
+            `${base}${pathFor(fx.item.id, fx.version.id)}`,
+            { headers: { cookie } },
+          );
+          expect(itemDenied.status).toBe(403);
+          await itemDenied.body?.cancel();
         } finally {
           await server.stop();
         }

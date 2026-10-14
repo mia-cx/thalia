@@ -9,7 +9,7 @@ import { authenticate } from "../auth/sessions.ts";
 import { readAuthSettings } from "../auth/settings.ts";
 import { requestIdentity } from "../auth/transport.ts";
 import type { Database } from "../db/client.ts";
-import { items, sessionRegistry } from "../db/schema/index.ts";
+import { sessionRegistry } from "../db/schema/index.ts";
 import { locateFile } from "../libraries/roots.ts";
 import { loadPlaybackSource } from "./planning.ts";
 
@@ -249,15 +249,9 @@ export function createDownloadHandler(db: Database) {
       if (request.headers.get("authorization") !== null)
         throw new AuthError("UNAUTHENTICATED");
       const userId = await sessionUserId(db, request, peerAddress);
-      const [item] = await db
-        .select({ libraryId: items.libraryId })
-        .from(items)
-        .where(eq(items.id, itemId))
-        .limit(1);
-      if (item === undefined) throw new AuthError("NOT_FOUND");
       await requirePermission(db, userId, "download", {
-        type: "library",
-        id: item.libraryId,
+        type: "item",
+        id: itemId,
       });
       return await serveVersionFile(db, userId, itemId, versionId, {
         attachment: true,

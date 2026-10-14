@@ -517,6 +517,32 @@ describe.skipIf(!databaseUrl)("browse details", () => {
       ).toBe(false);
     }));
 
+  test("an Item download deny overrides its Library allow", () =>
+    withDatabase(async (db) => {
+      await migrateDatabase(db);
+      const { viewer, token } = await seedViewer(db);
+      const library = await addLibrary(db, "Shows", "shows");
+      const seeded = await seedShow(db, library.id);
+      await db.insert(accessRules).values([
+        {
+          userId: viewer.id,
+          libraryId: library.id,
+          action: "download",
+          allowed: true,
+        },
+        {
+          userId: viewer.id,
+          itemId: seeded.first.id,
+          action: "download",
+          allowed: false,
+        },
+      ]);
+      const caller = await authenticate(db, token);
+      expect(
+        (await runApi(getItemDetail(db, caller, seeded.first.id))).canDownload,
+      ).toBe(false);
+    }));
+
   test("a season's children carry overview, runtime and the caller's progress", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
