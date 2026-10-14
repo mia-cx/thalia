@@ -539,6 +539,14 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       (record.state !== "paused" && record.state !== "failed")
     )
       return;
+    // If the Version lock is held, another tab owns the transfer: resume is
+    // not this tab's to write. Show it downloading and leave the index alone.
+    const held = await tryLocked(fileLock(versionId), async (held) => held);
+    if (!held) {
+      record.state = "downloading";
+      notify();
+      return;
+    }
     record.state = "queued";
     notify();
     // Only the state field may move: another tab's entry can be newer.

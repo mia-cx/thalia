@@ -760,6 +760,8 @@ describe("downloads across tabs", () => {
     await b.resume(input.versionId);
     await Bun.sleep(20);
     expect(second.calls).toHaveLength(0);
+    // B saw the lock is held: it mirrors the transfer without touching it.
+    expect(get(b).records[0]?.state).toBe("downloading");
 
     // B owns nothing: the index still says exactly what A last wrote.
     const indexText = () =>
