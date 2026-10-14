@@ -1,17 +1,20 @@
+import { basename } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { Schema } from "effect";
 import { AuthError } from "../auth/errors.ts";
 import { checkOrigin, readSessionToken } from "../auth/http.ts";
+import { requirePermission } from "../auth/permissions.ts";
 import { verifyPlaybackToken } from "../auth/playback-tokens.ts";
 import { authenticate } from "../auth/sessions.ts";
 import { readAuthSettings } from "../auth/settings.ts";
 import { requestIdentity } from "../auth/transport.ts";
 import type { Database } from "../db/client.ts";
-import { sessionRegistry } from "../db/schema/index.ts";
+import { items, sessionRegistry } from "../db/schema/index.ts";
 import { locateFile } from "../libraries/roots.ts";
 import { loadPlaybackSource } from "./planning.ts";
 
 const directPath = /^\/api\/playback\/([^/]+)\/([^/]+)\/direct$/;
+const downloadPath = /^\/api\/items\/([^/]+)\/versions\/([^/]+)\/download$/;
 
 /** Headers every playback and HLS response carries. */
 export const standardHeaders: Record<string, string> = {
@@ -68,6 +71,15 @@ async function requestUserId(
   }
   if (request.headers.get("authorization") !== null)
     throw new AuthError("UNAUTHENTICATED");
+  return sessionUserId(db, request, peerAddress);
+}
+
+/** Authenticates a first-party request by its session cookie, enforcing the origin rules cookie callers live under. */
+export async function sessionUserId(
+  db: Database,
+  request: Request,
+  peerAddress: string,
+): Promise<string> {
   const caller = await authenticate(db, readSessionToken(request));
   if (caller.credential.kind !== "session")
     throw new AuthError("UNAUTHENTICATED");
@@ -105,6 +117,7 @@ export async function serveVersionFile(
   userId: string,
   itemId: string,
   versionId: string,
+  options?: { attachment?: boolean },
 ) {
   const { path } = await locateVersionFile(db, userId, itemId, versionId);
   if (path === undefined)
@@ -114,6 +127,14 @@ export async function serveVersionFile(
     );
   const headers = new Headers(standardHeaders);
   headers.set("accept-ranges", "bytes");
+  if (options?.attachment === true) {
+    const name = basename(path);
+    const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+    headers.set(
+      "content-disposition",
+      `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+    );
+  }
   const file = Bun.file(path);
   headers.set("content-length", String(file.size));
   return new Response(file, { headers });
@@ -177,6 +198,53 @@ export function createDirectPlayHandler(db: Database) {
       )
         throw new AuthError("UNAUTHENTICATED");
       return await serveVersionFile(db, userId, itemId, session.versionId);
+    } catch (error) {
+      return errorResponse(error);
+    }
+  };
+}
+
+/** Creates the download handler: a Version's original File as an attachment for session-cookie callers with `download`. */
+export function createDownloadHandler(db: Database) {
+  return async (
+    request: Request,
+    peerAddress: string,
+  ): Promise<Response | undefined> => {
+    const url = new URL(request.url);
+    const match = downloadPath.exec(url.pathname);
+    if (match === null) return undefined;
+    try {
+      if (request.method !== "GET" && request.method !== "HEAD")
+        return respond(
+          {
+            error: {
+              code: "METHOD_NOT_ALLOWED",
+              message: "Method not allowed.",
+            },
+          },
+          405,
+          { allow: "GET, HEAD" },
+        );
+      const itemId = match[1] ?? "";
+      const versionId = match[2] ?? "";
+      if (!Schema.is(Schema.UUID)(itemId) || !Schema.is(Schema.UUID)(versionId))
+        throw new AuthError("NOT_FOUND");
+      if (request.headers.get("authorization") !== null)
+        throw new AuthError("UNAUTHENTICATED");
+      const userId = await sessionUserId(db, request, peerAddress);
+      const [item] = await db
+        .select({ libraryId: items.libraryId })
+        .from(items)
+        .where(eq(items.id, itemId))
+        .limit(1);
+      if (item === undefined) throw new AuthError("NOT_FOUND");
+      await requirePermission(db, userId, "download", {
+        type: "library",
+        id: item.libraryId,
+      });
+      return await serveVersionFile(db, userId, itemId, versionId, {
+        attachment: true,
+      });
     } catch (error) {
       return errorResponse(error);
     }
