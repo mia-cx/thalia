@@ -132,7 +132,10 @@ function fakeFetch(
     const body = bytes.subarray(offset);
     out.set("content-length", String(body.length));
     if (status === 206)
-      out.set("content-range", `bytes ${offset}-${bytes.length - 1}/${bytes.length}`);
+      out.set(
+        "content-range",
+        `bytes ${offset}-${bytes.length - 1}/${bytes.length}`,
+      );
     const chunk = options.chunk ?? Math.max(1, body.length);
     let index = 0;
     const stream = new ReadableStream<Uint8Array>({
@@ -218,15 +221,17 @@ describe("downloads store", () => {
     const { storage, calls: persisted } = fakeStorage();
     const store = makeStore(root, transport, storage);
     await store.start(input);
-    await waitFor(
-      () => get(store).records[0]?.state === "complete",
-    );
+    await waitFor(() => get(store).records[0]?.state === "complete");
     expect(fileOf(root)).toEqual(bytes);
     const snapshot = get(store);
     expect(snapshot.records[0]?.written).toBe(64);
     expect(snapshot.persisted).toBe(true);
     expect(persisted.persist).toBe(1);
-    expect(snapshot.storage).toEqual({ usage: 100, quota: 1000, downloads: 64 });
+    expect(snapshot.storage).toEqual({
+      usage: 100,
+      quota: 1000,
+      downloads: 64,
+    });
     expect(calls).toEqual([
       {
         url: `/api/items/${input.itemId}/versions/${input.versionId}/download`,
@@ -278,7 +283,7 @@ describe("downloads store", () => {
     const second = fakeFetch(bytes, { chunk: 8, ignoreRange: true });
     const restarted = createDownloads({
       root: async () => root as unknown as FileSystemDirectoryHandle,
-      fetch: (...args) => second.transport(...args),
+      fetch: ((input, init) => second.transport(input, init)) as typeof fetch,
       storage,
       commitBytes: 16,
     });
@@ -286,9 +291,7 @@ describe("downloads store", () => {
     // transfer by calling resume on a store that restored the index.
     await restarted.restore();
     await restarted.resume(input.versionId);
-    await waitFor(
-      () => get(restarted).records[0]?.state === "complete",
-    );
+    await waitFor(() => get(restarted).records[0]?.state === "complete");
     expect(second.calls[0]?.range).toBe("bytes=8-");
     expect(fileOf(root)).toEqual(bytes);
   });
@@ -315,15 +318,13 @@ describe("downloads store", () => {
     const again = fakeFetch(bytes);
     const complete = createDownloads({
       root: async () => root as unknown as FileSystemDirectoryHandle,
-      fetch: (...args) => again.transport(...args),
+      fetch: ((input, init) => again.transport(input, init)) as typeof fetch,
       storage,
       commitBytes: 16,
     });
     await complete.restore();
     await complete.start(input);
-    await waitFor(
-      () => get(complete).records[0]?.state === "complete",
-    );
+    await waitFor(() => get(complete).records[0]?.state === "complete");
     await complete.remove(input.versionId);
     expect(get(complete).records).toEqual([]);
     expect(fileOf(root)).toBeUndefined();
@@ -349,7 +350,7 @@ describe("downloads store", () => {
     const resumed = fakeFetch(bytes, { chunk: 8 });
     const restored = createDownloads({
       root: async () => root as unknown as FileSystemDirectoryHandle,
-      fetch: (...args) => resumed.transport(...args),
+      fetch: ((input, init) => resumed.transport(input, init)) as typeof fetch,
       storage,
       commitBytes: 16,
     });
@@ -360,9 +361,7 @@ describe("downloads store", () => {
       { ...input, written: 16, state: "paused" },
     ]);
     await restored.resume(input.versionId);
-    await waitFor(
-      () => get(restored).records[0]?.state === "complete",
-    );
+    await waitFor(() => get(restored).records[0]?.state === "complete");
     expect(resumed.calls[0]?.range).toBe("bytes=16-");
     expect(fileOf(root)).toEqual(bytes);
   });
@@ -372,7 +371,10 @@ describe("downloads store", () => {
     const { transport } = fakeFetch(bytes, { chunk: 8 });
     const { storage, calls } = fakeStorage({ persist: false });
     const store = makeStore(root, transport, storage);
-    const other = { ...input, versionId: "01900000-0000-7000-8000-000000000003" };
+    const other = {
+      ...input,
+      versionId: "01900000-0000-7000-8000-000000000003",
+    };
     await store.start(input);
     await store.start(other);
     expect(calls.persist).toBe(1);
@@ -383,9 +385,9 @@ describe("downloads store", () => {
         get(store).records.length === 2,
     );
     expect(fileOf(root)).toEqual(bytes);
-    expect(
-      root.dirs.get("downloads")?.files.get(other.versionId),
-    ).toEqual(bytes);
+    expect(root.dirs.get("downloads")?.files.get(other.versionId)).toEqual(
+      bytes,
+    );
     expect(calls.persist).toBe(1);
   });
 });

@@ -511,13 +511,7 @@ describe.skipIf(!databaseUrl)("browse details", () => {
       expect(
         (await runApi(getItemDetail(db, caller, seeded.first.id))).canDownload,
       ).toBe(true);
-      await setPermissionOverride(
-        db,
-        admin.id,
-        viewer.id,
-        "download",
-        false,
-      );
+      await setPermissionOverride(db, admin.id, viewer.id, "download", false);
       expect(
         (await runApi(getItemDetail(db, caller, seeded.first.id))).canDownload,
       ).toBe(false);

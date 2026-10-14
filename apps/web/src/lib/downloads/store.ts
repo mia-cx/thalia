@@ -7,8 +7,7 @@ export type DownloadState =
   | "paused"
   | "failed"
   | "complete";
-export type DownloadStream =
-  ItemDetail["versions"][number]["streams"][number];
+export type DownloadStream = ItemDetail["versions"][number]["streams"][number];
 export type DownloadRecord = {
   itemId: string;
   versionId: string;
@@ -23,9 +22,7 @@ export type DownloadsSnapshot = {
   ready: boolean;
   records: DownloadRecord[];
   persisted: boolean | undefined;
-  storage:
-    | { usage: number; quota: number; downloads: number }
-    | undefined;
+  storage: { usage: number; quota: number; downloads: number } | undefined;
 };
 export type DownloadsDeps = {
   root: () => Promise<FileSystemDirectoryHandle>;
@@ -102,9 +99,9 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
   function persistIndex(): Promise<void> {
     indexChain = indexChain
       .then(async () => {
-        const handle = await (
-          await directory()
-        ).getFileHandle("index.json", { create: true });
+        const handle = await (await directory()).getFileHandle("index.json", {
+          create: true,
+        });
         const writable = await handle.createWritable();
         await writable.write(JSON.stringify(records));
         await writable.close();
@@ -125,37 +122,36 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
   let restorePromise: Promise<void> | undefined;
   /** Reads the index and reconciles each record with the file on disk; safe to call from every page. */
   function restore(): Promise<void> {
-    return (restorePromise ??= (async () => {
-      const dir = await directory();
-      let stored: DownloadRecord[] = [];
-      try {
-        const handle = await dir.getFileHandle("index.json");
-        const parsed: unknown = JSON.parse(
-          await (await handle.getFile()).text(),
-        );
-        if (Array.isArray(parsed)) stored = parsed as DownloadRecord[];
-      } catch {}
-      for (const record of stored) {
-        let size = 0;
+    if (restorePromise === undefined)
+      restorePromise = (async () => {
+        const dir = await directory();
+        let stored: DownloadRecord[] = [];
         try {
-          size = (
-            await (
-              await dir.getFileHandle(record.versionId)
-            ).getFile()
-          ).size;
+          const handle = await dir.getFileHandle("index.json");
+          const parsed: unknown = JSON.parse(
+            await (await handle.getFile()).text(),
+          );
+          if (Array.isArray(parsed)) stored = parsed as DownloadRecord[];
         } catch {}
-        record.written = size;
-        if (record.state === "queued" || record.state === "downloading")
-          record.state = "paused";
-        records.push(record);
-      }
-      try {
-        persisted = await deps.storage.persisted();
-      } catch {}
-      await refreshEstimate();
-      ready = true;
-      notify();
-    })());
+        for (const record of stored) {
+          let size = 0;
+          try {
+            size = (await (await dir.getFileHandle(record.versionId)).getFile())
+              .size;
+          } catch {}
+          record.written = size;
+          if (record.state === "queued" || record.state === "downloading")
+            record.state = "paused";
+          records.push(record);
+        }
+        try {
+          persisted = await deps.storage.persisted();
+        } catch {}
+        await refreshEstimate();
+        ready = true;
+        notify();
+      })();
+    return restorePromise;
   }
 
   /** Queues a new record; the first download also asks the browser to keep it. */
@@ -322,9 +318,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
 
   /** Cancels an unfinished download or deletes a finished one, file and record. */
   async function remove(versionId: string): Promise<void> {
-    const index = records.findIndex(
-      (entry) => entry.versionId === versionId,
-    );
+    const index = records.findIndex((entry) => entry.versionId === versionId);
     if (index < 0) return;
     if (current?.record.versionId === versionId) {
       current.remove = true;

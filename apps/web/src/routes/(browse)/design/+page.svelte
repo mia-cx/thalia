@@ -531,6 +531,8 @@ const rows = Array.from(
               format: "video",
               durationSeconds: 3300,
               bytes: 8_000_000_000,
+              container: "mkv",
+              streams: [],
             },
             {
               id: "v-2",
@@ -538,6 +540,8 @@ const rows = Array.from(
               format: "video",
               durationSeconds: 3300,
               bytes: 3_000_000_000,
+              container: "mp4",
+              streams: [],
             },
           ]}
         />

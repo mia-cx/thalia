@@ -6,10 +6,10 @@ import {
 
 export {
   type DownloadRecord,
-  type Downloads,
-  type DownloadsSnapshot,
   type DownloadState,
   type DownloadStream,
+  type Downloads,
+  type DownloadsSnapshot,
   downloadsSupported,
 } from "./store.ts";
 
@@ -18,11 +18,13 @@ let instance: Downloads | undefined;
 // Created lazily so importing this during SSR or in a browser without OPFS
 // never touches navigator.
 function downloads_(): Downloads {
-  return (instance ??= createDownloads({
-    root: () => navigator.storage.getDirectory(),
-    fetch: (...args) => fetch(...args),
-    storage: navigator.storage,
-  }));
+  if (instance === undefined)
+    instance = createDownloads({
+      root: () => navigator.storage.getDirectory(),
+      fetch: ((input, init) => fetch(input, init)) as typeof fetch,
+      storage: navigator.storage,
+    });
+  return instance;
 }
 
 /** The browser's download queue. */

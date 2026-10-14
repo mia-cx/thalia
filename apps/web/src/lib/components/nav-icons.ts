@@ -1,4 +1,5 @@
 import ClapperboardIcon from "@lucide/svelte/icons/clapperboard";
+import DownloadIcon from "@lucide/svelte/icons/download";
 import HouseIcon from "@lucide/svelte/icons/house";
 import SearchIcon from "@lucide/svelte/icons/search";
 import SettingsIcon from "@lucide/svelte/icons/settings";
@@ -10,5 +11,6 @@ export const navIcons = {
   home: HouseIcon,
   movies: ClapperboardIcon,
   shows: TvIcon,
+  downloads: DownloadIcon,
   settings: SettingsIcon,
 };
