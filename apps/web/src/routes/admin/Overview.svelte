@@ -271,13 +271,17 @@ onDestroy(() => {
               filesystem.totalBytes,
             )}"
           >
-            <span class="block text-footnote text-label-secondary"
-              >{filesystem.roots
-                .map((root) =>
-                  multiLibrary ? `${root.libraryName}: ${root.path}` : root.path,
-                )
-                .join(" · ")}</span
-            >
+            {#each filesystem.roots as root (root.id)}
+              <span
+                class="block truncate text-footnote text-label-secondary"
+                title={multiLibrary
+                  ? `${root.libraryName} · ${root.path}`
+                  : root.path}
+                >{multiLibrary
+                  ? `${root.libraryName} · ${root.path}`
+                  : root.path}</span
+              >
+            {/each}
             <span class="space-usage mt-2 block">
               <Progress
                 value={filesystem.usedBytes}

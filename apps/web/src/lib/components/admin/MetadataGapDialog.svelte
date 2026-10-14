@@ -91,7 +91,7 @@ $effect(() => {
         >{formatCount(count)} in {libraryName}</Dialog.Description
       >
     </Dialog.Header>
-    <div class="rounded-lg bg-elevated">
+    <div class="min-w-0 rounded-lg bg-elevated">
       {#each items as item (item.id)}
         {@const href = itemHref(item)}
         {@const captionText = caption(item)}
