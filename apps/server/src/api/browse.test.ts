@@ -8,12 +8,12 @@ import { authenticate, createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   artwork,
   contributors,
   credits,
   episodes,
   items,
-  libraryAccess,
   progress,
   versions,
 } from "../db/schema/index.ts";
@@ -480,9 +480,12 @@ describe.skipIf(!databaseUrl)("browse details", () => {
       const { viewer, token } = await seedViewer(db);
       const library = await addLibrary(db, "Shows", "shows");
       const seeded = await seedShow(db, library.id);
-      await db
-        .insert(libraryAccess)
-        .values({ libraryId: library.id, userId: viewer.id, allowed: false });
+      await db.insert(accessRules).values({
+        action: "view",
+        libraryId: library.id,
+        userId: viewer.id,
+        allowed: false,
+      });
       const caller = await authenticate(db, token);
       const error = await capture(
         runApi(getItemDetail(db, caller, seeded.first.id)),
@@ -594,9 +597,12 @@ describe.skipIf(!databaseUrl)("browse home", () => {
         "Severance",
       ]);
 
-      await db
-        .insert(libraryAccess)
-        .values({ libraryId: shows.id, userId: viewer.id, allowed: false });
+      await db.insert(accessRules).values({
+        action: "view",
+        libraryId: shows.id,
+        userId: viewer.id,
+        allowed: false,
+      });
       const denied = await home();
       expect(denied.map((shelf) => shelf.id)).toEqual([
         "continue-watching",
@@ -631,9 +637,12 @@ describe.skipIf(!databaseUrl)("browse search", () => {
           canonicalFolder: "Interstellar Wars",
         },
       ]);
-      await db
-        .insert(libraryAccess)
-        .values({ libraryId: hidden.id, userId: viewer.id, allowed: false });
+      await db.insert(accessRules).values({
+        action: "view",
+        libraryId: hidden.id,
+        userId: viewer.id,
+        allowed: false,
+      });
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
       try {
         const client = rpcClient(

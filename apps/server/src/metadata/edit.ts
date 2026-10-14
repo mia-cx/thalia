@@ -1,6 +1,7 @@
 import type { MetadataResult } from "@thalia/plugin-api";
 import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
 import { publishEvent } from "../api/events.ts";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
@@ -55,7 +56,10 @@ export async function editItemMetadata(
     .from(items)
     .where(eq(items.id, id));
   if (subject === undefined) throw new AuthError("NOT_FOUND");
-  await requirePermission(db, actorId, "manage-metadata", subject.libraryId);
+  await requirePermission(db, actorId, "metadata:edit", {
+    type: "library",
+    id: subject.libraryId,
+  });
   await db.transaction(async (tx) => {
     const [library] = await tx
       .select({ id: libraries.id })
@@ -144,7 +148,7 @@ export async function readContributorMetadata(
   actorId: string,
   id: string,
 ) {
-  await requirePermission(db, actorId, "manage-metadata");
+  await requirePermission(db, actorId, "metadata:edit", server);
   const [person] = await db
     .select()
     .from(contributors)
@@ -173,7 +177,7 @@ export async function editContributorMetadata(
     providerIds?: Record<string, string>;
   },
 ) {
-  await requirePermission(db, actorId, "manage-metadata");
+  await requirePermission(db, actorId, "metadata:edit", server);
   await db.transaction(async (tx) => {
     const [person] = await tx
       .select({ id: contributors.id })
@@ -218,7 +222,7 @@ export async function removeCatalogueItems(
   actorId: string,
   ids: readonly string[],
 ) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   if (ids.length === 0) return;
   const removedArtwork: DeletedArtworkFile[] = [];
   await db.transaction(async (tx) => {

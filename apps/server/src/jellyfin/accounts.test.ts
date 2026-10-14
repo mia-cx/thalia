@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { seedBrowse } from "../api/view-fixtures.ts";
+import { server } from "../auth/access.ts";
 import { createIntegrationKey } from "../auth/integration-keys.ts";
 import { checkPermission } from "../auth/permissions.ts";
 import { issueSession } from "../auth/sessions.ts";
-import { users } from "../db/schema/index.ts";
+import { accessRules, users } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
+import { insertLibraries } from "../libraries/testing.ts";
 import { createJellyfinHandler } from "./http.ts";
 import { jellyfinRoutes } from "./routes.ts";
 import { jellyfinLogin } from "./testing.ts";
@@ -278,7 +280,72 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
           RemoteClientBitrateLimit: 4_000_000,
         },
       });
-      expect(await checkPermission(db, seed.viewer.id, "download")).toBe(true);
+      expect(
+        await checkPermission(db, seed.viewer.id, "download", server),
+      ).toBe(true);
+      const folders = await insertLibraries(db, [
+        { name: "Allowed", medium: "movies", rootPath: "/allowed" },
+        { name: "Denied", medium: "movies", rootPath: "/denied" },
+      ]);
+      const allowedFolder = folders[0];
+      const deniedFolder = folders[1];
+      if (!allowedFolder || !deniedFolder)
+        throw new Error("Fixture Libraries missing.");
+      expect(
+        (
+          await call(`/Users/${seed.viewer.id}/Policy`, admin, {
+            ...policy,
+            EnableAllFolders: false,
+            EnabledFolders: [allowedFolder.id.replaceAll("-", "")],
+          })
+        ).status,
+      ).toBe(204);
+      expect(await (await call("/Users/Me")).json()).toMatchObject({
+        Policy: {
+          EnableAllFolders: false,
+          EnabledFolders: [allowedFolder.id.replaceAll("-", "")],
+        },
+      });
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: allowedFolder.id,
+        }),
+      ).toBe(true);
+      expect(
+        await checkPermission(db, seed.viewer.id, "view", {
+          type: "library",
+          id: deniedFolder.id,
+        }),
+      ).toBe(false);
+      const folderRules = (await db.select().from(accessRules)).filter(
+        (rule) => rule.userId === seed.viewer.id && rule.libraryId !== null,
+      );
+      expect(
+        folderRules.map((rule) => ({
+          libraryId: rule.libraryId,
+          action: rule.action,
+          allowed: rule.allowed,
+        })),
+      ).toEqual(
+        expect.arrayContaining([
+          { libraryId: allowedFolder.id, action: "view", allowed: true },
+          { libraryId: deniedFolder.id, action: "view", allowed: false },
+        ]),
+      );
+      expect(
+        (
+          await call(`/Users/${seed.viewer.id}/Policy`, admin, {
+            ...policy,
+            EnableAllFolders: true,
+          })
+        ).status,
+      ).toBe(204);
+      expect(
+        (await db.select().from(accessRules)).filter(
+          (rule) => rule.userId === seed.viewer.id && rule.libraryId !== null,
+        ),
+      ).toEqual([]);
       for (const allowed of [false, true]) {
         expect(
           (
@@ -288,9 +355,9 @@ describe.skipIf(!databaseUrl)("Jellyfin account and preference writes", () => {
             })
           ).status,
         ).toBe(204);
-        expect(await checkPermission(db, seed.viewer.id, "download")).toBe(
-          allowed,
-        );
+        expect(
+          await checkPermission(db, seed.viewer.id, "download", server),
+        ).toBe(allowed);
       }
       expect(
         (

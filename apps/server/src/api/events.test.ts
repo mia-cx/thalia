@@ -13,9 +13,9 @@ import {
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   events,
   items,
-  libraryAccess,
   sessionRegistry,
   versions,
 } from "../db/schema/index.ts";
@@ -417,12 +417,14 @@ describe.skipIf(!databaseUrl)("api events", () => {
         username: "showfan",
         password: "viewer-pass",
       });
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
+        action: "view",
         libraryId: shows.id,
         userId: movieFan.id,
         allowed: false,
       });
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
+        action: "view",
         libraryId: movies.id,
         userId: showFan.id,
         allowed: false,
@@ -676,7 +678,8 @@ describe.skipIf(!databaseUrl)("api events", () => {
         username: "fan",
         password: "fan-pass",
       });
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
+        action: "view",
         libraryId: shows.id,
         userId: fan.id,
         allowed: false,

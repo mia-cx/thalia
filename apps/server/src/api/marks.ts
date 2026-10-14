@@ -154,7 +154,10 @@ const item = authenticated
           .where(eq(items.id, input.id));
         if (row === undefined) throw new AuthError("NOT_FOUND");
         const userId = context.caller.user.id;
-        await requirePermission(context.db, userId, "view", row.libraryId);
+        await requirePermission(context.db, userId, "view", {
+          type: "library",
+          id: row.libraryId,
+        });
         const shelves = await pluginShelves(
           context.db,
           userId,

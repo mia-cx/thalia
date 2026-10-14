@@ -5,6 +5,7 @@ import type {
 } from "@thalia/plugin-api";
 import { and, eq, lte, sql } from "drizzle-orm";
 import { publishEvent } from "../api/events.ts";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
@@ -76,9 +77,9 @@ export async function queueProviderFetch(
 // Background scans queue at 0, so a manual refresh runs ahead of them.
 const manualRefreshPriority = 1;
 
-/** Queues a provider-fetch for one Item on demand, for a caller holding manage-libraries. */
+/** Queues a provider-fetch for one Item on demand, for a caller holding libraries:manage. */
 export async function refreshItem(db: Database, actorId: string, id: string) {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   const [item] = await db
     .select({ id: items.id })
     .from(items)

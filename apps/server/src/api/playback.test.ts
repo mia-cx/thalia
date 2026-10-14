@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createORPCClient, ORPCError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
 import {
@@ -13,11 +13,11 @@ import { authenticate, createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   events,
   files,
   items,
   jobs,
-  libraryAccess,
   segmentTimelines,
   sessionRegistry,
   settings,
@@ -716,7 +716,8 @@ describe.skipIf(!databaseUrl)("api playback", () => {
         viewer.id,
         "viewer-key",
       );
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
+        action: "view",
         libraryId: fx.library.id,
         userId: viewer.id,
         allowed: false,
@@ -746,8 +747,13 @@ describe.skipIf(!databaseUrl)("api playback", () => {
 
         await setPermissionOverride(db, fx.admin.id, viewer.id, "play", false);
         await db
-          .delete(libraryAccess)
-          .where(eq(libraryAccess.userId, viewer.id));
+          .delete(accessRules)
+          .where(
+            and(
+              eq(accessRules.userId, viewer.id),
+              eq(accessRules.libraryId, fx.library.id),
+            ),
+          );
         const playDenied = await capture(
           rpcClient(base, viewerToken).playback.plan(input),
         );
@@ -944,7 +950,8 @@ describe.skipIf(!databaseUrl)("api playback", () => {
         .update(sessionRegistry)
         .set({ state: "playing" })
         .where(eq(sessionRegistry.id, planned.sessionId));
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
+        action: "view",
         libraryId: fx.library.id,
         userId: fx.owner.id,
         allowed: false,

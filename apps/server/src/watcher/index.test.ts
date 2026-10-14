@@ -275,7 +275,7 @@ test("retries a scan report the api refused with 403", async () => {
       if (pathname !== `/api/watcher/jobs/${jobId}`)
         return new Response(null, { status: 404 });
       reports.push(await request.json());
-      // A Permission removed for a moment, then restored.
+      // An Action removed for a moment, then restored.
       return reports.length === 1
         ? new Response("forbidden", { status: 403 })
         : Response.json({ state: "completed" });

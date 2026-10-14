@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
@@ -96,14 +97,14 @@ export async function readProviderKey(
   return storedKeys(row?.value)[key];
 }
 
-/** Stores one provider key for a caller holding manage-server and returns the sorted names. */
+/** Stores one provider key for a caller holding server:manage and returns the sorted names. */
 export async function setProviderKey(
   db: Database,
   actorId: string,
   name: string,
   value: string,
 ) {
-  await requirePermission(db, actorId, "manage-server");
+  await requirePermission(db, actorId, "server:manage", server);
   const key = normalizeName(name);
   if (
     value.trim().length === 0 ||
@@ -135,13 +136,13 @@ export async function setProviderKey(
   );
 }
 
-/** Removes one provider key for a caller holding manage-server and returns the sorted names. */
+/** Removes one provider key for a caller holding server:manage and returns the sorted names. */
 export async function removeProviderKey(
   db: Database,
   actorId: string,
   name: string,
 ) {
-  await requirePermission(db, actorId, "manage-server");
+  await requirePermission(db, actorId, "server:manage", server);
   const key = normalizeName(name);
   return writeKeys(db, (keys) => {
     if (!Object.hasOwn(keys, key)) throw new AuthError("NOT_FOUND");

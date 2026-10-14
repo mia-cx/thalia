@@ -10,7 +10,7 @@ import { rungLabel } from "$lib/stored.ts";
 
 const { detail }: { detail: ItemDetail } = $props();
 
-// Only a caller holding manage-transcoding can read the policy; for anyone
+// Only a caller holding transcoding:manage can read the policy; for anyone
 // else the control stays away.
 const policy = resource(() =>
   client.libraries.storedVersions({ id: detail.libraryId }),

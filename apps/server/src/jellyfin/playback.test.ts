@@ -2,10 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { createHlsHandler } from "../api/hls.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
-import { sessionRegistry } from "../db/schema/index.ts";
+import { accessRules, sessionRegistry } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
 import { createArtworkHandler } from "../metadata/artwork-http.ts";
@@ -311,7 +311,9 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
 
   test("gates only /Download on the download permission, not File or streams", () =>
     withDatabase(async (db) => {
-      const { admin, viewer, movies } = await seedMovies(db, root, ["Atmos"]);
+      const { admin, viewer, library, movies } = await seedMovies(db, root, [
+        "Atmos",
+      ]);
       const movie = movies.get("Atmos");
       if (movie === undefined) throw new Error("Expected the movie.");
       const handle = createJellyfinHandler(
@@ -352,6 +354,38 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
         "attachment;",
       );
       expect((await file.arrayBuffer()).byteLength).toBeGreaterThan(0);
+      const [downloadRule] = await db
+        .insert(accessRules)
+        .values({
+          userId: viewer.id,
+          libraryId: library.id,
+          action: "download",
+          allowed: false,
+        })
+        .returning();
+      if (!downloadRule) throw new Error("Fixture Access rule missing.");
+      expect((await get(download)).status).toBe(403);
+      expect(
+        await (await get(`/Items/${toGuid(movie.itemId)}`)).json(),
+      ).toMatchObject({ CanDownload: false });
+      await setPermissionOverride(db, admin.id, viewer.id, "download", false);
+      await db
+        .update(accessRules)
+        .set({ allowed: true })
+        .where(eq(accessRules.id, downloadRule.id));
+      const allowed = await get(download);
+      expect(allowed.status).toBe(200);
+      await allowed.body?.cancel();
+      expect(
+        await (await get(`/Items/${toGuid(movie.itemId)}`)).json(),
+      ).toMatchObject({ CanDownload: true });
+      await db.insert(accessRules).values({
+        userId: viewer.id,
+        libraryId: library.id,
+        action: "play",
+        allowed: false,
+      });
+      expect((await get(paths[0] ?? "")).status).toBe(403);
     }));
 
   test("passes AudioStreamIndex and SubtitleStreamIndex through to the session and its URLs", () =>

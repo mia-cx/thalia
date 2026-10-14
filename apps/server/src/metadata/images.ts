@@ -1,6 +1,7 @@
 import type { MetadataResult } from "@thalia/plugin-api";
 import { and, eq } from "drizzle-orm";
 import { publishEvent } from "../api/events.ts";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
@@ -18,13 +19,18 @@ async function owner(
   db: Database,
   actorId: string,
   itemId: string,
-  permission: "view" | "manage-metadata",
+  permission: "view" | "metadata:edit",
 ) {
   const [item] = await db
     .select({ libraryId: items.libraryId })
     .from(items)
     .where(eq(items.id, itemId));
-  await requirePermission(db, actorId, permission, item?.libraryId);
+  await requirePermission(
+    db,
+    actorId,
+    permission,
+    item ? { type: "library", id: item.libraryId } : server,
+  );
   return item;
 }
 
@@ -60,7 +66,7 @@ export async function uploadItemImage(
   type: ImageType,
   bytes: Uint8Array,
 ) {
-  const item = await owner(db, actorId, itemId, "manage-metadata");
+  const item = await owner(db, actorId, itemId, "metadata:edit");
   if (item === undefined) return;
   try {
     await storeArtworkBytes(db, itemId, type, bytes);
@@ -82,7 +88,7 @@ export async function deleteItemImage(
   itemId: string,
   type: ImageType,
 ) {
-  const item = await owner(db, actorId, itemId, "manage-metadata");
+  const item = await owner(db, actorId, itemId, "metadata:edit");
   if (item === undefined) return;
   if (await removeSelectedArtwork(db, itemId, type))
     await publishEvent(db, {

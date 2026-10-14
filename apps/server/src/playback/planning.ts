@@ -153,8 +153,14 @@ export async function loadPlaybackSource(
     .where(eq(items.id, itemId))
     .limit(1);
   if (!item) throw new AuthError("NOT_FOUND");
-  await requirePermission(db, userId, "view", item.libraryId);
-  await requirePermission(db, userId, "play");
+  await requirePermission(db, userId, "view", {
+    type: "library",
+    id: item.libraryId,
+  });
+  await requirePermission(db, userId, "play", {
+    type: "library",
+    id: item.libraryId,
+  });
   const [version] = await db
     .select()
     .from(versions)

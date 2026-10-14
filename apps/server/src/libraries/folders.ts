@@ -1,6 +1,7 @@
 import type { Stats } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { posix } from "node:path";
+import { server } from "../auth/access.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import type { libraries } from "../db/schema/index.ts";
@@ -62,7 +63,7 @@ export async function listFolders(
   actorId: string,
   path: string,
 ): Promise<{ path: string; folders: { name: string; path: string }[] }> {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   let folder = posix.normalize(path);
   if (folder.length > 1 && folder.endsWith("/")) folder = folder.slice(0, -1);
 
@@ -105,7 +106,7 @@ export async function previewFolder(
   medium: Medium,
   options: { examples?: number; signal?: AbortSignal } = {},
 ): Promise<ScanPreview> {
-  await requirePermission(db, actorId, "manage-libraries");
+  await requirePermission(db, actorId, "libraries:manage", server);
   try {
     return await previewScan(folder, medium, options);
   } catch (error) {

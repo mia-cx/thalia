@@ -117,7 +117,7 @@ describe.skipIf(!databaseUrl)("auth sessions", () => {
       await revokeSession(db, admin.id, first.session.id);
     }));
 
-  test("expiry is enforced and session management needs ownership or manage-users", () =>
+  test("expiry is enforced and session management needs ownership or users:manage", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       const admin = await setupAdmin(db, {

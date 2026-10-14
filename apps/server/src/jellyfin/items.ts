@@ -205,14 +205,27 @@ async function playableFields(
 /** Item views as BaseItemDtos; playable ones honour `fields` for Path and MediaSources. */
 export async function itemDtos(context: UserContext, views: ItemView[]) {
   const { db, caller, query } = context;
-  const [media, serverId, canDownload] = await Promise.all([
+  const [media, serverId, downloads] = await Promise.all([
     playableFields(db, caller.user.id, views, fieldsOf(query)),
     readServerId(db),
-    checkPermission(db, caller.user.id, "download"),
+    Promise.all(
+      [...new Set(views.map((view) => view.libraryId))].map(
+        async (id) =>
+          [
+            id,
+            await checkPermission(db, caller.user.id, "download", {
+              type: "library",
+              id,
+            }),
+          ] as const,
+      ),
+    ),
   ]);
+  const canDownload = new Map(downloads);
   return views.map((view) => ({
     ...baseItemDto(view, serverId),
-    CanDownload: playableKinds.has(view.kind) && canDownload,
+    CanDownload:
+      playableKinds.has(view.kind) && canDownload.get(view.libraryId) === true,
     ...media.get(view.id),
   }));
 }
@@ -515,11 +528,10 @@ export const browseRoutes: Route[] = [
     path: "/Items/{id}",
     handle: async ({ db, caller, params }) => {
       const id = requiredGuid(params.id);
-      const [libraries, page, serverId, canDownload] = await Promise.all([
+      const [libraries, page, serverId] = await Promise.all([
         viewableLibraries(db, caller.user.id),
         listItemViews(db, caller.user.id, { ids: [id] }),
         readServerId(db),
-        checkPermission(db, caller.user.id, "download"),
       ]);
       const library = libraries.find((candidate) => candidate.id === id);
       if (library !== undefined) return json(libraryDto(library, serverId));
@@ -554,7 +566,12 @@ export const browseRoutes: Route[] = [
       }
       const dto = {
         ...baseItemDto(view, serverId),
-        CanDownload: playableKinds.has(view.kind) && canDownload,
+        CanDownload:
+          playableKinds.has(view.kind) &&
+          (await checkPermission(db, caller.user.id, "download", {
+            type: "library",
+            id: view.libraryId,
+          })),
         People: (
           await listContributorCredits(db, caller.user.id, { ids: [id] })
         ).map((person) => ({

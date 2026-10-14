@@ -169,8 +169,14 @@ async function gate(
   if (session.userId !== userId) unauthenticated();
   await enabledOwner(db, userId);
   await liveCredential(db, userId, credential);
-  await requirePermission(db, userId, "view", session.libraryId);
-  await requirePermission(db, userId, "play");
+  await requirePermission(db, userId, "view", {
+    type: "library",
+    id: session.libraryId,
+  });
+  await requirePermission(db, userId, "play", {
+    type: "library",
+    id: session.libraryId,
+  });
 }
 
 /** Issues a signed playback token bound to a live session, its Item and the caller's credential. */

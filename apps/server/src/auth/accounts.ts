@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import { groups, settings, userGroups, users } from "../db/schema/index.ts";
+import { server } from "./access.ts";
 import { AuthError, postgresCode } from "./errors.ts";
 import { requirePermission } from "./permissions.ts";
 
@@ -97,14 +98,14 @@ export async function setupAdmin(db: Database, input: LocalAccountInput) {
   });
 }
 
-/** Creates a local user in the seeded users group; the actor needs manage-users. */
+/** Creates a local user in the seeded users group; the actor needs users:manage. */
 export async function createLocalUser(
   db: Database,
   actorId: string,
   input: LocalAccountInput,
   options: { allowEmptyPassword?: boolean } = {},
 ) {
-  await requirePermission(db, actorId, "manage-users");
+  await requirePermission(db, actorId, "users:manage", server);
   const prepared = await prepareLocalAccount(input, options.allowEmptyPassword);
   try {
     return await db.transaction(async (tx) => {

@@ -3,14 +3,15 @@ import { eq } from "drizzle-orm";
 import { createDatabase } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  actions,
   apiKeys,
   invites,
-  permissions,
   sessions,
   userGroups,
   users,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
+import { server } from "./access.ts";
 import { createLocalUser, setupAdmin } from "./accounts.ts";
 import { checkPermission } from "./permissions.ts";
 
@@ -27,8 +28,10 @@ describe.skipIf(!databaseUrl)("auth accounts", () => {
         username: "admin",
         displayName: "admin",
       });
-      for (const permission of permissions)
-        expect(await checkPermission(db, admin.id, permission)).toBe(true);
+      for (const permission of actions)
+        expect(await checkPermission(db, admin.id, permission, server)).toBe(
+          true,
+        );
       const [stored] = await db
         .select({ passwordHash: users.passwordHash })
         .from(users)
@@ -92,7 +95,7 @@ describe.skipIf(!databaseUrl)("auth accounts", () => {
       ).rejects.toMatchObject({ code: "SETUP_COMPLETE" });
     }));
 
-  test("createLocalUser validates, dedupes and requires manage-users", () =>
+  test("createLocalUser validates, dedupes and requires users:manage", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       const admin = await setupAdmin(db, {
@@ -109,9 +112,11 @@ describe.skipIf(!databaseUrl)("auth accounts", () => {
         displayName: "The Viewer",
       });
       expect(viewer).not.toHaveProperty("passwordHash");
-      expect(await checkPermission(db, viewer.id, "view")).toBe(true);
-      expect(await checkPermission(db, viewer.id, "play")).toBe(true);
-      expect(await checkPermission(db, viewer.id, "manage-users")).toBe(false);
+      expect(await checkPermission(db, viewer.id, "view", server)).toBe(true);
+      expect(await checkPermission(db, viewer.id, "play", server)).toBe(true);
+      expect(await checkPermission(db, viewer.id, "users:manage", server)).toBe(
+        false,
+      );
 
       await expect(
         createLocalUser(db, viewer.id, {

@@ -4,9 +4,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { createDatabase, type Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   apiKeys,
   items,
-  libraryAccess,
   sessionRegistry,
   sessions,
   settings,
@@ -517,7 +517,8 @@ describe.skipIf(!databaseUrl)("auth playback tokens", () => {
       const fx = await seedPlayback(db);
       const issued = await issuePlaybackToken(db, fx.caller, fx.scope, now);
 
-      await db.insert(libraryAccess).values({
+      await db.insert(accessRules).values({
+        action: "view",
         libraryId: fx.library.id,
         userId: fx.owner.id,
         allowed: false,
@@ -530,11 +531,11 @@ describe.skipIf(!databaseUrl)("auth playback tokens", () => {
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
 
       await db
-        .delete(libraryAccess)
+        .delete(accessRules)
         .where(
           and(
-            eq(libraryAccess.userId, fx.owner.id),
-            eq(libraryAccess.libraryId, fx.library.id),
+            eq(accessRules.userId, fx.owner.id),
+            eq(accessRules.libraryId, fx.library.id),
           ),
         );
       await setPermissionOverride(db, fx.admin.id, fx.owner.id, "play", false);

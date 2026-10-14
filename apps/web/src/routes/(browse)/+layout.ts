@@ -14,7 +14,7 @@ export const load: LayoutLoad = async () => {
     const result = await client.libraries.list();
     libraries = result.map(({ id, name, medium }) => ({ id, name, medium }));
   } catch (error) {
-    // Viewers lack manage-libraries; they get no sidebar children.
+    // Viewers lack libraries:manage; they get no sidebar children.
     if (readFailure(error).code !== "FORBIDDEN") throw error;
     libraries = [];
   }

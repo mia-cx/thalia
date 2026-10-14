@@ -2,9 +2,11 @@ import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import type { JsonValue } from "../db/schema/common.ts";
 import {
+  type Action,
+  accessRules,
+  actions,
   groups,
-  type Permission,
-  permissions,
+  libraries,
   sessions,
   settings,
   userGroups,
@@ -176,8 +178,9 @@ export async function updateAccountAccess(
   input: {
     administrator?: boolean;
     disabled?: boolean;
-    permissionOverrides?: Partial<Record<Permission, boolean>>;
+    permissionOverrides?: Partial<Record<Action, boolean>>;
     bitrateCapBps?: bigint | null;
+    enabledFolders?: readonly string[] | "all";
   },
 ) {
   await db.transaction(async (tx) => {
@@ -194,7 +197,37 @@ export async function updateAccountAccess(
       .where(eq(users.id, userId))
       .for("update");
     if (target === undefined) throw new AuthError("NOT_FOUND");
-    for (const permission of permissions) {
+    if (input.enabledFolders !== undefined) {
+      const folders = await tx.select({ id: libraries.id }).from(libraries);
+      if (
+        input.enabledFolders !== "all" &&
+        input.enabledFolders.some(
+          (id) => !folders.some((folder) => folder.id === id),
+        )
+      )
+        throw new AuthError("NOT_FOUND");
+      await tx
+        .delete(accessRules)
+        .where(
+          and(
+            eq(accessRules.userId, userId),
+            eq(accessRules.action, "view"),
+            sql`${accessRules.libraryId} is not null`,
+          ),
+        );
+      if (input.enabledFolders !== "all" && folders.length) {
+        const enabled = input.enabledFolders;
+        await tx.insert(accessRules).values(
+          folders.map((folder) => ({
+            userId,
+            libraryId: folder.id,
+            action: "view" as const,
+            allowed: enabled.includes(folder.id),
+          })),
+        );
+      }
+    }
+    for (const permission of actions) {
       const allowed = input.permissionOverrides?.[permission];
       if (allowed !== undefined)
         await setPermissionOverride(tx, actorId, userId, permission, allowed);

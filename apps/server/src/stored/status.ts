@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { and, asc, count, eq, sql } from "drizzle-orm";
 import { browseCardsById } from "../api/items.ts";
+import { server } from "../auth/access.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { files, jobs, segmentTimelines, versions } from "../db/schema/index.ts";
@@ -57,9 +58,9 @@ async function segmentsDone(folder: string) {
   }
 }
 
-/** Reads store job progress for a caller holding manage-transcoding: running encodes with segment counts, and the queue. */
+/** Reads running encode progress and the queue for a caller holding transcoding:manage. */
 export async function readStoreStatus(db: Database, actorId: string) {
-  await requirePermission(db, actorId, "manage-transcoding");
+  await requirePermission(db, actorId, "transcoding:manage", server);
   const running = await storeJobs(db, "running");
   const queued = await storeJobs(db, "queued");
   const [total] = await db

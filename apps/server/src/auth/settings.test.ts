@@ -233,7 +233,7 @@ describe.skipIf(!databaseUrl)("auth OIDC settings", () => {
       ]);
     }));
 
-  test("writeAuthSettings requires manage-server", () =>
+  test("writeAuthSettings requires server:manage", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       const admin = await setupAdmin(db, {

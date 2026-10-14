@@ -51,7 +51,10 @@ async function viewableItem(db: MarksDb, userId: string, itemId: string) {
     .where(eq(items.id, itemId))
     .limit(1);
   if (item === undefined) throw new AuthError("NOT_FOUND");
-  await requirePermission(db, userId, "view", item.libraryId);
+  await requirePermission(db, userId, "view", {
+    type: "library",
+    id: item.libraryId,
+  });
 }
 
 /** Reads the caller's favourite flag and numeric rating for an Item. */

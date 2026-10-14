@@ -1,4 +1,5 @@
 import { eq, sql } from "drizzle-orm";
+import { server } from "../auth/access.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { settings } from "../db/schema/index.ts";
@@ -27,13 +28,13 @@ export async function readPlaybackSettings(db: Database) {
   return { bitrateCapBps: cap ?? null, allowCpu4k };
 }
 
-/** Patches live playback defaults for a caller holding manage-server; the next plan reads them. */
+/** Patches live playback defaults for a caller holding server:manage; the next plan reads them. */
 export async function writePlaybackSettings(
   db: Database,
   actorId: string,
   patch: { bitrateCapBps?: number | null; allowCpu4k?: boolean },
 ) {
-  await requirePermission(db, actorId, "manage-server");
+  await requirePermission(db, actorId, "server:manage", server);
   await db
     .insert(settings)
     .values({ key: playbackSettingsKey, value: patch })

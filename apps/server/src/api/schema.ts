@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { permissions } from "../db/schema/index.ts";
+import { actions } from "../db/schema/index.ts";
 import { maxPageSize } from "./pagination.ts";
 
 /** The kinds of library item the API exposes. */
@@ -230,7 +230,7 @@ export function connection<A, I, R>(item: Schema.Schema<A, I, R>) {
 }
 
 /** The flat permission names the auth slice enforces. */
-export const PermissionName = Schema.Literal(...permissions);
+export const PermissionName = Schema.Literal(...actions);
 
 /** The account shape user creation returns. */
 export const UserAccount = Schema.Struct({

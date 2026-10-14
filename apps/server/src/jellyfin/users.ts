@@ -1,3 +1,4 @@
+import { server } from "../auth/access.ts";
 import { readUserAccess } from "../auth/admin.ts";
 import { checkPermission } from "../auth/permissions.ts";
 import { readAccount, readClientPreference } from "../auth/profile.ts";
@@ -30,12 +31,12 @@ export async function userDto(db: Database, user: User, serverId: string) {
     access,
     canManageSubtitles,
   ] = await Promise.all([
-    checkPermission(db, user.id, "play"),
-    checkPermission(db, user.id, "download"),
+    checkPermission(db, user.id, "play", server),
+    checkPermission(db, user.id, "download", server),
     readClientPreference(db, user.id, user.id, "jellyfin", "configuration"),
     readAccount(db, user.id, user.id),
     readUserAccess(db, user.id),
-    checkPermission(db, user.id, "manage-subtitles"),
+    checkPermission(db, user.id, "subtitles:edit", server),
   ]);
   return {
     Name: user.username,
@@ -90,7 +91,10 @@ export async function userDto(db: Database, user: User, serverId: string) {
       EnableMediaConversion: false,
       EnableAllDevices: true,
       EnableAllChannels: false,
-      EnableAllFolders: true,
+      EnableAllFolders: access.libraryAccess.length === 0,
+      EnabledFolders: access.libraryAccess
+        .filter((rule) => rule.allowed)
+        .map((rule) => toGuid(rule.libraryId)),
       InvalidLoginAttemptCount: 0,
       LoginAttemptsBeforeLockout: -1,
       MaxActiveSessions: 0,

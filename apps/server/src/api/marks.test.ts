@@ -10,8 +10,8 @@ import { createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   items,
-  libraryAccess,
   progress,
   sessionRegistry,
   versions,
@@ -181,7 +181,9 @@ async function denyLibrary(
   userId: string,
   allowed: boolean,
 ) {
-  await db.insert(libraryAccess).values({ libraryId, userId, allowed });
+  await db
+    .insert(accessRules)
+    .values({ action: "view", libraryId, userId, allowed });
 }
 
 async function clearLibraryRules(
@@ -190,12 +192,9 @@ async function clearLibraryRules(
   userId: string,
 ) {
   await db
-    .delete(libraryAccess)
+    .delete(accessRules)
     .where(
-      and(
-        eq(libraryAccess.libraryId, libraryId),
-        eq(libraryAccess.userId, userId),
-      ),
+      and(eq(accessRules.libraryId, libraryId), eq(accessRules.userId, userId)),
     );
 }
 
@@ -599,7 +598,8 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
           versionId: oldestVersion.id,
           positionSeconds: 5,
         });
-        await db.insert(libraryAccess).values({
+        await db.insert(accessRules).values({
+          action: "view",
           libraryId: library.id,
           userId: nobody.id,
           allowed: true,

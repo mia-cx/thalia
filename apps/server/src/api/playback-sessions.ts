@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import { Schema } from "effect";
+import { server } from "../auth/access.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import {
@@ -51,9 +52,9 @@ export function transcodeReasons(
     : reasons;
 }
 
-/** Lists live and queued sessions, newest first, for a caller holding manage-server. */
+/** Lists live and queued sessions, newest first, for a caller holding server:manage. */
 export async function listPlaybackSessions(db: Database, actorId: string) {
-  await requirePermission(db, actorId, "manage-server");
+  await requirePermission(db, actorId, "server:manage", server);
   const rows = await db
     .select({
       id: sessionRegistry.id,

@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { Effect, Schema } from "effect";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
@@ -108,7 +109,7 @@ async function lockedPlugin(context: Context, name: string) {
   return row;
 }
 
-/** Runs a plugin admin call for a caller holding manage-server, mapping plugin failures to API errors. */
+/** Runs a plugin admin call for a caller holding plugins:manage, mapping plugin failures to API errors. */
 function asAdmin<A>(context: Context, run: () => Promise<A>): Promise<A> {
   return runApi(
     Effect.tryPromise({
@@ -116,7 +117,8 @@ function asAdmin<A>(context: Context, run: () => Promise<A>): Promise<A> {
         await requirePermission(
           context.db,
           context.caller.user.id,
-          "manage-server",
+          "plugins:manage",
+          server,
         );
         return run();
       },
@@ -182,7 +184,7 @@ function readFilesOff(input: { until: string | null } | null) {
   return { until: input.until };
 }
 
-/** The plugin admin procedures mounted under `plugins`, all behind manage-server. */
+/** The plugin admin procedures mounted under `plugins`, all behind plugins:manage. */
 export const pluginProcedures = {
   list: authenticated
     .route({ method: "GET", path: "/plugins" })
@@ -316,7 +318,7 @@ export const pluginProcedures = {
     ),
 };
 
-/** The registry procedures mounted under `registries`, behind manage-server. */
+/** The registry procedures mounted under `registries`, behind plugins:manage. */
 export const registryProcedures = {
   list: authenticated
     .route({ method: "GET", path: "/registries" })

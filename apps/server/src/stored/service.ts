@@ -1,4 +1,5 @@
 import { and, eq, gt, sql } from "drizzle-orm";
+import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
@@ -27,13 +28,13 @@ async function loadLibrary(db: Database, id: string) {
   return library;
 }
 
-/** Reads a library's stored-version policy for a caller holding manage-transcoding. */
+/** Reads a library's stored-version policy for a caller holding transcoding:manage. */
 export async function getStoredVersionPolicy(
   db: Database,
   actorId: string,
   libraryId: string,
 ) {
-  await requirePermission(db, actorId, "manage-transcoding");
+  await requirePermission(db, actorId, "transcoding:manage", server);
   const library = await loadLibrary(db, libraryId);
   return { policy: readStoredVersionPolicy(library.configuration) };
 }
@@ -45,7 +46,7 @@ export async function setStoredVersionPolicy(
   libraryId: string,
   policy: StoredVersionPolicy | null,
 ) {
-  await requirePermission(db, actorId, "manage-transcoding");
+  await requirePermission(db, actorId, "transcoding:manage", server);
   // The row lock keeps a concurrent configuration write from being lost.
   const library = await db.transaction(async (tx) => {
     const [current] = await tx
@@ -70,14 +71,14 @@ export async function setStoredVersionPolicy(
   return { policy: readStoredVersionPolicy(library.configuration) };
 }
 
-/** Sets the server-wide idle window for a caller holding manage-server, and books waiting store jobs into the new window. */
+/** Sets the server-wide idle window for a caller holding server:manage, and books waiting store jobs into the new window. */
 export async function setIdleWindow(
   db: Database,
   actorId: string,
   idleWindow: IdleWindow,
   now = new Date(),
 ) {
-  await requirePermission(db, actorId, "manage-server");
+  await requirePermission(db, actorId, "server:manage", server);
   const place = idleWindowAt(idleWindow, now);
   const runAfter = place.inside ? now : place.startsAt;
   const value = { idleWindow };
@@ -110,7 +111,7 @@ export async function requestStoredVersion(
   itemId: string,
   rungName: string,
 ) {
-  await requirePermission(db, actorId, "manage-transcoding");
+  await requirePermission(db, actorId, "transcoding:manage", server);
   const [item] = await db
     .select({ libraryId: items.libraryId })
     .from(items)

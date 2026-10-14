@@ -2,9 +2,9 @@ import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
+  accessRules,
   artwork,
   favourites,
-  libraryAccess,
   progress,
   providerIds,
   ratings,
@@ -57,9 +57,12 @@ export async function seedBrowse(db: Database) {
   const films = await library(db, "Movies", "movies");
   const tv = await library(db, "Shows", "shows");
   const hidden = await library(db, "Private", "movies");
-  await db
-    .insert(libraryAccess)
-    .values({ libraryId: hidden.id, userId: viewer.id, allowed: false });
+  await db.insert(accessRules).values({
+    action: "view",
+    libraryId: hidden.id,
+    userId: viewer.id,
+    allowed: false,
+  });
 
   const matrix = await movie(db, films.id, "The Matrix", 1999);
   const arrival = await movie(db, films.id, "Arrival", 2016);
