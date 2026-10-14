@@ -12,7 +12,7 @@ import {
 } from "drizzle-orm";
 import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
-import { initializeLibraryRules } from "../auth/folders.ts";
+import { initializeLibraryRules, lockFolderRules } from "../auth/folders.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import type { JsonValue } from "../db/schema/common.ts";
@@ -205,6 +205,8 @@ export async function createLibrary(
   const name = normalizeName(input.name);
   const paths = normalizeRoots(input.roots);
   return db.transaction(async (tx) => {
+    // Policy writes need Library FK locks; take folders before roots to avoid a root-edit cycle.
+    await lockFolderRules(tx);
     await checkRoots(tx, paths);
     const [library] = await tx
       .insert(libraries)
