@@ -35,6 +35,8 @@ let gaps = $state<readonly LibraryGaps[]>([]);
 let statsFailures = $state<
   Record<string, { code: FailureCode; message: string } | undefined>
 >({});
+// Bumps per library on every library.changed; open gap dialogs reconcile on it.
+let revisions = $state<Record<string, number>>({});
 
 let health = $state<"ready" | "no-database" | "unreachable" | undefined>(
   undefined,
@@ -158,6 +160,10 @@ void followEvents(
     if (event.kind === "library.changed" || event.kind === "job.progress")
       void loadScans();
     if (event.kind === "library.changed") {
+      revisions = {
+        ...revisions,
+        [event.libraryId]: (revisions[event.libraryId] ?? 0) + 1,
+      };
       refreshLibraryStats(event.libraryId);
       void freeSpace.reload();
     }
@@ -257,6 +263,7 @@ onDestroy(() => {
       gaps={gaps.find((entry) => entry.libraryId === library.id)}
       failure={statsFailures[library.id]}
       onretry={() => refreshLibraryStats(library.id)}
+      revision={revisions[library.id] ?? 0}
     />
   {/each}
 

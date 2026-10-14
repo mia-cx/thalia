@@ -130,6 +130,10 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await page.waitFor(
               "[...document.querySelectorAll('button')].every(b => !b.textContent.includes('No overview')) || [...document.querySelectorAll('button')].some(b => b.textContent.includes('No overview') && b.textContent.trim().endsWith('0'))",
             );
+            // The reconciled list drops the fixed Item and shows its empty state.
+            await page.waitFor(
+              "[...document.querySelectorAll('[data-slot=dialog-content] a')].every(a => a.textContent.trim() !== 'Alien') && [...document.querySelectorAll('[data-slot=dialog-content] *')].some(e => e.textContent.trim() === 'Nothing missing.')",
+            );
           } finally {
             await page.close();
             await server.stop();
@@ -219,6 +223,137 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 "[...document.querySelectorAll('button')].every(b => b.textContent.trim() !== 'Show more')",
               ),
             ).toBe(true);
+          } finally {
+            await page.close();
+            await server.stop();
+          }
+        }),
+      ));
+    test("a slow first page from a closed opening never lands", () =>
+      withFolder((folder) =>
+        withDatabase(async (db, url) => {
+          if (browser === undefined) throw new Error("Expected a browser.");
+          await migrateDatabase(db);
+          await setupAdmin(db, {
+            username: "admin",
+            password: "admin-pass",
+          });
+          const { token } = await login(
+            db,
+            {
+              username: "admin",
+              password: "admin-pass",
+              clientName: "Thalia Web",
+              deviceId: "overview-browser-stale",
+              deviceName: "Chromium",
+            },
+            "127.0.0.1",
+          );
+          const [library] = await insertLibraries(db, {
+            name: "Movies",
+            medium: "movies",
+            rootPath: folder,
+          });
+          if (library === undefined) throw new Error("Fixture missing.");
+          // A is in both lists; B only in the poster list.
+          const both = await insertItem(db, {
+            libraryId: library.id,
+            kind: "movie",
+            title: "Both Gaps",
+            overview: "Set.",
+            canonicalFolder: "/movies/both",
+            extension: {},
+          });
+          const posterOnly = await insertItem(db, {
+            libraryId: library.id,
+            kind: "movie",
+            title: "Poster Only",
+            overview: "Set.",
+            canonicalFolder: "/movies/poster-only",
+            extension: {},
+          });
+          await db.insert(artwork).values({
+            itemId: posterOnly.id,
+            type: "backdrop",
+            backend: "colocated",
+            storageKey: "po/backdrop.jpg",
+            selected: true,
+          });
+          for (const movie of [both, posterOnly])
+            await db.insert(providerIds).values({
+              itemId: movie.id,
+              provider: "tmdb",
+              value: movie.title,
+            });
+
+          const server = await startThalia("api", {
+            databaseUrl: url,
+            port: 0,
+            pluginOptions: { directory: `${folder}/installed` },
+          });
+          const page = await openPage();
+          try {
+            const base = `http://127.0.0.1:${server.apiServer?.port}`;
+            await signIn(page, base, token, "/admin/overview");
+            await page.waitFor(
+              "[...document.querySelectorAll('button')].some(b => b.textContent.includes('No poster'))",
+            );
+
+            // Hold the first metadataGapItems response; later ones pass.
+            const held: { requestId: string }[] = [];
+            await page.send("Fetch.enable", {
+              patterns: [
+                { urlPattern: "*metadataGapItems*", requestStage: "Request" },
+              ],
+            });
+            let firstHeld = false;
+            page.on(
+              "Fetch.requestPaused",
+              (p: { requestId: string; request: { url: string } }) => {
+                if (!firstHeld) {
+                  firstHeld = true;
+                  held.push({ requestId: p.requestId });
+                  return;
+                }
+                void page.send("Fetch.continueRequest", {
+                  requestId: p.requestId,
+                });
+              },
+            );
+
+            await page.eval(
+              "[...document.querySelectorAll('button')].find(b => b.textContent.includes('No poster'))?.click()",
+            );
+            await page.waitFor(
+              "document.querySelector('[data-slot=dialog-content]') !== null",
+            );
+            await Bun.sleep(400);
+            if (held.length !== 1)
+              throw new Error("The first gap request was not held.");
+
+            // Close, then open the backdrop gap; its request goes through.
+            await page.eval(
+              "[...document.querySelectorAll('[data-slot=dialog-content] button')].find(b => (b.getAttribute('aria-label') ?? '').includes('Close') || b.textContent.trim() === 'Close')?.click()",
+            );
+            await page.waitFor(
+              "document.querySelector('[data-slot=dialog-content]') === null",
+            );
+            await page.eval(
+              "[...document.querySelectorAll('button')].find(b => b.textContent.includes('No backdrop'))?.click()",
+            );
+            await page.waitFor(
+              "[...document.querySelectorAll('[data-slot=dialog-content] a')].length === 1",
+            );
+
+            // Release the stale response; the list must stay the backdrop gap's.
+            await page.send("Fetch.continueRequest", {
+              requestId: held[0]?.requestId,
+            });
+            await Bun.sleep(800);
+            const titles = await page.eval<string[]>(
+              "[...document.querySelectorAll('[data-slot=dialog-content] a')].map(a => a.textContent.trim())",
+            );
+            expect(titles).toEqual(["Both Gaps"]);
           } finally {
             await page.close();
             await server.stop();

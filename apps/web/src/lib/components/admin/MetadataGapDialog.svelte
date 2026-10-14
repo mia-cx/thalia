@@ -20,6 +20,7 @@ let {
   libraryName,
   gap,
   count,
+  revision,
 }: {
   open?: boolean;
   libraryId: string;
@@ -27,6 +28,8 @@ let {
   /** The gap being listed, or undefined while closed. */
   gap: { key: MetadataGap; label: string } | undefined;
   count: number;
+  /** Bumps on every library.changed for this library; while open, the list reconciles. */
+  revision: number;
 } = $props();
 
 let items = $state<MetadataGapItem[]>([]);
@@ -35,23 +38,82 @@ let loading = $state(false);
 let failure = $state<ReturnType<typeof readFailure> | undefined>(undefined);
 let refreshed = $state(new Set<string>());
 
+// Opening or closing bumps this; a request that answered for an older
+// generation is dropped, so a slow first page can't overwrite a new opening.
+let generation = 0;
+
 async function loadMore() {
   if (gap === undefined) return;
+  const ticket = generation;
+  const gapKey = gap.key;
+  const after = cursor;
   loading = true;
   try {
     const page = await client.libraries.metadataGapItems({
       libraryId,
-      gap: gap.key,
-      ...(cursor === null ? {} : { cursor }),
+      gap: gapKey,
+      ...(after === null ? {} : { cursor: after }),
     });
+    if (ticket !== generation) return;
     items = [...items, ...page.items];
     cursor = page.cursor;
     failure = undefined;
   } catch (error) {
-    failure = readFailure(error);
+    if (ticket === generation) failure = readFailure(error);
   } finally {
-    loading = false;
+    if (ticket === generation) loading = false;
   }
+}
+
+// While open, a library.changed bumps `revision` and the list reconciles from
+// the first page: enough pages to cover what was loaded, then one assignment
+// so nothing flashes and Show more keeps paging from a consistent cursor.
+async function reconcile() {
+  if (gap === undefined) return;
+  const ticket = generation;
+  const gapKey = gap.key;
+  const wanted = items.length;
+  const next: MetadataGapItem[] = [];
+  let after: string | null = null;
+  try {
+    do {
+      const page = await client.libraries.metadataGapItems({
+        libraryId,
+        gap: gapKey,
+        limit: 100,
+        ...(after === null ? {} : { cursor: after }),
+      });
+      next.push(...page.items);
+      after = page.cursor;
+      if (ticket !== generation) return;
+    } while (after !== null && next.length < wanted);
+    items = next;
+    cursor = after;
+    failure = undefined;
+  } catch (error) {
+    if (ticket === generation) failure = readFailure(error);
+  }
+}
+
+// Reconciles serialize with each other and don't trample a Show more in
+// flight: one runs at a time, a bump during it schedules one more pass.
+const reconciling = { running: false, dirty: false };
+function requestReconcile() {
+  if (reconciling.running) {
+    reconciling.dirty = true;
+    return;
+  }
+  reconciling.running = true;
+  void (async () => {
+    try {
+      do {
+        reconciling.dirty = false;
+        await reconcile();
+      } while (reconciling.dirty);
+    } finally {
+      reconciling.running = false;
+    }
+  })();
 }
 
 async function refresh(item: MetadataGapItem) {
@@ -69,17 +131,29 @@ function caption(item: MetadataGapItem): string {
   return item.year === null ? "" : String(item.year);
 }
 
-// A reopened dialog starts from the first page again. The reset and first load
-// are untracked so writing cursor/items doesn't retrigger the effect.
+let seenRevision = -1;
+
+// Open and close bump the generation so pending responses land nowhere; the
+// reset and first load are untracked so writing cursor/items doesn't retrigger.
 $effect(() => {
+  generation += 1;
   if (!open) return;
   untrack(() => {
     items = [];
     cursor = null;
     refreshed = new Set();
     failure = undefined;
+    seenRevision = revision;
     void loadMore();
   });
+});
+
+// A revision bump while open reconciles the list; reads stay limited to
+// `revision` and `open` so the effect never re-fires on list writes.
+$effect(() => {
+  if (!open || revision === seenRevision) return;
+  seenRevision = revision;
+  untrack(() => void requestReconcile());
 });
 </script>
 

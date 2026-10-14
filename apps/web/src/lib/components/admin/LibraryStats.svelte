@@ -23,12 +23,15 @@ const {
   gaps,
   failure,
   onretry,
+  revision,
 }: {
   library: { id: string; name: string; medium: "movies" | "shows" };
   stats: LibraryStats | undefined;
   gaps: LibraryGaps | undefined;
   failure?: { code: FailureCode; message: string } | undefined;
   onretry: () => void;
+  /** Bumps on library.changed for this library; passed to the gap dialog. */
+  revision: number;
 } = $props();
 
 const gapRows = $derived(
@@ -135,6 +138,7 @@ function openGap(row: { key: MetadataGap; label: string }) {
   libraryId={library.id}
   libraryName={library.name}
   gap={dialogGap}
+  {revision}
   count={dialogGap === undefined || gaps === undefined
     ? 0
     : gaps[dialogGap.key]}
