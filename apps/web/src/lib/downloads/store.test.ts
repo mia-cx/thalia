@@ -421,6 +421,41 @@ describe("downloads store", () => {
     gate.resolve();
   });
 
+  test("a restart durably discards the old prefix before saving the new ETag", async () => {
+    const root = new FakeDir();
+    await seedIndex(
+      root,
+      [{ ...input, written: 16, state: "paused", etag: "old" }],
+      bytes.subarray(0, 16),
+    );
+    const replacement = Uint8Array.from({ length: 64 }, (_, i) => i + 100);
+    const gate = deferred();
+    const first = fakeFetch(replacement, {
+      etag: "new",
+      gates: [gate.promise],
+    });
+    const store = makeStore(root, first.transport, fakeStorage().storage);
+    await store.resume(input.versionId);
+    const dir = root.dirs.get("downloads");
+    await waitFor(() =>
+      new TextDecoder()
+        .decode(dir?.files.get("index.json"))
+        .includes('"etag":"new"'),
+    );
+    // Lose every file change after the validator was committed to the index.
+    for (const writer of dir?.writers ?? []) writer.crashed = true;
+    await store.pause(input.versionId);
+    gate.resolve();
+    const second = fakeFetch(replacement, { etag: "new" });
+    const restored = makeStore(root, second.transport, fakeStorage().storage);
+    await restored.restore();
+    expect(get(restored).records[0]?.written).toBe(0);
+    await restored.resume(input.versionId);
+    await waitFor(() => get(restored).records[0]?.state === "complete");
+    expect(second.calls[0]?.range).toBeUndefined();
+    expect(fileOf(root)).toEqual(replacement);
+  });
+
   test("a network error flushes received bytes and closes the file", async () => {
     const root = new FakeDir();
     let fail!: () => void;
@@ -443,6 +478,41 @@ describe("downloads store", () => {
       await waitFor(() => get(store).records[0]?.state === "failed");
       const dir = root.dirs.get("downloads");
       expect(dir?.files.get(input.versionId)).toEqual(bytes.subarray(0, 8));
+      expect(dir?.writers[0]?.closed).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("a failed restart flush never publishes the replacement ETag", async () => {
+    const root = new FakeDir();
+    await seedIndex(
+      root,
+      [{ ...input, written: 16, state: "paused", etag: "old" }],
+      bytes.subarray(0, 16),
+    );
+    const store = createDownloads({
+      root: async () => root as unknown as FileSystemDirectoryHandle,
+      open: async (id) => {
+        const file = await openFake(root, id);
+        file.flush = async () => {
+          throw new Error("Disk flush failed.");
+        };
+        return file;
+      },
+      fetch: fakeFetch(bytes, { etag: "new" }).transport,
+      storage: fakeStorage().storage,
+    });
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await store.resume(input.versionId);
+      await waitFor(() => get(store).records[0]?.state === "failed");
+      expect(get(store).records[0]?.etag).toBe("old");
+      const dir = root.dirs.get("downloads");
+      expect(new TextDecoder().decode(dir?.files.get("index.json"))).toContain(
+        '"etag":"old"',
+      );
+      expect(dir?.files.get(input.versionId)?.length).toBe(16);
       expect(dir?.writers[0]?.closed).toBe(true);
     } finally {
       log.mockRestore();

@@ -426,7 +426,6 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
         const sentEtag = record.etag;
         let response = await ask(offset > 0 ? offset : null, sentEtag);
         let responseEtag = response.headers.get("etag");
-        if (responseEtag !== null) record.etag = responseEtag;
         let range = response.headers.get("content-range");
         const matched =
           response.status === 206 &&
@@ -441,7 +440,6 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           await response.body?.cancel();
           response = await ask(null, null);
           responseEtag = response.headers.get("etag");
-          if (responseEtag !== null) record.etag = responseEtag;
           range = response.headers.get("content-range");
         }
         let total: number | null = null;
@@ -453,6 +451,10 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           offset = 0;
           flushed = 0;
           record.written = 0;
+          // The old prefix must be gone on disk before its validator changes.
+          // A crash between the index write and the first data flush is safe.
+          await flush();
+          record.etag = responseEtag;
           const length = response.headers.get("content-length");
           if (length !== null) total = Number(length);
           // No length means no known size: a chunked answer to a stale
@@ -470,6 +472,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           postProgress(record);
           return;
         }
+        if (responseEtag !== null) record.etag = responseEtag;
         if (total !== null && Number.isFinite(total)) record.bytes = total;
         // Keep the validator even if the page closes before the next flush.
         await updateIndex((stored) => upsertRecord(stored, record));
