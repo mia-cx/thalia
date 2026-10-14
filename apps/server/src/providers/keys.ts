@@ -1,15 +1,21 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import type { JsonObject } from "../db/schema/common.ts";
-import { items, settings, settingsLockClass } from "../db/schema/index.ts";
+import {
+  items,
+  seasons,
+  settings,
+  settingsLockClass,
+} from "../db/schema/index.ts";
+import { queueProviderFetch } from "../metadata/jobs.ts";
 
 const providersKey = "providers";
 const namePattern = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const maxValueLength = 4096;
 
-/** The Item kinds whose unmatched Items each built-in provider key requeues. */
+/** The Item kinds each built-in provider key gives another fetch. */
 const requeuedKinds = new Map<string, (typeof items.$inferSelect.kind)[]>([
   ["tmdb", ["movie"]],
   ["tvdb", ["show", "season", "episode"]],
@@ -96,7 +102,7 @@ export async function readProviderKey(
   return storedKeys(row?.value)[key];
 }
 
-/** Stores one provider key for a caller holding manage-server and returns the sorted names. */
+/** Stores a key and queues its pending Items for a caller holding manage-server; returns sorted names. */
 export async function setProviderKey(
   db: Database,
   actorId: string,
@@ -120,8 +126,7 @@ export async function setProviderKey(
     kinds === undefined
       ? undefined
       : async (tx) => {
-          // A fresh credential gives the provider's unmatched Items a
-          // chance: the next scan finds them pending and enqueues a fetch.
+          // A fresh credential gives unmatched Items another chance without a rescan.
           await tx
             .update(items)
             .set({ metadataState: "pending", updatedAt: new Date() })
@@ -131,6 +136,36 @@ export async function setProviderKey(
                 eq(items.metadataState, "unmatched"),
               ),
             );
+          const pending = await tx
+            .select({ id: items.id, kind: items.kind })
+            .from(items)
+            .where(
+              and(
+                inArray(items.kind, kinds),
+                eq(items.metadataState, "pending"),
+              ),
+            );
+          const fetchIds = new Set(
+            pending
+              .filter((item) => item.kind === "movie" || item.kind === "show")
+              .map((item) => item.id),
+          );
+          // A Show fetch walks its tree, even when only a Season or Episode is pending.
+          if (key === "tvdb") {
+            const parents = await tx
+              .selectDistinct({ id: seasons.showId })
+              .from(seasons)
+              .innerJoin(
+                items,
+                or(
+                  eq(items.id, seasons.itemId),
+                  eq(items.parentId, seasons.itemId),
+                ),
+              )
+              .where(eq(items.metadataState, "pending"));
+            for (const parent of parents) fetchIds.add(parent.id);
+          }
+          for (const id of fetchIds) await queueProviderFetch(tx, id);
         },
   );
 }

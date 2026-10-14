@@ -31,9 +31,11 @@ export type ProviderFetchOptions = Pick<
   "provider" | "artworkPolicy"
 >;
 
+type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
 /** Queues a fetch or updates a due one, retaining explicit selection options across ordinary scan requests. */
 export async function queueProviderFetch(
-  db: Database,
+  db: Database | Transaction,
   itemId: string,
   priority = 0,
   options: ProviderFetchOptions = {},
@@ -183,6 +185,9 @@ export function registerMetadataJobs(
     publish: () => Promise<unknown>,
     options: ProviderFetchOptions,
   ) => {
+    // No source for this kind leaves the Item waiting for a key, without retrying the job.
+    if (!providers.some((provider) => provider.kinds.includes(item.kind)))
+      return false;
     const application = await applyMetadata(db, item.id, providers, {
       provider: options.provider,
     });

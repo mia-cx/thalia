@@ -162,6 +162,92 @@ async function storedItem(db: Database, itemId: string) {
 }
 
 describe.skipIf(!databaseUrl)("provider-fetch job", () => {
+  test("a movie without a provider for its kind stays pending and its job completes", async () => {
+    const previous = Bun.env.TMDB_API_KEY;
+    delete Bun.env.TMDB_API_KEY;
+    try {
+      for (const tvdb of [false, true])
+        await withDatabase(async (db) => {
+          await withTempRoot(async (root) => {
+            const { item } = await fixture(db, root);
+            if (tvdb)
+              await db.insert(settings).values({
+                key: "providers",
+                value: { keys: { tvdb: "tvdb-key" } },
+              });
+            const { calls, request } = mockRequest(() => {
+              throw new Error("Unexpected HTTP call.");
+            });
+            const queue = createJobQueue(db);
+            const registry = createJobRegistry();
+            registerMetadataJobs(db, registry, request);
+            await queueProviderFetch(db, item.id);
+            const job = await queue.claim(["provider-fetch"]);
+            if (!job) throw new Error("provider-fetch was not enqueued.");
+            await registry.run(job);
+            expect(await queue.complete(job)).toMatchObject({
+              state: "completed",
+              attempts: 1,
+              error: null,
+            });
+            expect((await storedItem(db, item.id)).metadataState).toBe(
+              "pending",
+            );
+            expect(await queue.claim(["provider-fetch"])).toBeUndefined();
+            expect(calls).toHaveLength(0);
+            expect(await db.select().from(events)).toHaveLength(0);
+          });
+        });
+    } finally {
+      if (previous === undefined) delete Bun.env.TMDB_API_KEY;
+      else Bun.env.TMDB_API_KEY = previous;
+    }
+  });
+
+  test("a plugin provider can fetch a movie without a built-in key", () =>
+    withDatabase(async (db) => {
+      await withTempRoot(async (root) => {
+        const { item } = await fixture(db, root);
+        await db.insert(settings).values({
+          key: "metadata",
+          value: { providerOrder: ["plugin-movies"] },
+        });
+        const registry = createJobRegistry();
+        registerMetadataJobs(db, registry, fetch, {
+          metadataProviders: async () => [
+            {
+              id: "plugin-movies",
+              kinds: ["movie"],
+              search: async () => [
+                {
+                  providerId: "alien",
+                  title: "Alien",
+                  year: 1979,
+                  confidence: 1,
+                },
+              ],
+              fetch: async () => ({
+                title: "Alien",
+                year: 1979,
+                overview: "From the plugin.",
+                contentRating: null,
+                genres: [],
+                credits: [],
+                artwork: [],
+                providerIds: {},
+              }),
+            },
+          ],
+        });
+        const job = await queueProviderFetch(db, item.id);
+        await registry.run(job);
+        expect(await storedItem(db, item.id)).toMatchObject({
+          metadataState: "matched",
+          overview: "From the plugin.",
+        });
+      });
+    }));
+
   test("a scanned folder flows through provider-fetch to a stored poster", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
