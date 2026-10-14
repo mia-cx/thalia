@@ -168,7 +168,7 @@ describe.skipIf(!databaseUrl)("libraries api", () => {
         const headers = { authorization: `Bearer ${token}` };
         const client = createThaliaClient({ origin: base, headers });
         const expected = [
-          { id: allowed.id, name: "Allowed", medium: "movies" },
+          { id: allowed.id, name: allowed.name, medium: allowed.medium },
         ];
         expect(await client.libraries.viewable()).toEqual(expected);
         const response = await fetch(`${base}/api/libraries/viewable`, {
@@ -194,7 +194,7 @@ describe.skipIf(!databaseUrl)("libraries api", () => {
   test("viewable returns every library for an admin, ordered by medium then name", () =>
     withDatabase(async (db, url) => {
       const { token } = await seed(db);
-      const rows = await db
+      const [alphaShows, zuluMovies, zuluShows, alphaMovies] = await db
         .insert(libraries)
         .values([
           { name: "Alpha Shows", medium: "shows" },
@@ -207,6 +207,8 @@ describe.skipIf(!databaseUrl)("libraries api", () => {
           name: libraries.name,
           medium: libraries.medium,
         });
+      if (!alphaShows || !zuluMovies || !zuluShows || !alphaMovies)
+        throw new Error("Library insert returned no row.");
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
       try {
         const client = createThaliaClient({
@@ -214,10 +216,10 @@ describe.skipIf(!databaseUrl)("libraries api", () => {
           headers: { authorization: `Bearer ${token}` },
         });
         expect(await client.libraries.viewable()).toEqual([
-          rows[3],
-          rows[1],
-          rows[0],
-          rows[2],
+          alphaMovies,
+          zuluMovies,
+          alphaShows,
+          zuluShows,
         ]);
       } finally {
         await server.stop();
