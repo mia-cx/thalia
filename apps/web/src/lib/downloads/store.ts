@@ -96,6 +96,8 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
         controller: AbortController;
         pause: boolean;
         remove: boolean;
+        /** The Version lock was another tab's: this tab writes nothing. */
+        skipped: boolean;
         done: Promise<void>;
       }
     | undefined;
@@ -333,6 +335,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       controller: new AbortController(),
       pause: false,
       remove: false,
+      skipped: false,
       done: Promise.resolve(),
     };
     current = entry;
@@ -346,7 +349,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       pumping = false;
       notify();
       postProgress(record);
-      if (!entry.remove)
+      if (!entry.remove && !entry.skipped)
         await updateIndex((stored) => upsertRecord(stored, record));
       void pump();
     })();
@@ -361,6 +364,8 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       if (!held) {
         // Another tab owns this file; leave it "downloading" locally so the
         // pump moves on, and let its progress messages keep this list true.
+        // It must not write the index: the owner's record is newer.
+        entry.skipped = true;
         record.state = "downloading";
         notify();
         return;

@@ -732,8 +732,23 @@ describe("downloads across tabs", () => {
     await b.resume(input.versionId);
     await Bun.sleep(20);
     expect(second.calls).toHaveLength(0);
+
+    // B owns nothing: the index still says exactly what A last wrote.
+    const indexText = () =>
+      JSON.parse(
+        new TextDecoder().decode(
+          root.dirs.get("downloads")?.files.get("index.json"),
+        ),
+      ) as { versionId: string; state: string; written: number }[];
+    const denied = indexText().find((r) => r.versionId === input.versionId);
+    expect(denied?.state).toBe("queued");
+    expect(denied?.written).toBe(16);
+
     gate.resolve();
     await waitFor(() => get(a).records[0]?.state === "complete");
     expect(fileOf(root)).toEqual(bytes);
+    const finished = indexText().find((r) => r.versionId === input.versionId);
+    expect(finished?.state).toBe("complete");
+    expect(finished?.written).toBe(64);
   });
 });
