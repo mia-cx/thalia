@@ -429,6 +429,9 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           record.written = 0;
           const length = response.headers.get("content-length");
           if (length !== null) total = Number(length);
+          // No length means no known size: a chunked answer to a stale
+          // If-Range. bytes 0 stands for unknown until the body ends.
+          else record.bytes = 0;
         } else {
           await writable.close();
           // A 416 at exactly the file's size means the bytes all landed but
@@ -468,10 +471,9 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           }
         }
         await writable.close();
-        record.state =
-          record.bytes === 0 || record.written === record.bytes
-            ? "complete"
-            : "failed";
+        // An unknown size means a clean end is the size.
+        if (record.bytes === 0) record.bytes = record.written;
+        record.state = record.written === record.bytes ? "complete" : "failed";
         if (record.state === "complete") await refreshEstimate();
         notify();
         postProgress(record);

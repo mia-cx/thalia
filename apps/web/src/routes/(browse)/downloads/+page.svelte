@@ -32,7 +32,10 @@ onMount(() => {
 });
 
 function caption(record: DownloadRecord): string {
-  const size = `${formatBytes(record.written)} of ${formatBytes(record.bytes)}`;
+  const size =
+    record.bytes === 0
+      ? formatBytes(record.written)
+      : `${formatBytes(record.written)} of ${formatBytes(record.bytes)}`;
   switch (record.state) {
     case "complete":
       return formatBytes(record.bytes);
@@ -106,7 +109,7 @@ async function update(call: () => Promise<void>) {
               {#snippet detail()}
                 {#if record.state !== "complete"}
                   <Progress
-                    value={record.written}
+                    value={record.bytes === 0 ? null : record.written}
                     max={record.bytes}
                     class="mt-1.5"
                   />

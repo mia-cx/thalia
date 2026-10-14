@@ -120,6 +120,7 @@ function fakeFetch(
     gates?: (Promise<void> | undefined)[];
     ignoreRange?: boolean;
     etag?: string;
+    omitLength?: boolean;
   } = {},
 ) {
   const calls: FetchCall[] = [];
@@ -138,7 +139,8 @@ function fakeFetch(
     }
     if (options.etag !== undefined) out.set("etag", options.etag);
     const body = bytes.subarray(offset);
-    out.set("content-length", String(body.length));
+    if (options.omitLength !== true)
+      out.set("content-length", String(body.length));
     if (status === 206)
       out.set(
         "content-range",
@@ -566,6 +568,32 @@ describe("downloads store", () => {
     await waitFor(() => get(resumed).records[0]?.state === "complete");
     expect(second.calls[0]?.ifRange).toBe("tag-one");
     expect(second.calls[0]?.range).toBe("bytes=16-");
+    expect(fileOf(root)).toEqual(changed);
+  });
+
+  test("a chunked 200 to a stale If-Range completes at the new size", async () => {
+    const root = new FakeDir();
+    await seedIndex(
+      root,
+      [{ ...input, written: 32, state: "paused", etag: "tag-old" }],
+      bytes.subarray(0, 32),
+    );
+    // The replacement is a different size and the server drops content-length.
+    const changed = Uint8Array.from({ length: 100 }, (_, i) => 150 - i);
+    const { transport, calls } = fakeFetch(changed, {
+      chunk: 10,
+      etag: "tag-new",
+      omitLength: true,
+    });
+    const { storage } = fakeStorage();
+    const store = makeStore(root, transport, storage);
+    await store.restore();
+    await store.resume(input.versionId);
+    await waitFor(() => get(store).records[0]?.state === "complete");
+    expect(calls[0]?.ifRange).toBe("tag-old");
+    const record = get(store).records[0];
+    expect(record?.bytes).toBe(100);
+    expect(record?.written).toBe(100);
     expect(fileOf(root)).toEqual(changed);
   });
 });
