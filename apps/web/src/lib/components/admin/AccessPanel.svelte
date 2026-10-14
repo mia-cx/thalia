@@ -50,7 +50,7 @@ const pickableGroups = $derived(
 );
 
 const ruleKey = (rule: Rule) =>
-  `${rule.subject.type}:${rule.subject.id}:${rule.action}`;
+  `${rule.object.type}:${"id" in rule.object ? rule.object.id : ""}:${rule.subject.type}:${rule.subject.id}:${rule.action}`;
 
 const subjectLabel = $derived.by(() => {
   const [type, id] = subjectSel.split(":");
@@ -108,6 +108,8 @@ async function addRule(event: SubmitEvent) {
     subjectSel = "";
     await rules.reload();
     toast.success("Rule added");
+    await tick();
+    panel?.querySelector<HTMLElement>("#access-subject")?.focus();
   } catch (error) {
     addFailure = readFailure(error);
   } finally {
