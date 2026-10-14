@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   boostLabel,
+  effectiveQuality,
   formatMbps,
   playingName,
   type Quality,
@@ -100,6 +101,29 @@ describe("qualityValue", () => {
     );
     // A persisted rung taller than the source still names what plays.
     expect(qualityValue(state("2160p"), quality())).toBe("1080p");
+  });
+
+  test("a saved original falls back to Auto when the plan has none", () => {
+    const state = (quality: string) => ({
+      quality,
+      videoSize: { width: 1920, height: 1080 },
+    });
+    const noOriginal = quality({ original: null });
+    expect(qualityValue(state("original"), noOriginal)).toBe("Auto · 1080p");
+    expect(
+      qualityValue({ quality: "original", videoSize: null }, noOriginal),
+    ).toBe("Auto");
+    expect(effectiveQuality("original", noOriginal)).toBe("auto");
+    // No plan at all falls back the same way.
+    expect(
+      qualityValue({ quality: "original", videoSize: null }, undefined),
+    ).toBe("Auto");
+    expect(effectiveQuality("original", undefined)).toBe("auto");
+    // With an original, the saved choice still reads Original.
+    expect(qualityValue(state("original"), quality())).toBe("Original");
+    expect(effectiveQuality("original", quality())).toBe("original");
+    // Other choices pass through unchanged.
+    expect(effectiveQuality("720p", noOriginal)).toBe("720p");
   });
 });
 

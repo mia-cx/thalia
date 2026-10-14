@@ -40,6 +40,14 @@ export function playingName(
   return box?.name ?? `${size.height}p`;
 }
 
+/** The option the menu treats as selected: a saved `original` falls back to `auto` when the plan has no original. The saved choice itself is unchanged. */
+export function effectiveQuality(
+  choice: string,
+  quality: Quality | undefined,
+): string {
+  return choice === "original" && !quality?.original ? "auto" : choice;
+}
+
 /** The Quality row's value: `Auto · 1080p`, `Original`, or the rung that's playing, falling back to the pick before a frame loads. */
 export function qualityValue(
   state: {
@@ -48,11 +56,11 @@ export function qualityValue(
   },
   quality: Quality | undefined,
 ): string {
+  const choice = effectiveQuality(state.quality, quality);
   const name = playingName(state.videoSize, quality);
-  if (state.quality === "original") return "Original";
-  if (state.quality === "auto")
-    return name === null ? "Auto" : `Auto · ${name}`;
-  return name ?? state.quality;
+  if (choice === "original") return "Original";
+  if (choice === "auto") return name === null ? "Auto" : `Auto · ${name}`;
+  return name ?? choice;
 }
 
 /** One Quality submenu option; `versionId` names the Version to open for version-sourced rungs. */
