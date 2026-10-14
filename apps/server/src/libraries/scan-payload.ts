@@ -24,6 +24,7 @@ export async function queuedScanMoveSources(
         eq(jobs.type, "scan"),
         eq(jobs.state, "queued"),
         sql`${jobs.payload}->>'libraryId' = ${libraryId}`,
+        sql`${jobs.payload}->'changes' is not null`,
       ),
     )
     .orderBy(jobs.id)
