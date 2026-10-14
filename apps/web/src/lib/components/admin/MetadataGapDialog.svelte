@@ -98,33 +98,10 @@ async function loadFirst() {
 }
 
 /** The next page; a no-op once the list is fully loaded. */
-async function showMore() {
-  if (gap === undefined) return;
-  const after = cursor;
-  if (after === null) return;
-  const ticket = generation;
-  const gapKey = gap.key;
-  const signal = controller.signal;
-  loading = true;
-  try {
-    const page = await fetchPage(gapKey, after, signal);
-    if (ticket !== generation) return;
-    items = [...items, ...page.items];
-    cursor = page.cursor;
-    failure = undefined;
-    retry = undefined;
-  } catch (error) {
-    if (ticket === generation) {
-      failure = readFailure(error);
-      // Retry the page that failed, not whatever cursor is current then.
-      retry = () => showMoreAt(after);
-    }
-  } finally {
-    if (ticket === generation) loading = false;
-  }
-}
+const showMore = (): Promise<void> =>
+  cursor === null ? Promise.resolve() : showMoreAt(cursor);
 
-/** One specific page again, after its earlier fetch failed. */
+/** Fetches the page after `after` and appends it. */
 async function showMoreAt(after: string) {
   if (gap === undefined) return;
   const ticket = generation;
@@ -138,7 +115,11 @@ async function showMoreAt(after: string) {
     failure = undefined;
     retry = undefined;
   } catch (error) {
-    if (ticket === generation) failure = readFailure(error);
+    if (ticket === generation) {
+      failure = readFailure(error);
+      // Retry the page that failed, not whatever cursor is current then.
+      retry = () => showMoreAt(after);
+    }
   } finally {
     if (ticket === generation) loading = false;
   }
