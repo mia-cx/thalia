@@ -1,4 +1,7 @@
+import { inArray } from "drizzle-orm";
 import { Effect, Schema } from "effect";
+import { viewableLibraryIds } from "../auth/permissions.ts";
+import { libraries } from "../db/schema/index.ts";
 import {
   FolderError,
   listFolders,
@@ -30,6 +33,7 @@ import {
   PreviewExamples,
   ScanPreview,
   ScanStatus,
+  ViewableLibrary,
 } from "./schema.ts";
 
 const idInput = Schema.standardSchemaV1(Schema.Struct({ id: Schema.UUID }));
@@ -60,6 +64,30 @@ const libraryHost = <A>(run: () => Promise<A>) =>
     ),
   );
 const libraryOutput = Schema.standardSchemaV1(Library);
+
+const viewable = authenticated
+  .route({ method: "GET", path: "/libraries/viewable" })
+  .output(Schema.standardSchemaV1(Schema.Array(ViewableLibrary)))
+  .handler(async ({ context }) =>
+    runApi(
+      fromHost(async () => {
+        const ids = await viewableLibraryIds(
+          context.db,
+          context.caller.user.id,
+        );
+        if (ids.length === 0) return [];
+        return context.db
+          .select({
+            id: libraries.id,
+            name: libraries.name,
+            medium: libraries.medium,
+          })
+          .from(libraries)
+          .where(inArray(libraries.id, ids))
+          .orderBy(libraries.medium, libraries.name);
+      }),
+    ),
+  );
 
 const list = authenticated
   .route({ method: "GET", path: "/libraries" })
@@ -230,8 +258,9 @@ const preview = authenticated
     ),
   );
 
-/** The library administration procedures mounted under `libraries`. */
+/** The library browsing and administration procedures mounted under `libraries`. */
 export const libraryProcedures = {
+  viewable,
   list,
   get,
   folders,
