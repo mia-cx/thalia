@@ -52,7 +52,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           try {
             await signIn(page, base, token, `/admin/users/${viewer.id}`);
             await page.waitFor(
-              "document.querySelector('#preferDirectStream') !== null",
+              "document.querySelector('#preferDirectStream:not([disabled])') !== null",
             );
             expect(
               await page.eval<string | null>(
@@ -66,20 +66,17 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await page.eval(
               "[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Save')?.click()",
             );
+            // The switch flips on the local override before the write lands;
+            // the toast is what says the save settled.
             await page.waitFor(
-              "document.querySelector('#preferDirectStream').getAttribute('aria-checked') === 'true'",
+              "document.body.innerText.includes('Playback settings saved')",
             );
 
-            // The row landed; a reload shows the saved state.
+            // A reload drops the override and shows the saved state.
             await page.goto(`${base}/admin/users/${viewer.id}`);
             await page.waitFor(
-              "document.querySelector('#preferDirectStream') !== null",
+              "document.querySelector('#preferDirectStream:not([disabled])') !== null && document.querySelector('#preferDirectStream').getAttribute('aria-checked') === 'true'",
             );
-            expect(
-              await page.eval<string | null>(
-                "document.querySelector('#preferDirectStream').getAttribute('aria-checked')",
-              ),
-            ).toBe("true");
             const [row] = await db
               .select({ preferDirectStream: userSettings.preferDirectStream })
               .from(userSettings)
