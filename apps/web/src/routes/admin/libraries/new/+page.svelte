@@ -10,7 +10,10 @@ import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import * as Select from "$lib/components/ui/select/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { resource } from "$lib/resource.svelte.ts";
 import { type RootDraft, refusedRoot } from "$lib/roots.ts";
+
+const settings = resource(() => client.settings.get());
 
 type Medium = "movies" | "shows";
 const mediumNames: Record<Medium, string> = {
@@ -81,12 +84,21 @@ async function submit(event: SubmitEvent) {
 }
 </script>
 
+{#snippet noSource()}
+  No metadata source is set up, so posters and details won't load until you add
+  a TMDB key in <a href="/admin/settings" class="text-tint hover:underline">General settings</a>.
+{/snippet}
+
 <AdminPage
   title="New library"
   parent={{ href: "/admin/libraries", label: "Libraries" }}
 >
   <form onsubmit={submit} class="flex flex-col gap-8">
-    <FormGroup>
+    <FormGroup
+      description={settings.data?.metadataSourceConfigured === false
+        ? noSource
+        : undefined}
+    >
       <FormRow label="Name" for="libraryName">
         <Input id="libraryName" name="name" required bind:value={name} />
       </FormRow>

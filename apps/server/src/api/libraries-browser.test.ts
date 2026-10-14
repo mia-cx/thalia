@@ -192,6 +192,89 @@ describe.skipIf(!databaseUrl || browser === undefined)(
     );
 
     test(
+      "the admin says when no metadata source is set up",
+      () =>
+        withFolder((folder) =>
+          withDatabase(async (db, url) => {
+            if (browser === undefined) throw new Error("Expected a browser.");
+            const tmdbEnv = Bun.env.TMDB_API_KEY;
+            delete Bun.env.TMDB_API_KEY;
+            try {
+              await migrateDatabase(db);
+              await setupAdmin(db, {
+                username: "admin",
+                password: "admin-pass",
+              });
+              const { token } = await login(
+                db,
+                {
+                  username: "admin",
+                  password: "admin-pass",
+                  clientName: "Thalia Web",
+                  deviceId: "libraries-browser-4",
+                  deviceName: "Chromium",
+                },
+                "127.0.0.1",
+              );
+              const server = await startThalia("api", {
+                databaseUrl: url,
+                port: 0,
+                pluginOptions: { directory: join(folder, "installed") },
+              });
+              const base = `http://127.0.0.1:${server.apiServer?.port}`;
+              const api = createThaliaClient({
+                origin: base,
+                headers: { authorization: `Bearer ${token}` },
+              });
+              const page = await openPage();
+              try {
+                await signIn(page, base, token, "/admin/libraries/new");
+                await page.waitFor(
+                  'document.body.innerText.includes("posters and details won\'t load")',
+                );
+                expect(
+                  await page.eval<string>(
+                    "document.querySelector('.text-footnote a')?.href",
+                  ),
+                ).toMatch(/\/admin\/settings$/);
+                expect(
+                  await page.eval<boolean>(
+                    "[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add library')?.disabled === false",
+                  ),
+                ).toBe(true);
+
+                await signIn(page, base, token, "/admin/settings");
+                await page.waitFor(
+                  'document.body.innerText.includes("until you add a key named tmdb")',
+                );
+
+                await api.settings.setProviderKey({
+                  name: "tmdb",
+                  value: "provider-secret-value",
+                });
+                await signIn(page, base, token, "/admin/settings");
+                await page.waitFor(
+                  "[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Remove')",
+                );
+                expect(
+                  await page.eval<boolean>(
+                    "document.body.innerText.includes('No metadata source is set up')",
+                  ),
+                ).toBe(false);
+              } finally {
+                await page.close();
+                await server.stop();
+              }
+            } finally {
+              if (tmdbEnv === undefined) delete Bun.env.TMDB_API_KEY;
+              else Bun.env.TMDB_API_KEY = tmdbEnv;
+            }
+          }),
+        ),
+      60_000,
+    );
+
+    test(
       "closing the folder browser before its listing answers starts no preview",
       () =>
         withFolder((folder) =>

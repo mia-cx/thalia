@@ -398,7 +398,12 @@ async function removeKey(name: string) {
       {/if}
     </FormGroup>
 
-    <FormGroup title="Provider keys">
+    <FormGroup
+      title="Provider keys"
+      description={settings.data.metadataSourceConfigured
+        ? undefined
+        : "No metadata source is set up, so posters and details won't load until you add a key named tmdb."}
+    >
       {#each settings.data.providerKeys as name (name)}
         <FormRow label={name} inline>
           <span class="text-subheadline text-label-secondary">
