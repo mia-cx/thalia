@@ -541,20 +541,24 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       return;
     // If the Version lock is held, another tab owns the transfer: resume is
     // not this tab's to write. Show it downloading and leave the index alone.
-    const held = await tryLocked(fileLock(versionId), async (held) => held);
+    // The queued write happens under the lock, so no tab can take it between.
+    const held = await tryLocked(fileLock(versionId), async (held) => {
+      if (!held) return false;
+      record.state = "queued";
+      notify();
+      // Only the state field may move: another tab's entry can be newer.
+      await updateIndex((stored) =>
+        stored.map((entry) =>
+          entry.versionId === versionId ? { ...entry, state: "queued" } : entry,
+        ),
+      );
+      return true;
+    });
     if (!held) {
       record.state = "downloading";
       notify();
       return;
     }
-    record.state = "queued";
-    notify();
-    // Only the state field may move: another tab's entry can be newer.
-    await updateIndex((stored) =>
-      stored.map((entry) =>
-        entry.versionId === versionId ? { ...entry, state: "queued" } : entry,
-      ),
-    );
     void pump();
   }
 
