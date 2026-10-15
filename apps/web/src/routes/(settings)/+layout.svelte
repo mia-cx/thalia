@@ -40,7 +40,7 @@ onNavigate((nav) => {
 </script>
 
 <svelte:head>
-  <title>Thalia settings</title>
+  <title>Settings · Thalia</title>
 </svelte:head>
 
 <Tooltip.Provider>

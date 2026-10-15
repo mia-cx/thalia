@@ -64,7 +64,7 @@ async function update(call: () => Promise<void>) {
 </svelte:head>
 
 <div class="pt-4 lg:pt-8">
-  <h1 class="mb-5 px-14 text-large-title lg:pr-0">Downloads</h1>
+  <h1 class="mb-5 px-14 text-large-title lg:px-0">Downloads</h1>
 
   {#if !supported || unavailable}
     <p class="text-subheadline text-label-secondary">

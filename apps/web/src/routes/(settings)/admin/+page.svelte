@@ -1,11 +1,14 @@
 <script lang="ts">
 import { MediaQuery } from "svelte/reactivity";
-import AdminNav from "$lib/components/admin/AdminNav.svelte";
-import type { PageProps } from "./$types";
+import { goto } from "$app/navigation";
 import Overview from "./Overview.svelte";
 
-const { data }: PageProps = $props();
 const desktop = new MediaQuery("min-width: 64rem");
+
+// The phone list lives at /settings; /admin only serves the desktop Overview.
+$effect(() => {
+  if (!desktop.current) void goto("/settings", { replaceState: true });
+});
 </script>
 
 <svelte:head>
@@ -14,9 +17,4 @@ const desktop = new MediaQuery("min-width: 64rem");
 
 {#if desktop.current}
   <Overview />
-{:else}
-  <div class="mx-auto w-full max-w-3xl">
-    <h1 class="mb-6 pt-4 pr-14 text-large-title">Settings</h1>
-    <AdminNav variant="list" admin={data.me.admin} />
-  </div>
 {/if}

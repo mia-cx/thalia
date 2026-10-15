@@ -48,8 +48,7 @@ async function savePassword(event: SubmitEvent) {
   passwordBusy = true;
   try {
     await client.account.password({
-      currentPassword:
-        account.data?.hasPassword === false ? "" : currentPassword,
+      currentPassword,
       newPassword,
     });
     currentPassword = "";
@@ -65,7 +64,7 @@ async function savePassword(event: SubmitEvent) {
 }
 </script>
 
-<AdminPage title="Account" parent={{ href: "/settings", label: "Settings" }}>
+<AdminPage title="Account">
   <form onsubmit={saveName}>
     <FormGroup title="Profile" loading={account.data === undefined ? 2 : 0}>
       {#if account.data}
@@ -93,13 +92,16 @@ async function savePassword(event: SubmitEvent) {
     </FormGroup>
   </form>
 
-  <form onsubmit={savePassword}>
-    <FormGroup
-      title={account.data?.hasPassword === false
-        ? "Set a password"
-        : "Password"}
-    >
-      {#if account.data?.hasPassword !== false}
+  {#if account.data?.hasPassword === false}
+    <FormGroup title="Password">
+      <p class="px-4 py-3 text-subheadline text-label-secondary">
+        You sign in with single sign-on, so there's no password to change
+        here.
+      </p>
+    </FormGroup>
+  {:else}
+    <form onsubmit={savePassword}>
+      <FormGroup title="Password">
         <FormRow label="Current password" for="currentPassword">
           <Input
             id="currentPassword"
@@ -110,35 +112,35 @@ async function savePassword(event: SubmitEvent) {
             required
           />
         </FormRow>
-      {/if}
-      <FormRow label="New password" for="newPassword">
-        <Input
-          id="newPassword"
-          name="newPassword"
-          type="password"
-          autocomplete="new-password"
-          bind:value={newPassword}
-          required
-        />
-      </FormRow>
-      <FormRow label="Confirm password" for="confirmPassword">
-        <Input
-          id="confirmPassword"
-          name="confirmPassword"
-          type="password"
-          autocomplete="new-password"
-          bind:value={confirmPassword}
-          required
-        />
-      </FormRow>
-      {#snippet actions()}
-        <Button
-          type="submit"
-          disabled={passwordBusy || account.data === undefined}
-        >
-          Save
-        </Button>
-      {/snippet}
-    </FormGroup>
-  </form>
+        <FormRow label="New password" for="newPassword">
+          <Input
+            id="newPassword"
+            name="newPassword"
+            type="password"
+            autocomplete="new-password"
+            bind:value={newPassword}
+            required
+          />
+        </FormRow>
+        <FormRow label="Confirm password" for="confirmPassword">
+          <Input
+            id="confirmPassword"
+            name="confirmPassword"
+            type="password"
+            autocomplete="new-password"
+            bind:value={confirmPassword}
+            required
+          />
+        </FormRow>
+        {#snippet actions()}
+          <Button
+            type="submit"
+            disabled={passwordBusy || account.data === undefined}
+          >
+            Save
+          </Button>
+        {/snippet}
+      </FormGroup>
+    </form>
+  {/if}
 </AdminPage>
