@@ -27,7 +27,7 @@ const skeletonSizes = ["landscape", "poster"] as const;
 <h1
   class={home.data === undefined || slides.length > 0
     ? "sr-only"
-    : "pt-4 pr-14 text-large-title lg:sr-only"}>Home</h1
+    : "pt-4 px-14 text-large-title lg:sr-only"}>Home</h1
 >
 
 {#if home.failure}

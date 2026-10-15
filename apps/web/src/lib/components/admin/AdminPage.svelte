@@ -17,7 +17,7 @@ const {
 </script>
 
 <svelte:head>
-  <title>{title} · Thalia admin</title>
+  <title>{title} · Thalia settings</title>
 </svelte:head>
 
 <div class="mx-auto w-full max-w-3xl">

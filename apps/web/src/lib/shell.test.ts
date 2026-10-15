@@ -8,9 +8,9 @@ const libraries = [
 ];
 
 describe("shell navigation", () => {
-  test("orders Search, Home, Movies, Shows, Downloads and adds Settings for admins only", () => {
-    const admin = navigation(true, []);
-    expect(admin.map((e) => e.label)).toEqual([
+  test("orders Search, Home, Movies, Shows, Downloads and Settings for everyone", () => {
+    const nav = navigation([]);
+    expect(nav.map((e) => e.label)).toEqual([
       "Search",
       "Home",
       "Movies",
@@ -18,20 +18,28 @@ describe("shell navigation", () => {
       "Downloads",
       "Settings",
     ]);
-    expect(admin[5].href).toBe("/admin");
-    const viewer = navigation(false, []);
-    expect(viewer.map((e) => e.label)).toEqual([
-      "Search",
-      "Home",
-      "Movies",
-      "Shows",
-      "Downloads",
-    ]);
-    expect(viewer[4].href).toBe("/downloads");
+    expect(nav[5].href).toBe("/settings");
+  });
+
+  test("settings stays current on /settings and /admin paths", () => {
+    const settings = navigation([]).find((e) => e.icon === "settings");
+    if (!settings) throw new Error("Settings entry missing");
+    for (const path of [
+      "/settings",
+      "/settings/account",
+      "/admin",
+      "/admin/users",
+    ])
+      expect(
+        isCurrentSection(new URL(`http://x${path}`), settings, false),
+      ).toBe(true);
+    expect(isCurrentSection(new URL("http://x/movies"), settings, false)).toBe(
+      false,
+    );
   });
 
   test("lists a medium's libraries as children only with two or more, sorted by name", () => {
-    const nav = navigation(false, libraries);
+    const nav = navigation(libraries);
     const movies = nav.find((e) => e.label === "Movies");
     expect(movies?.children).toEqual([
       { href: "/movies?library=fam", label: "Family" },
@@ -61,9 +69,7 @@ describe("shell navigation", () => {
   });
 
   test("a visible library child takes the highlight; hidden children leave it on the section", () => {
-    const movies = navigation(true, libraries).find(
-      (e) => e.label === "Movies",
-    );
+    const movies = navigation(libraries).find((e) => e.label === "Movies");
     if (!movies) throw new Error("Movies entry missing");
     const filtered = new URL("http://x/movies?library=fam");
     expect(isCurrentSection(filtered, movies, true)).toBe(false);

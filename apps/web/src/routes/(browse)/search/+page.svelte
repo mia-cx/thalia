@@ -91,7 +91,7 @@ function submit(event: SubmitEvent) {
 </svelte:head>
 
 <div class="pt-4 lg:pt-8">
-  <h1 class="mb-5 pr-14 text-large-title lg:pr-0">Search</h1>
+  <h1 class="mb-5 px-14 text-large-title lg:pr-0">Search</h1>
 
   <form role="search" onsubmit={submit} class="relative mb-6 max-w-xl">
     <label class="sr-only" for="search-field">Search movies and shows</label>

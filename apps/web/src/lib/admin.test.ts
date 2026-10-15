@@ -5,28 +5,45 @@ import {
   currentSection,
   matchSections,
   navDirection,
+  personalSections,
 } from "./admin.ts";
 
 describe("matchSections", () => {
   test("matches a label substring", () => {
-    expect(matchSections("lib").map((s) => s.id)).toEqual(["libraries"]);
+    expect(matchSections("lib", true).map((s) => s.id)).toEqual(["libraries"]);
   });
 
   test("matches a keyword", () => {
-    expect(matchSections("invite").map((s) => s.id)).toEqual(["users"]);
+    expect(matchSections("invite", true).map((s) => s.id)).toEqual(["users"]);
   });
 
   test("ignores case and surrounding whitespace", () => {
-    expect(matchSections("  OIDC ").map((s) => s.id)).toEqual(["general"]);
+    expect(matchSections("  OIDC ", true).map((s) => s.id)).toEqual([
+      "general",
+    ]);
   });
 
   test("empty query returns every section in order", () => {
-    expect(matchSections("")).toEqual(adminSections);
-    expect(matchSections("   ")).toEqual(adminSections);
+    expect(matchSections("", true)).toEqual([
+      ...personalSections,
+      ...adminSections,
+    ]);
+    expect(matchSections("   ", true)).toEqual([
+      ...personalSections,
+      ...adminSections,
+    ]);
+  });
+
+  test("viewers only see personal sections", () => {
+    expect(matchSections("", false)).toEqual(personalSections);
+    expect(matchSections("lib", false)).toEqual([]);
+    expect(matchSections("password", false).map((s) => s.id)).toEqual([
+      "account",
+    ]);
   });
 
   test("no match returns empty", () => {
-    expect(matchSections("zzz")).toEqual([]);
+    expect(matchSections("zzz", true)).toEqual([]);
   });
 });
 
@@ -49,6 +66,12 @@ describe("currentSection", () => {
   test("non-admin paths are undefined", () => {
     expect(at("/movies")).toBeUndefined();
   });
+
+  test("/settings/account is account", () => {
+    expect(at("/settings")).toBeUndefined();
+    expect(at("/settings/account")).toBe("account");
+    expect(at("/settings/account/password")).toBe("account");
+  });
 });
 
 describe("navDirection", () => {
@@ -66,6 +89,13 @@ describe("navDirection", () => {
     expect(navDirection("/admin/users", "/admin/groups")).toBeNull();
     expect(navDirection("/admin", "/movies")).toBeNull();
     expect(navDirection("/movies", "/admin/users")).toBeNull();
+  });
+
+  test("/settings paths push and pop like /admin ones", () => {
+    expect(navDirection("/settings", "/settings/account")).toBe("push");
+    expect(navDirection("/settings/account", "/settings")).toBe("pop");
+    expect(navDirection("/settings", "/admin/users")).toBe("push");
+    expect(navDirection("/admin/users", "/settings/account")).toBeNull();
   });
 });
 
