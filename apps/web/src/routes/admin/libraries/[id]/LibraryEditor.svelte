@@ -250,6 +250,7 @@ async function deleteLibrary() {
 
   {#if library.data}
     <LibraryStats
+      heading="Media"
       library={library.data}
       stats={stats.data?.[0]}
       gaps={gaps.data?.[0]}

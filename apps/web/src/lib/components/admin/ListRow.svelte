@@ -7,6 +7,7 @@ import { cn } from "$lib/utils.ts";
 const {
   title,
   caption,
+  detail,
   tone = "secondary",
   href,
   onclick,
@@ -16,6 +17,8 @@ const {
 }: {
   title: string;
   caption?: string;
+  /** A second caption line, for counts and sizes that don't fit the first. */
+  detail?: string;
   /** The caption's colour; destructive marks a failure such as an unreachable registry. */
   tone?: "secondary" | "destructive";
   href?: string;
@@ -42,6 +45,11 @@ const rowClass =
         class="block text-footnote {tone === 'destructive'
           ? 'break-words text-destructive'
           : 'truncate text-label-secondary'}">{caption}</span
+      >
+    {/if}
+    {#if detail}
+      <span class="block truncate text-footnote text-label-secondary"
+        >{detail}</span
       >
     {/if}
   </span>

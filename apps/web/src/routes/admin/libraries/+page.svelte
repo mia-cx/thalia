@@ -8,7 +8,7 @@ import { navIcons } from "$lib/components/nav-icons.ts";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import type { ScanStatus } from "$lib/scan.ts";
-import { libraryCaption } from "$lib/stats.ts";
+import { libraryCaption, libraryCounts } from "$lib/stats.ts";
 
 const list = resource(() => client.libraries.list());
 // Counts ride along when they arrive; a stats failure just omits them.
@@ -48,10 +48,13 @@ async function loadStatuses(rows: readonly LibraryRow[]) {
       {@const MediumIcon = navIcons[row.medium]}
       <ListRow
         title={row.name}
-        caption={libraryCaption(
-          row,
-          stats.data?.find((entry) => entry.libraryId === row.id),
-        )}
+        caption={libraryCaption(row)}
+        detail={(() => {
+          const entry = stats.data?.find(
+            (candidate) => candidate.libraryId === row.id,
+          );
+          return entry === undefined ? undefined : libraryCounts(row, entry);
+        })()}
         href="/admin/libraries/{row.id}"
       >
         {#snippet leading()}

@@ -24,8 +24,11 @@ const {
   failure,
   onretry,
   revision,
+  heading,
 }: {
   library: { id: string; name: string; medium: "movies" | "shows" };
+  /** Group heading; defaults to the library name. */
+  heading?: string;
   stats: LibraryStats | undefined;
   gaps: LibraryGaps | undefined;
   failure?: { code: FailureCode; message: string } | undefined;
@@ -60,7 +63,7 @@ function openGap(row: { key: MetadataGap; label: string }) {
 </script>
 
 <FormGroup
-  title={library.name}
+  title={heading ?? library.name}
   loading={
     failure === undefined && (stats === undefined || gaps === undefined)
       ? 3

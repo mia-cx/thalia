@@ -101,24 +101,30 @@ export function pluralize(count: number, noun: string): string {
   return `${numberFormat.format(count)} ${count === 1 ? noun : `${noun}s`}`;
 }
 
-/** A library row caption: `Shows · 2 folders · 12 shows · 340 episodes · 1.2 TB`; stats join in once loaded. */
-export function libraryCaption(
-  library: { medium: "movies" | "shows"; roots: readonly unknown[] },
-  stats: Pick<LibraryStats, "kinds" | "bytes"> | undefined,
-): string {
-  const parts = [
+/** A library row's first caption line: `Shows · 2 folders`. */
+export function libraryCaption(library: {
+  medium: "movies" | "shows";
+  roots: readonly unknown[];
+}): string {
+  return [
     library.medium === "movies" ? "Movies" : "Shows",
     pluralize(library.roots.length, "folder"),
-  ];
-  if (stats !== undefined) {
-    if (library.medium === "shows") {
-      parts.push(pluralize(stats.kinds.shows, "show"));
-      parts.push(pluralize(stats.kinds.episodes, "episode"));
-    } else {
-      parts.push(pluralize(stats.kinds.movies, "movie"));
-    }
-    parts.push(formatBytes(stats.bytes));
-  }
+  ].join(" · ");
+}
+
+/** The second caption line once stats load: `12 shows · 340 episodes · 1.2 TB`. */
+export function libraryCounts(
+  library: { medium: "movies" | "shows" },
+  stats: Pick<LibraryStats, "kinds" | "bytes">,
+): string {
+  const parts =
+    library.medium === "shows"
+      ? [
+          pluralize(stats.kinds.shows, "show"),
+          pluralize(stats.kinds.episodes, "episode"),
+        ]
+      : [pluralize(stats.kinds.movies, "movie")];
+  parts.push(formatBytes(stats.bytes));
   return parts.join(" · ");
 }
 
@@ -138,10 +144,9 @@ export type SpaceSegment = {
  */
 export const segmentTones = [
   "var(--tint)",
-  "color-mix(in oklch, var(--tint) 45%, var(--success))",
-  "var(--success)",
-  "color-mix(in oklch, var(--tint) 45%, var(--destructive))",
-  "var(--destructive)",
+  "color-mix(in oklch, var(--tint) 65%, var(--background))",
+  "color-mix(in oklch, var(--tint) 42%, var(--background))",
+  "color-mix(in oklch, var(--tint) 25%, var(--background))",
 ];
 export const otherTone = "var(--fill-strong)";
 

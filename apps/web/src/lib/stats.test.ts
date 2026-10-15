@@ -6,6 +6,7 @@ import {
   formatDynamicRange,
   formatResolution,
   libraryCaption,
+  libraryCounts,
   replaceLibraryEntry,
 } from "./stats.ts";
 
@@ -67,41 +68,44 @@ describe("stats formatting", () => {
   });
 });
 
-describe("libraryCaption", () => {
+describe("library captions", () => {
   const kinds = { movies: 0, shows: 0, seasons: 0, episodes: 0 };
   const stats = (over: Partial<typeof kinds> = {}, bytes = 0) => ({
     kinds: { ...kinds, ...over },
     bytes,
   });
 
-  test("omits counts until stats load", () => {
-    expect(
-      libraryCaption({ medium: "movies", roots: [{}, {}] }, undefined),
-    ).toBe("Movies · 2 folders");
+  test("the first line carries medium and folders only", () => {
+    expect(libraryCaption({ medium: "movies", roots: [{}, {}] })).toBe(
+      "Movies · 2 folders",
+    );
+    expect(libraryCaption({ medium: "shows", roots: [{}] })).toBe(
+      "Shows · 1 folder",
+    );
   });
 
-  test("movies caption pluralises and adds the size", () => {
+  test("movies counts pluralise and add the size", () => {
     expect(
-      libraryCaption(
-        { medium: "movies", roots: [{}] },
+      libraryCounts(
+        { medium: "movies" },
         stats({ movies: 30 }, 266_000_000_000),
       ),
-    ).toBe("Movies · 1 folder · 30 movies · 266 GB");
+    ).toBe("30 movies · 266 GB");
+    expect(libraryCounts({ medium: "movies" }, stats({ movies: 1 }))).toBe(
+      "1 movie · 0 B",
+    );
   });
 
-  test("shows caption counts shows and episodes, singular correctly", () => {
+  test("shows counts list shows and episodes, singular correctly", () => {
     expect(
-      libraryCaption(
-        { medium: "shows", roots: [{}, {}] },
+      libraryCounts(
+        { medium: "shows" },
         stats({ shows: 1, episodes: 340 }, 1_200_000_000_000),
       ),
-    ).toBe("Shows · 2 folders · 1 show · 340 episodes · 1.2 TB");
+    ).toBe("1 show · 340 episodes · 1.2 TB");
     expect(
-      libraryCaption(
-        { medium: "shows", roots: [{}] },
-        stats({ shows: 2, episodes: 1 }),
-      ),
-    ).toBe("Shows · 1 folder · 2 shows · 1 episode · 0 B");
+      libraryCounts({ medium: "shows" }, stats({ shows: 2, episodes: 1 })),
+    ).toBe("2 shows · 1 episode · 0 B");
   });
 });
 
