@@ -5,6 +5,7 @@ import type { RouterClient } from "@orpc/server";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { users } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import type { thaliaRouter } from "./router.ts";
@@ -64,7 +65,7 @@ describe.skipIf(!databaseUrl)("self-service account", () => {
           username: "viewer",
           displayName: "viewer",
           email: null,
-          hasPassword: true,
+          password: "set",
         });
 
         const renamed = await client.account.update({
@@ -74,7 +75,7 @@ describe.skipIf(!databaseUrl)("self-service account", () => {
           username: "viewer",
           displayName: "Mia Example",
           email: null,
-          hasPassword: true,
+          password: "set",
         });
         expect(await client.account.get()).toEqual(renamed);
       } finally {
@@ -154,9 +155,60 @@ describe.skipIf(!databaseUrl)("self-service account", () => {
           currentPassword: "new-pass",
           newPassword: "newer-pass",
         });
+        expect((await rpcClient(base, keyToken).account.get()).password).toBe(
+          "set",
+        );
+      } finally {
+        await server.stop();
+      }
+    }));
+
+  test("reports empty and external password states", () =>
+    withDatabase(async (db, url) => {
+      const { admin } = await seed(db);
+      const empty = await createLocalUser(
+        db,
+        admin.id,
+        { username: "empty", password: "" },
+        { allowEmptyPassword: true },
+      );
+      const { token: emptyToken } = await createApiKey(db, empty.id, "e");
+      const [external] = await db
+        .insert(users)
+        .values({
+          username: "external",
+          displayName: "External",
+          oidcIssuer: "https://issuer.example",
+          oidcSubject: "subject-1",
+        })
+        .returning();
+      if (!external) throw new Error("User insert returned no row.");
+      const { token: externalToken } = await createApiKey(db, external.id, "x");
+
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const base = `http://127.0.0.1:${server.apiServer?.port}`;
+        expect((await rpcClient(base, emptyToken).account.get()).password).toBe(
+          "empty",
+        );
         expect(
-          (await rpcClient(base, keyToken).account.get()).hasPassword,
-        ).toBe(true);
+          (await rpcClient(base, externalToken).account.get()).password,
+        ).toBe("external");
+
+        // A passwordless local account sets its first password with "".
+        await rpcClient(base, emptyToken).account.password({
+          currentPassword: "",
+          newPassword: "new-pass",
+        });
+        expect((await rpcClient(base, emptyToken).account.get()).password).toBe(
+          "set",
+        );
+        const fresh = await login(
+          db,
+          { username: "empty", password: "new-pass", ...device },
+          "127.0.0.1",
+        );
+        expect(fresh.user.id).toBe(empty.id);
       } finally {
         await server.stop();
       }

@@ -47,15 +47,20 @@ async function savePassword(event: SubmitEvent) {
   }
   passwordBusy = true;
   try {
+    const setting = account.data?.password === "empty";
     await client.account.password({
-      currentPassword,
+      currentPassword: setting ? "" : currentPassword,
       newPassword,
     });
     currentPassword = "";
     newPassword = "";
     confirmPassword = "";
     await account.reload();
-    toast.success("Password changed. Other devices were signed out.");
+    toast.success(
+      setting
+        ? "Password set. Other devices were signed out."
+        : "Password changed. Other devices were signed out.",
+    );
   } catch (error) {
     toast.error(readFailure(error).message);
   } finally {
@@ -92,7 +97,7 @@ async function savePassword(event: SubmitEvent) {
     </FormGroup>
   </form>
 
-  {#if account.data?.hasPassword === false}
+  {#if account.data?.password === "external"}
     <FormGroup title="Password">
       <p class="px-4 py-3 text-subheadline text-label-secondary">
         You sign in with single sign-on, so there's no password to change
@@ -101,17 +106,23 @@ async function savePassword(event: SubmitEvent) {
     </FormGroup>
   {:else}
     <form onsubmit={savePassword}>
-      <FormGroup title="Password">
-        <FormRow label="Current password" for="currentPassword">
-          <Input
-            id="currentPassword"
-            name="currentPassword"
-            type="password"
-            autocomplete="current-password"
-            bind:value={currentPassword}
-            required
-          />
-        </FormRow>
+      <FormGroup
+        title={account.data?.password === "empty"
+          ? "Set a password"
+          : "Password"}
+      >
+        {#if account.data?.password === "set"}
+          <FormRow label="Current password" for="currentPassword">
+            <Input
+              id="currentPassword"
+              name="currentPassword"
+              type="password"
+              autocomplete="current-password"
+              bind:value={currentPassword}
+              required
+            />
+          </FormRow>
+        {/if}
         <FormRow label="New password" for="newPassword">
           <Input
             id="newPassword"

@@ -21,6 +21,10 @@ import type { LayoutProps } from "./$types";
 const { data, children }: LayoutProps = $props();
 
 const entries = $derived(navigation(data.libraries));
+// The Menu button only lives on top-level destinations; deeper pages have Back.
+const menuShown = $derived(
+  entries.some((entry) => page.url.pathname === entry.href.split("?")[0]),
+);
 const settings = $derived(entries.find((e) => e.icon === "settings"));
 
 let drawer = $state(false);
@@ -232,7 +236,8 @@ onNavigate((nav) => {
   <TabBar />
 
   <div class="relative">
-    <div class="absolute top-3 left-(--gutter) z-30 lg:hidden">
+    {#if menuShown}
+      <div class="absolute top-3 left-(--gutter) z-30 lg:hidden">
       <Sheet.Root bind:open={drawer}>
         <Sheet.Trigger>
           {#snippet child({ props })}
@@ -264,7 +269,8 @@ onNavigate((nav) => {
           </nav>
         </Sheet.Content>
       </Sheet.Root>
-    </div>
+      </div>
+    {/if}
 
     <div class="absolute top-3 right-(--gutter) z-30 lg:hidden">
       <AccountMenu align="end" user={data.me.user}>

@@ -15,7 +15,8 @@ const Account = Schema.Struct({
   username: Schema.String,
   displayName: Schema.String,
   email: Schema.NullOr(Schema.String),
-  hasPassword: Schema.Boolean,
+  /** set: local password; empty: passwordless local account; external: SSO-only. */
+  password: Schema.Literal("set", "empty", "external"),
 });
 const accountOutput = Schema.standardSchemaV1(Account);
 const emptyOutput = Schema.standardSchemaV1(Schema.Struct({}));
@@ -29,17 +30,27 @@ async function accountOf(context: {
     fromHost(async () => {
       const account = await readAccount(context.db, me, me);
       const [identity] = await context.db
-        .select({ email: users.email })
+        .select({ email: users.email, passwordHash: users.passwordHash })
         .from(users)
         .where(eq(users.id, me));
-      return { ...account, email: identity?.email ?? null };
+      const passwordState: "set" | "empty" | "external" =
+        identity === undefined || identity.passwordHash === null
+          ? "external"
+          : identity.passwordHash === ""
+            ? "empty"
+            : "set";
+      return {
+        ...account,
+        email: identity?.email ?? null,
+        passwordState,
+      };
     }),
   );
   return {
     username: account.username,
     displayName: account.displayName,
     email: account.email,
-    hasPassword: account.hasPassword,
+    password: account.passwordState,
   };
 }
 
