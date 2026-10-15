@@ -40,6 +40,8 @@ describe("openapi document", () => {
     expect(Object.keys(doc.paths ?? {})).toEqual(
       expect.arrayContaining([
         "/me",
+        "/account",
+        "/account/password",
         "/items",
         "/items/{id}",
         "/items/{id}/refresh",

@@ -6,6 +6,7 @@ import { RungName } from "../stored/policy.ts";
 import { requestStoredVersion } from "../stored/service.ts";
 import { readStoreStatus } from "../stored/status.ts";
 import { accessProcedures } from "./access.ts";
+import { accountProcedures } from "./account.ts";
 import {
   groupProcedures,
   settingsProcedures,
@@ -139,6 +140,7 @@ const streamEvents = authenticated
 /** The API router: procedures defined once, served over both RPC and REST. */
 export const thaliaRouter = {
   access: accessProcedures,
+  account: accountProcedures,
   me,
   items: {
     list: listItems,
