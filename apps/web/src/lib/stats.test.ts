@@ -84,28 +84,28 @@ describe("library captions", () => {
     );
   });
 
-  test("movies counts pluralise and add the size", () => {
+  test("movies counts lead with the size", () => {
     expect(
       libraryCounts(
         { medium: "movies" },
         stats({ movies: 30 }, 266_000_000_000),
       ),
-    ).toBe("30 movies · 266 GB");
+    ).toBe("266 GB · 30 movies");
     expect(libraryCounts({ medium: "movies" }, stats({ movies: 1 }))).toBe(
-      "1 movie · 0 B",
+      "0 B · 1 movie",
     );
   });
 
-  test("shows counts list shows and episodes, singular correctly", () => {
+  test("shows counts lead with the size and pluralise", () => {
     expect(
       libraryCounts(
         { medium: "shows" },
         stats({ shows: 1, episodes: 340 }, 1_200_000_000_000),
       ),
-    ).toBe("1 show · 340 episodes · 1.2 TB");
+    ).toBe("1.2 TB · 1 show · 340 episodes");
     expect(
       libraryCounts({ medium: "shows" }, stats({ shows: 2, episodes: 1 })),
-    ).toBe("2 shows · 1 episode · 0 B");
+    ).toBe("0 B · 2 shows · 1 episode");
   });
 });
 

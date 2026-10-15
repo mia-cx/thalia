@@ -112,19 +112,18 @@ export function libraryCaption(library: {
   ].join(" · ");
 }
 
-/** The second caption line once stats load: `12 shows · 340 episodes · 1.2 TB`. */
+/** The second caption line once stats load: `1.2 TB · 12 shows · 340 episodes` — size first so truncation drops counts, not the size. */
 export function libraryCounts(
   library: { medium: "movies" | "shows" },
   stats: Pick<LibraryStats, "kinds" | "bytes">,
 ): string {
-  const parts =
-    library.medium === "shows"
-      ? [
-          pluralize(stats.kinds.shows, "show"),
-          pluralize(stats.kinds.episodes, "episode"),
-        ]
-      : [pluralize(stats.kinds.movies, "movie")];
-  parts.push(formatBytes(stats.bytes));
+  const parts = [formatBytes(stats.bytes)];
+  if (library.medium === "shows")
+    parts.push(
+      pluralize(stats.kinds.shows, "show"),
+      pluralize(stats.kinds.episodes, "episode"),
+    );
+  else parts.push(pluralize(stats.kinds.movies, "movie"));
   return parts.join(" · ");
 }
 
