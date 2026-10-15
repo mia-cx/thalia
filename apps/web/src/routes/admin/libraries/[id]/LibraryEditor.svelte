@@ -18,6 +18,7 @@ import Failure from "$lib/components/Failure.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { followLibrary } from "$lib/events.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import { queuesScan, type RootDraft } from "$lib/roots.ts";
 import { type ScanStatus, waitForScan } from "$lib/scan.ts";
@@ -86,6 +87,7 @@ async function sendRoots(plan: (roots: LibraryData["roots"]) => RootDraft[]) {
     const answer = await client.libraries.update({ id, roots: sent });
     folderFailure = undefined;
     library.set(answer);
+    refreshMedia();
     return { answer, queued: queuesScan(saved, sent) };
   });
 }
@@ -139,7 +141,8 @@ async function removeFolder(index: number) {
   }
 }
 
-// Media breakdown: one stats/gaps fetch each, refreshed after a scan settles.
+// Media breakdown: one stats/gaps fetch each, refreshed on library.changed,
+// after a scan settles and after every root edit (removals queue no scan).
 const stats = resource(() => client.libraries.stats({ id }));
 const gaps = resource(() => client.libraries.metadataGaps({ id }));
 const freeSpace = resource(() => client.libraries.freeSpace());
@@ -171,6 +174,22 @@ async function loadStatus() {
   }
 }
 
+function refreshMedia() {
+  mediaRevision += 1;
+  void stats.reload();
+  void gaps.reload();
+  void freeSpace.reload();
+}
+
+$effect(() => {
+  void followLibrary(
+    (signal) => client.events.stream(undefined, { signal }),
+    id,
+    refreshMedia,
+    controller.signal,
+  );
+});
+
 /** Starts a scan and follows it, or follows the run already in flight. */
 async function scanNow() {
   scanBusy = true;
@@ -185,10 +204,7 @@ async function scanNow() {
     });
     status = settled;
     scanRun = undefined;
-    mediaRevision += 1;
-    void stats.reload();
-    void gaps.reload();
-    void freeSpace.reload();
+    refreshMedia();
   } catch (error) {
     if (!controller.signal.aborted) scanFailure = readFailure(error);
   } finally {
@@ -262,8 +278,16 @@ async function deleteLibrary() {
       revision={mediaRevision}
     />
 
-    {#if libraryFilesystems.length > 0}
-      <FormGroup title="Free space" failure={freeSpace.failure ?? undefined}>
+    {#if libraryFilesystems.length > 0 || freeSpace.failure !== undefined}
+      <FormGroup
+        title="Free space"
+        loading={
+          freeSpace.data === undefined && freeSpace.failure === undefined
+            ? 1
+            : undefined
+        }
+        failure={freeSpace.failure ?? undefined}
+      >
         {#each libraryFilesystems as filesystem (filesystem.roots[0]?.id)}
           {#if filesystem.state === "available"}
             <FormRow

@@ -231,6 +231,7 @@ $effect(() => {
   knownLibraryIds = ids;
   void loadAllStats();
   void freeSpace.reload();
+  void summary.reload();
 });
 onDestroy(() => {
   controller.abort();
