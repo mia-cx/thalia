@@ -21,6 +21,7 @@ import {
   libraryFreeSpace,
   libraryMetadataGaps,
   libraryStats,
+  librarySummary,
   metadataGapItems,
 } from "../libraries/stats.ts";
 import { StoredVersionPolicy } from "../stored/policy.ts";
@@ -40,6 +41,7 @@ import {
   LibraryInput,
   LibraryMetadataGaps,
   LibraryStats,
+  LibrarySummary,
   LibraryUpdate,
   MetadataGap,
   MetadataGapItem,
@@ -311,6 +313,13 @@ const gapItems = authenticated
     ),
   );
 
+const summary = authenticated
+  .route({ method: "GET", path: "/libraries/summary" })
+  .output(Schema.standardSchemaV1(LibrarySummary))
+  .handler(async ({ context }) =>
+    runApi(fromHost(() => librarySummary(context.db, context.caller.user.id))),
+  );
+
 const freeSpace = authenticated
   .route({ method: "GET", path: "/libraries/free-space" })
   .output(Schema.standardSchemaV1(Schema.Array(FilesystemSpace)))
@@ -359,6 +368,7 @@ export const libraryProcedures = {
   scan,
   scanStatus,
   stats,
+  summary,
   metadataGaps,
   metadataGapItems: gapItems,
   freeSpace,

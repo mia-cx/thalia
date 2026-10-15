@@ -3,10 +3,14 @@ import { onDestroy } from "svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
 import { client } from "$lib/api.ts";
+import { formatBytes } from "$lib/browse.ts";
 import AdminPage from "$lib/components/admin/AdminPage.svelte";
+import FilesystemUsage from "$lib/components/admin/FilesystemUsage.svelte";
 import FolderFields from "$lib/components/admin/FolderFields.svelte";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
 import FormRow from "$lib/components/admin/FormRow.svelte";
+import LibraryStats from "$lib/components/admin/LibraryStats.svelte";
+import ListRow from "$lib/components/admin/ListRow.svelte";
 import ScanFailures from "$lib/components/admin/ScanFailures.svelte";
 import ScanState from "$lib/components/admin/ScanState.svelte";
 import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
@@ -135,6 +139,18 @@ async function removeFolder(index: number) {
   }
 }
 
+// Media breakdown: one stats/gaps fetch each, refreshed after a scan settles.
+const stats = resource(() => client.libraries.stats({ id }));
+const gaps = resource(() => client.libraries.metadataGaps({ id }));
+const freeSpace = resource(() => client.libraries.freeSpace());
+// Bumps on each settled scan; open gap dialogs reconcile on it.
+let mediaRevision = $state(0);
+const libraryFilesystems = $derived(
+  (freeSpace.data ?? []).filter((filesystem) =>
+    filesystem.roots.some((root) => root.libraryId === id),
+  ),
+);
+
 let status = $state<ScanStatus | null | undefined>(undefined);
 let scanBusy = $state(false);
 let scanRun = $state<string | undefined>(undefined);
@@ -169,6 +185,10 @@ async function scanNow() {
     });
     status = settled;
     scanRun = undefined;
+    mediaRevision += 1;
+    void stats.reload();
+    void gaps.reload();
+    void freeSpace.reload();
   } catch (error) {
     if (!controller.signal.aborted) scanFailure = readFailure(error);
   } finally {
@@ -229,6 +249,49 @@ async function deleteLibrary() {
   </FormGroup>
 
   {#if library.data}
+    <LibraryStats
+      library={library.data}
+      stats={stats.data?.[0]}
+      gaps={gaps.data?.[0]}
+      failure={stats.failure ?? gaps.failure ?? undefined}
+      onretry={() => {
+        void stats.reload();
+        void gaps.reload();
+      }}
+      revision={mediaRevision}
+    />
+
+    {#if libraryFilesystems.length > 0}
+      <FormGroup title="Free space" failure={freeSpace.failure ?? undefined}>
+        {#each libraryFilesystems as filesystem (filesystem.roots[0]?.id)}
+          {#if filesystem.state === "available"}
+            <FormRow
+              label="{formatBytes(
+                filesystem.availableBytes,
+              )} free of {formatBytes(filesystem.totalBytes)}"
+            >
+              <FilesystemUsage {filesystem} libraryId={id} />
+            </FormRow>
+          {:else}
+            {@const root = filesystem.roots[0]}
+            <ListRow
+              title={root?.path ?? ""}
+              caption="Can't read this folder from the server"
+            />
+          {/if}
+        {/each}
+        {#snippet actions()}
+          {#if freeSpace.failure}
+            <Button
+              variant="secondary"
+              onclick={() => freeSpace.reload()}
+              disabled={freeSpace.loading}>Try again</Button
+            >
+          {/if}
+        {/snippet}
+      </FormGroup>
+    {/if}
+
     <FolderFields
       rows={library.data.roots}
       medium={library.data.medium}

@@ -8,14 +8,12 @@ import { navIcons } from "$lib/components/nav-icons.ts";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import type { ScanStatus } from "$lib/scan.ts";
+import { libraryCaption } from "$lib/stats.ts";
 
 const list = resource(() => client.libraries.list());
+// Counts ride along when they arrive; a stats failure just omits them.
+const stats = resource(() => client.libraries.stats({}));
 type LibraryRow = NonNullable<typeof list.data>[number];
-
-const mediumNames: Record<LibraryRow["medium"], string> = {
-  movies: "Movies",
-  shows: "Shows",
-};
 
 let statuses = $state<Record<string, ScanStatus | null>>({});
 
@@ -36,9 +34,6 @@ async function loadStatuses(rows: readonly LibraryRow[]) {
     }),
   );
 }
-
-const folderCount = (count: number) =>
-  count === 1 ? "1 folder" : `${count} folders`;
 </script>
 
 <AdminPage title="Libraries">
@@ -53,7 +48,10 @@ const folderCount = (count: number) =>
       {@const MediumIcon = navIcons[row.medium]}
       <ListRow
         title={row.name}
-        caption="{mediumNames[row.medium]} · {folderCount(row.roots.length)}"
+        caption={libraryCaption(
+          row,
+          stats.data?.find((entry) => entry.libraryId === row.id),
+        )}
         href="/admin/libraries/{row.id}"
       >
         {#snippet leading()}

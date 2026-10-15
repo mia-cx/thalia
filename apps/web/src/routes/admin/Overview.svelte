@@ -2,21 +2,27 @@
 import { onDestroy } from "svelte";
 import { checkHealth } from "$lib/admin.ts";
 import { client } from "$lib/api.ts";
-import { cardLabel, formatBytes, itemHref } from "$lib/browse.ts";
+import {
+  cardLabel,
+  formatBytes,
+  formatDuration,
+  itemHref,
+} from "$lib/browse.ts";
 import Artwork from "$lib/components/Artwork.svelte";
 import AdminPage from "$lib/components/admin/AdminPage.svelte";
+import FilesystemUsage from "$lib/components/admin/FilesystemUsage.svelte";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
 import FormRow from "$lib/components/admin/FormRow.svelte";
 import LibraryStats from "$lib/components/admin/LibraryStats.svelte";
 import ListRow from "$lib/components/admin/ListRow.svelte";
 import ScanState from "$lib/components/admin/ScanState.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
-import { Progress } from "$lib/components/ui/progress/index.ts";
 import { type FailureCode, readFailure } from "$lib/errors.ts";
 import { followEvents } from "$lib/events.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import type { ScanStatus } from "$lib/scan.ts";
 import {
+  formatCount,
   type LibraryGaps,
   type LibraryStats as LibraryStatsData,
   replaceLibraryEntry,
@@ -29,6 +35,7 @@ type Session = NonNullable<
 const libraries = resource(() => client.libraries.list());
 const sessions = resource(() => client.playback.sessions());
 const freeSpace = resource(() => client.libraries.freeSpace());
+const summary = resource(() => client.libraries.summary());
 let scans = $state<Record<string, ScanStatus | null>>({});
 let stats = $state<readonly LibraryStatsData[]>([]);
 let gaps = $state<readonly LibraryGaps[]>([]);
@@ -200,6 +207,7 @@ void followEvents(
       };
       refreshLibraryStats(event.libraryId);
       void freeSpace.reload();
+      void summary.reload();
     }
     if (event.kind === "session.state") void sessions.reload();
   },
@@ -254,6 +262,74 @@ onDestroy(() => {
   </FormGroup>
 
   <FormGroup
+    title="Media"
+    loading={
+      summary.data === undefined && !summary.failure ? 3 : undefined
+    }
+    failure={summary.failure ?? undefined}
+  >
+    {#if summary.data !== undefined}
+      {@const mediums = new Set(
+        (libraries.data ?? []).map((library) => library.medium),
+      )}
+      {#if summary.data.movies > 0 || mediums.has("movies")}
+        <FormRow label="Movies" inline>
+          <span class="text-subheadline text-label-secondary"
+            >{formatCount(summary.data.movies)}</span
+          >
+        </FormRow>
+      {/if}
+      {#if summary.data.shows > 0 || mediums.has("shows")}
+        <FormRow label="Shows" inline>
+          <span class="text-subheadline text-label-secondary"
+            >{formatCount(summary.data.shows)}</span
+          >
+        </FormRow>
+      {/if}
+      {#if summary.data.episodes > 0 || mediums.has("shows")}
+        <FormRow label="Episodes" inline>
+          <span class="text-subheadline text-label-secondary"
+            >{formatCount(summary.data.episodes)}</span
+          >
+        </FormRow>
+      {/if}
+      <FormRow label="Size on disk" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatBytes(summary.data.bytes)}</span
+        >
+      </FormRow>
+      <FormRow label="Runtime" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatDuration(summary.data.runtimeSeconds)}</span
+        >
+      </FormRow>
+      {@const free = (freeSpace.data ?? []).filter(
+        (filesystem) => filesystem.state === "available",
+      )}
+      {#if free.length > 0}
+        <FormRow label="Free space" inline>
+          <span class="text-subheadline text-label-secondary"
+            >{formatBytes(
+              free.reduce((sum, filesystem) => sum + filesystem.availableBytes, 0),
+            )} free of {formatBytes(
+              free.reduce((sum, filesystem) => sum + filesystem.totalBytes, 0),
+            )}</span
+          >
+        </FormRow>
+      {/if}
+    {/if}
+    {#snippet actions()}
+      {#if summary.failure}
+        <Button
+          variant="secondary"
+          onclick={() => summary.reload()}
+          disabled={summary.loading}>Try again</Button
+        >
+      {/if}
+    {/snippet}
+  </FormGroup>
+
+  <FormGroup
     title="Libraries"
     loading={libraries.data === undefined && !libraries.failure ? 3 : undefined}
     failure={libraries.failure ?? undefined}
@@ -305,34 +381,12 @@ onDestroy(() => {
     <FormGroup title="Free space" failure={freeSpace.failure ?? undefined}>
       {#each freeSpace.data ?? [] as filesystem (filesystem.roots[0]?.id)}
         {#if filesystem.state === "available"}
-          {@const multiLibrary =
-            new Set(filesystem.roots.map((root) => root.libraryId)).size > 1}
           <FormRow
             label="{formatBytes(filesystem.availableBytes)} free of {formatBytes(
               filesystem.totalBytes,
             )}"
           >
-            {#each filesystem.roots as root (root.id)}
-              <span
-                class="block truncate text-footnote text-label-secondary"
-                title={multiLibrary
-                  ? `${root.libraryName} · ${root.path}`
-                  : root.path}
-                >{multiLibrary
-                  ? `${root.libraryName} · ${root.path}`
-                  : root.path}</span
-              >
-            {/each}
-            <span class="space-usage mt-2 block">
-              <Progress
-                value={filesystem.usedBytes}
-                max={filesystem.totalBytes}
-                aria-label="Space used"
-                aria-valuetext="{Math.round(
-                  (filesystem.usedBytes / filesystem.totalBytes) * 100,
-                )}% used"
-              />
-            </span>
+            <FilesystemUsage {filesystem} />
           </FormRow>
         {:else}
           {@const root = filesystem.roots[0]}
@@ -398,14 +452,3 @@ onDestroy(() => {
   </FormGroup>
 </AdminPage>
 
-<style>
-  /* Forced colors strips the bar's fill; keep it and outline the track. */
-  @media (forced-colors: active) {
-    .space-usage :global([data-slot="progress"]) {
-      border: 1px solid CanvasText;
-    }
-    .space-usage :global([data-slot="progress-indicator"]) {
-      forced-color-adjust: none;
-    }
-  }
-</style>

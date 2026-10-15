@@ -71,6 +71,7 @@ describe("openapi document", () => {
         "/settings/providers/{name}",
         "/libraries/viewable",
         "/libraries/{id}/scan-status",
+        "/libraries/summary",
         "/folders",
         "/folders/preview",
         "/store/status",

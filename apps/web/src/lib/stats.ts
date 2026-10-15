@@ -1,4 +1,5 @@
 import type { ThaliaClient } from "./api.ts";
+import { formatBytes } from "./browse.ts";
 
 /** One library's dashboard numbers, as `libraries.stats` returns them. */
 export type LibraryStats = Awaited<
@@ -88,4 +89,92 @@ export function replaceLibraryEntry<T extends { libraryId: string }>(
   const index = list.findIndex((row) => row.libraryId === entry.libraryId);
   if (index === -1) return [...list, entry];
   return list.with(index, entry);
+}
+
+/** The server-wide media totals, as `libraries.summary` returns them. */
+export type LibrarySummary = Awaited<
+  ReturnType<ThaliaClient["libraries"]["summary"]>
+>;
+
+/** One noun, pluralised for a caption: `1 movie`, `2 episodes`. */
+export function pluralize(count: number, noun: string): string {
+  return `${numberFormat.format(count)} ${count === 1 ? noun : `${noun}s`}`;
+}
+
+/** A library row caption: `Shows · 2 folders · 12 shows · 340 episodes · 1.2 TB`; stats join in once loaded. */
+export function libraryCaption(
+  library: { medium: "movies" | "shows"; roots: readonly unknown[] },
+  stats: Pick<LibraryStats, "kinds" | "bytes"> | undefined,
+): string {
+  const parts = [
+    library.medium === "movies" ? "Movies" : "Shows",
+    pluralize(library.roots.length, "folder"),
+  ];
+  if (stats !== undefined) {
+    if (library.medium === "shows") {
+      parts.push(pluralize(stats.kinds.shows, "show"));
+      parts.push(pluralize(stats.kinds.episodes, "episode"));
+    } else {
+      parts.push(pluralize(stats.kinds.movies, "movie"));
+    }
+    parts.push(formatBytes(stats.bytes));
+  }
+  return parts.join(" · ");
+}
+
+type AvailableSpace = Extract<FilesystemSpace, { state: "available" }>;
+
+/** One colored slice of a filesystem's usage bar. */
+export type SpaceSegment = {
+  key: string;
+  label: string;
+  bytes: number;
+  tone: string;
+};
+
+/**
+ * A distinct tint per library, built from design tokens so light and dark
+ * themes both work; `other` is the neutral fill for non-media usage.
+ */
+export const segmentTones = [
+  "var(--tint)",
+  "color-mix(in oklch, var(--tint) 45%, var(--success))",
+  "var(--success)",
+  "color-mix(in oklch, var(--tint) 45%, var(--destructive))",
+  "var(--destructive)",
+];
+export const otherTone = "var(--fill-strong)";
+
+/**
+ * The slices of one filesystem's bar: one segment per library holding media
+ * there (or only `libraryId`'s, when given), then Other for used space no
+ * tracked File explains, clamped at zero.
+ */
+export function filesystemSegments(
+  filesystem: AvailableSpace,
+  libraryId?: string,
+): { segments: SpaceSegment[]; otherBytes: number } {
+  const byLibrary = new Map<string, { label: string; bytes: number }>();
+  for (const root of filesystem.roots) {
+    if (libraryId !== undefined && root.libraryId !== libraryId) continue;
+    const entry = byLibrary.get(root.libraryId) ?? {
+      label: root.libraryName,
+      bytes: 0,
+    };
+    entry.bytes += root.mediaBytes;
+    byLibrary.set(root.libraryId, entry);
+  }
+  const segments = [...byLibrary.entries()].map(
+    ([id, entry], i): SpaceSegment => ({
+      key: id,
+      label: entry.label,
+      bytes: entry.bytes,
+      tone: segmentTones[i % segmentTones.length],
+    }),
+  );
+  const media = segments.reduce((sum, segment) => sum + segment.bytes, 0);
+  return {
+    segments,
+    otherBytes: Math.max(0, filesystem.usedBytes - media),
+  };
 }

@@ -15,6 +15,7 @@ import {
   type ItemKind,
   type LibraryMetadataGaps as LibraryMetadataGapsSchema,
   type LibraryStats as LibraryStatsSchema,
+  type LibrarySummary as LibrarySummarySchema,
   type MetadataGapItem as MetadataGapItemSchema,
   MetadataGap as MetadataGapSchema,
   type SpaceRoot as SpaceRootSchema,
@@ -25,6 +26,7 @@ import type { Database } from "../db/client.ts";
 import {
   artwork,
   episodes,
+  files,
   items,
   libraries,
   libraryRoots,
@@ -36,6 +38,9 @@ export type LibraryStats = Schema.Schema.Type<typeof LibraryStatsSchema>;
 
 /** The metadata an Item can be missing, as the Overview counts it. */
 export type MetadataGap = Schema.Schema.Type<typeof MetadataGapSchema>;
+
+/** Server-wide media totals, as `libraries.summary` returns them. */
+export type LibrarySummary = Schema.Schema.Type<typeof LibrarySummarySchema>;
 
 /** One library's count of Items missing each piece of metadata. */
 export type LibraryMetadataGaps = Schema.Schema.Type<
@@ -103,6 +108,7 @@ type StatsRow = {
   resolution: Record<string, number>;
   dynamic_range: Record<string, number>;
   codecs: { codec: string; versions: number }[];
+  kinds: { movies: number; shows: number; seasons: number; episodes: number };
 };
 
 /**
@@ -149,6 +155,16 @@ export async function libraryStats(
             s.index asc nulls last
         )
         select
+          (
+            select jsonb_build_object(
+              'movies', count(*) filter (where kind = 'movie'),
+              'shows', count(*) filter (where kind = 'show'),
+              'seasons', count(*) filter (where kind = 'season'),
+              'episodes', count(*) filter (where kind = 'episode')
+            )
+            from ${items}
+            where ${items.libraryId} = ${library.id}
+          ) as kinds,
           (select count(*)::int from playable) as items,
           (select count(*)::int from imported) as versions,
           (select count(*)::int from files f
@@ -239,9 +255,62 @@ export async function libraryStats(
           dolbyVision: row.dynamic_range.dolbyVision ?? 0,
         },
         codecs: row.codecs,
+        kinds: row.kinds,
       };
     }),
   );
+}
+
+/** Server-wide totals: Item counts by kind plus imported Version/File aggregates. */
+export async function librarySummary(
+  db: Database,
+  actorId: string,
+): Promise<LibrarySummary> {
+  await requirePermission(db, actorId, "libraries:manage", server);
+  const result = await db.execute(sql`
+    with imported as (
+      select * from versions where versions.origin = 'imported'
+    )
+    select
+      (select count(*)::int from ${items} where kind = 'movie') as movies,
+      (select count(*)::int from ${items} where kind = 'show') as shows,
+      (select count(*)::int from ${items} where kind = 'season') as seasons,
+      (select count(*)::int from ${items} where kind = 'episode') as episodes,
+      (select count(*)::int from imported) as versions,
+      (select count(*)::int from files f
+        join imported v on f.version_id = v.id and f.item_id = v.item_id
+      ) as files,
+      coalesce((select sum(v.bytes) from imported v), 0)::float8 as bytes,
+      coalesce((
+        select sum(longest) from (
+          select max(v.duration_seconds) as longest
+          from imported v group by v.item_id
+        ) runtimes
+      ), 0)::float8 as runtime_seconds
+  `);
+  const row = result[0] as
+    | {
+        movies: number;
+        shows: number;
+        seasons: number;
+        episodes: number;
+        versions: number;
+        files: number;
+        bytes: number;
+        runtime_seconds: number;
+      }
+    | undefined;
+  if (row === undefined) throw new Error("Summary query returned no row.");
+  return {
+    movies: row.movies,
+    shows: row.shows,
+    seasons: row.seasons,
+    episodes: row.episodes,
+    versions: row.versions,
+    files: row.files,
+    bytes: row.bytes,
+    runtimeSeconds: row.runtime_seconds,
+  };
 }
 
 /** The Overview's per-Library gap counts, in `listLibraries` order. One statement per Library. */
@@ -392,9 +461,25 @@ export async function libraryFreeSpace(
       asc(libraries.id),
       asc(libraryRoots.position),
     );
+  // One grouped query gives every root its stored media size.
+  const bytesByRoot = new Map(
+    (
+      await db
+        .select({
+          rootId: files.rootId,
+          bytes: sql<number>`sum(${files.bytes})::float8`,
+        })
+        .from(files)
+        .groupBy(files.rootId)
+    ).map((row) => [row.rootId, row.bytes]),
+  );
+  const rootsWithBytes: SpaceRoot[] = roots.map((root) => ({
+    ...root,
+    mediaBytes: bytesByRoot.get(root.id) ?? 0,
+  }));
   // Probe concurrently; a timed-out or dead root is reported unavailable.
   const probes = await Promise.all(
-    roots.map((root) =>
+    rootsWithBytes.map((root) =>
       Promise.race([
         probeRoot(root.path),
         Bun.sleep(probeTimeoutMs).then(() => {

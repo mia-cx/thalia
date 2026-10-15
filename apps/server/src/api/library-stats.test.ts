@@ -335,8 +335,13 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
             { codec: "hevc", versions: 2 },
             { codec: "mpeg2video", versions: 1 },
           ],
+          kinds: { movies: 8, shows: 0, seasons: 0, episodes: 0 },
         });
-        expect(all[1]).toMatchObject({ libraryId: shows.id, items: 2 });
+        expect(all[1]).toMatchObject({
+          libraryId: shows.id,
+          items: 2,
+          kinds: { movies: 0, shows: 1, seasons: 1, episodes: 2 },
+        });
         const showsStats = all[1];
         if (showsStats === undefined) throw new Error("Shows stats missing.");
         expect(await client.libraries.stats({ id: shows.id })).toEqual([
@@ -591,6 +596,32 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
       if (!movies || !shows || !broken) throw new Error("Fixture missing.");
       await mkdir(movies.rootPath);
       await mkdir(shows.rootPath);
+      const movie = await addMovie(db, movies.id, "Film");
+      await addVersion(db, movies, movie, "movie", { bytes: 4000n });
+      const spaceShow = await insertItem(db, {
+        libraryId: shows.id,
+        kind: "show",
+        title: "Series",
+        canonicalFolder: "/srv/shows/series",
+        extension: {},
+      });
+      const spaceSeason = await insertItem(db, {
+        libraryId: shows.id,
+        kind: "season",
+        parentId: spaceShow.id,
+        title: "Season 1",
+        canonicalFolder: "/srv/shows/series/s1",
+        extension: { seasonNumber: 1 },
+      });
+      const pilot = await insertItem(db, {
+        libraryId: shows.id,
+        kind: "episode",
+        parentId: spaceSeason.id,
+        title: "Pilot",
+        canonicalFolder: "/srv/shows/series/s1/e1",
+        extension: { episodeNumber: 1 },
+      });
+      await addVersion(db, shows, pilot, "episode", { bytes: 1500n });
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
       try {
         const base = `http://127.0.0.1:${server.apiServer?.port}`;
@@ -608,6 +639,9 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
           join(folder, "a"),
           join(folder, "b"),
         ]);
+        expect(available[0]?.roots.map((root) => root.mediaBytes)).toEqual([
+          4000, 1500,
+        ]);
         if (available[0]?.state !== "available")
           throw new Error("Expected an available filesystem.");
         expect(available[0].totalBytes).toBeGreaterThan(0);
@@ -618,6 +652,80 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
         expect(unavailable[0]?.roots.map((root) => root.path)).toEqual([
           join(folder, "missing", "deep"),
         ]);
+        expect(unavailable[0]?.roots[0]?.mediaBytes).toBe(0);
+      } finally {
+        await server.stop();
+      }
+    }));
+
+  test("summary totals all libraries' media", () =>
+    withDatabase(async (db, url) => {
+      const { token } = await seed(db);
+      const folder = await mkdtemp(join(tmpdir(), "thalia-summary-"));
+      const [movies, shows] = await insertLibraries(db, [
+        { name: "Movies", medium: "movies", rootPath: join(folder, "movies") },
+        { name: "Shows", medium: "shows", rootPath: join(folder, "shows") },
+      ]);
+      if (!movies || !shows) throw new Error("Fixture missing.");
+      await mkdir(movies.rootPath);
+      await mkdir(shows.rootPath);
+
+      const film = await addMovie(db, movies.id, "Film");
+      await addVersion(db, movies, film, "movie", {
+        bytes: 4000n,
+        durationSeconds: 7000,
+      });
+      const show = await insertItem(db, {
+        libraryId: shows.id,
+        kind: "show",
+        title: "Series",
+        canonicalFolder: "/srv/shows/series",
+        extension: {},
+      });
+      const season = await insertItem(db, {
+        libraryId: shows.id,
+        kind: "season",
+        parentId: show.id,
+        title: "Season 1",
+        canonicalFolder: "/srv/shows/series/s1",
+        extension: { seasonNumber: 1 },
+      });
+      for (const [title, episodeNumber] of [
+        ["Pilot", 1],
+        ["Next", 2],
+      ] as const) {
+        const episode = await insertItem(db, {
+          libraryId: shows.id,
+          kind: "episode",
+          parentId: season.id,
+          title,
+          canonicalFolder: `/srv/shows/series/s1/${episodeNumber}`,
+          extension: { episodeNumber },
+        });
+        await addVersion(db, shows, episode, "episode", {
+          bytes: 1500n,
+          durationSeconds: 2400,
+        });
+      }
+
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const base = `http://127.0.0.1:${server.apiServer?.port}`;
+        const client = createThaliaClient({
+          origin: base,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        const summary = await client.libraries.summary();
+        expect(summary).toEqual({
+          movies: 1,
+          shows: 1,
+          seasons: 1,
+          episodes: 2,
+          versions: 3,
+          files: 3,
+          bytes: 4000 + 1500 + 1500,
+          runtimeSeconds: 7000 + 2400 + 2400,
+        });
       } finally {
         await server.stop();
       }
@@ -649,6 +757,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
           () => client.libraries.metadataGaps({}),
           () => client.libraries.metadataGapItems({ libraryId, gap: "poster" }),
           () => client.libraries.freeSpace(),
+          () => client.libraries.summary(),
         ]) {
           const error = await capture(call());
           expect((error as ORPCError<"FORBIDDEN", unknown>).code).toBe(

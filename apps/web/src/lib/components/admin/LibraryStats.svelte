@@ -69,11 +69,29 @@ function openGap(row: { key: MetadataGap; label: string }) {
   {failure}
 >
   {#if stats !== undefined && gaps !== undefined}
-    <FormRow label={library.medium === "movies" ? "Movies" : "Episodes"} inline>
-      <span class="text-subheadline text-label-secondary"
-        >{formatCount(stats.items)}</span
-      >
-    </FormRow>
+    {#if library.medium === "movies"}
+      <FormRow label="Movies" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatCount(stats.kinds.movies)}</span
+        >
+      </FormRow>
+    {:else}
+      <FormRow label="Shows" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatCount(stats.kinds.shows)}</span
+        >
+      </FormRow>
+      <FormRow label="Seasons" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatCount(stats.kinds.seasons)}</span
+        >
+      </FormRow>
+      <FormRow label="Episodes" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatCount(stats.kinds.episodes)}</span
+        >
+      </FormRow>
+    {/if}
     <FormRow label="Size" inline>
       <span class="text-subheadline text-label-secondary"
         >{formatBytes(stats.bytes)}</span
