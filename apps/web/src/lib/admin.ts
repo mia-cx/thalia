@@ -8,7 +8,8 @@ export type AdminIcon =
   | "users"
   | "shield-check"
   | "puzzle"
-  | "settings";
+  | "settings"
+  | "user-round";
 
 /** One admin section: sidebar row, phone list row and search target. */
 export type AdminSection = {
@@ -102,14 +103,31 @@ export const adminSectionGroups: readonly (readonly AdminSection[])[] = [
   ],
 ];
 
+/** The personal settings every user gets, ahead of the admin groups. */
+export const personalSections: readonly AdminSection[] = [
+  {
+    id: "account",
+    href: "/settings/account",
+    label: "Account",
+    icon: "user-round",
+    keywords: ["name", "display name", "password", "profile"],
+  },
+];
+
 /** Every admin section, flat, in display order. */
 export const adminSections: readonly AdminSection[] = adminSectionGroups.flat();
 
-/** Sections whose label or keywords contain the query, in display order. */
-export function matchSections(query: string): readonly AdminSection[] {
+/** Sections whose label or keywords contain the query; admin sections only appear for admins. */
+export function matchSections(
+  query: string,
+  admin: boolean,
+): readonly AdminSection[] {
+  const all = admin
+    ? [...personalSections, ...adminSections]
+    : personalSections;
   const needle = query.trim().toLowerCase();
-  if (needle === "") return adminSections;
-  return adminSections.filter(
+  if (needle === "") return all;
+  return all.filter(
     (section) =>
       section.label.toLowerCase().includes(needle) ||
       section.keywords.some((word) => word.toLowerCase().includes(needle)),
@@ -120,17 +138,24 @@ export function matchSections(query: string): readonly AdminSection[] {
 export function currentSection(url: URL): string | undefined {
   const path = url.pathname;
   if (path === "/admin" || path === "/admin/") return "overview";
-  for (const section of adminSections) {
+  for (const section of [...personalSections, ...adminSections]) {
     if (path === section.href || path.startsWith(`${section.href}/`))
       return section.id;
   }
   return undefined;
 }
 
-/** Depth of an admin path: `/admin` is 0, a section is 1, a detail page is 2. */
+/** Depth of a settings path: `/admin` or `/settings` is 0, a section is 1, a detail page is 2. */
 function adminDepth(path: string): number | undefined {
-  if (path === "/admin" || path === "/admin/") return 0;
-  if (!path.startsWith("/admin/")) return undefined;
+  if (
+    path === "/admin" ||
+    path === "/admin/" ||
+    path === "/settings" ||
+    path === "/settings/"
+  )
+    return 0;
+  if (!path.startsWith("/admin/") && !path.startsWith("/settings/"))
+    return undefined;
   return path.replace(/\/+$/, "").split("/").length - 2;
 }
 

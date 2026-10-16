@@ -40,7 +40,7 @@ onNavigate((nav) => {
 </script>
 
 <svelte:head>
-  <title>Thalia admin</title>
+  <title>Settings · Thalia</title>
 </svelte:head>
 
 <Tooltip.Provider>
@@ -62,7 +62,7 @@ onNavigate((nav) => {
     </div>
 
     <div class="mt-4 min-h-0 flex-1 overflow-y-auto">
-      <AdminNav variant="sidebar" />
+      <AdminNav variant="sidebar" admin={data.me.admin} />
     </div>
 
     <hr class="my-2 h-px border-0 bg-separator" />
@@ -93,7 +93,7 @@ onNavigate((nav) => {
     </AccountMenu>
   </aside>
 
-  <TabBar admin={data.me.admin} />
+  <TabBar />
 
   <div class="relative">
     <div class="absolute top-3 right-(--gutter) z-30 lg:hidden">

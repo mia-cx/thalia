@@ -110,7 +110,7 @@ function setSort(value: string) {
 </script>
 
 <div class="mb-5 flex flex-wrap items-baseline justify-between gap-3 pt-4 lg:pt-8">
-  <h1 class="w-full pr-14 text-large-title lg:w-auto lg:pr-0">{title}</h1>
+  <h1 class="w-full px-14 text-large-title lg:w-auto lg:px-0">{title}</h1>
   <Select.Root
     type="single"
     value={sort}

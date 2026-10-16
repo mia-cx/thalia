@@ -89,6 +89,26 @@ export async function writeClientPreference(
     });
 }
 
+/** Sets only the display name for its owner or an administrator; the username stays. */
+export async function setDisplayName(
+  db: Database,
+  actorId: string,
+  userId: string,
+  name: string,
+) {
+  await requireAccountAccess(db, actorId, userId);
+  const displayName = name.trim();
+  if (displayName.length === 0 || displayName.length > 100)
+    throw new AuthError("INVALID_INPUT");
+  const [updated] = await db
+    .update(users)
+    .set({ displayName, updatedAt: new Date() })
+    .where(eq(users.id, userId))
+    .returning(publicUserFields);
+  if (updated === undefined) throw new AuthError("NOT_FOUND");
+  return updated;
+}
+
 /** Renames an account for its owner or an administrator. */
 export async function renameAccount(
   db: Database,
