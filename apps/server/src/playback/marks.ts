@@ -52,8 +52,8 @@ async function viewableItem(db: MarksDb, userId: string, itemId: string) {
     .limit(1);
   if (item === undefined) throw new AuthError("NOT_FOUND");
   await requirePermission(db, userId, "view", {
-    type: "library",
-    id: item.libraryId,
+    type: "item",
+    id: itemId,
   });
 }
 

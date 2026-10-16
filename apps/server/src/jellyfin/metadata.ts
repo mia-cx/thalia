@@ -1,4 +1,4 @@
-import { listContributorCredits, listItemViews } from "../api/views.ts";
+import { getItemView, listContributorCredits } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
 import type { JsonValue } from "../db/schema/common.ts";
 import {
@@ -95,8 +95,7 @@ export function metadataLookupRoutes(
       path: "/Items/{itemId}/ExternalIdInfos",
       handle: async ({ db, caller, params }) => {
         const id = requiredGuid(params.itemId);
-        const [item] = (await listItemViews(db, caller.user.id, { ids: [id] }))
-          .items;
+        const item = await getItemView(db, caller.user.id, id);
         const person =
           item === undefined
             ? (await listContributorCredits(db, caller.user.id)).find(

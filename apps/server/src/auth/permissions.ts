@@ -1,12 +1,10 @@
-import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import {
   type Action,
   accessRules,
   actions,
   groups,
-  itemAncestors,
-  items,
   libraries,
   serverOnlyActions,
   userGroups,
@@ -41,24 +39,58 @@ async function memberships(db: Queryable, userId: string) {
     .where(eq(userGroups.userId, userId));
 }
 
-async function objectChain(
+// Load an Item's parent chain and the caller's rules in one recursive query.
+async function itemAccess(
   db: Queryable,
-  object: AccessObject,
-): Promise<AccessObject[]> {
-  if (object.type === "server") return [server];
-  if (object.type === "library") return [object, server];
+  itemId: string,
+  userId: string,
+  groupIds: string[],
+) {
   const rows = await db
-    .select({ id: items.id, libraryId: items.libraryId })
-    .from(itemAncestors)
-    .innerJoin(items, eq(items.id, itemAncestors.ancestorId))
-    .where(eq(itemAncestors.descendantId, object.id))
-    .orderBy(itemAncestors.depth);
+    .select({
+      id: sql<string>`chain.id`,
+      libraryId: sql<string>`chain.library_id`,
+      rule: accessRules,
+    })
+    .from(sql`(
+      with recursive ancestors as (
+        select id, parent_id, library_id, 0 as depth from items where id = ${itemId}
+        union all
+        select parent.id, parent.parent_id, parent.library_id, child.depth + 1
+        from items parent inner join ancestors child on parent.id = child.parent_id
+      )
+      select * from ancestors
+    ) chain`)
+    .leftJoin(
+      accessRules,
+      and(
+        or(
+          eq(accessRules.userId, userId),
+          groupIds.length ? inArray(accessRules.groupId, groupIds) : undefined,
+        ),
+        or(
+          sql`${accessRules.itemId} = chain.id`,
+          sql`${accessRules.libraryId} = chain.library_id`,
+          and(isNull(accessRules.itemId), isNull(accessRules.libraryId)),
+        ),
+      ),
+    )
+    .orderBy(sql`chain.depth`);
   if (!rows[0]) throw new AuthError("NOT_FOUND");
-  return [
-    ...rows.map((row) => ({ type: "item" as const, id: row.id })),
+  const chain: AccessObject[] = [
+    ...[...new Set(rows.map((row) => row.id))].map((id) => ({
+      type: "item" as const,
+      id,
+    })),
     { type: "library", id: rows[0].libraryId },
     server,
   ];
+  const rules = [
+    ...new Map(
+      rows.flatMap(({ rule }) => (rule ? [[rule.id, rule] as const] : [])),
+    ).values(),
+  ];
+  return { chain, rules };
 }
 
 async function callerRules(
@@ -109,10 +141,14 @@ export async function checkPermission(
   if (!(await enabledUser(db, userId))) return false;
   const memberGroups = await memberships(db, userId);
   if (memberGroups.some((g) => g.builtIn && g.name === "admins")) return true;
-  const chain = await objectChain(db, object);
   const groupIds = memberGroups.map((g) => g.id);
-  const rules = await callerRules(db, userId, groupIds, chain);
-  return resolveAccess({ rules, chain, action, userId, groupIds }).allowed;
+  const chain: AccessObject[] =
+    object.type === "server" ? [server] : [object, server];
+  const loaded =
+    object.type === "item"
+      ? await itemAccess(db, object.id, userId, groupIds)
+      : { chain, rules: await callerRules(db, userId, groupIds, chain) };
+  return resolveAccess({ ...loaded, action, userId, groupIds }).allowed;
 }
 
 /** Loads the caller's rules once and resolves each Library in memory. */

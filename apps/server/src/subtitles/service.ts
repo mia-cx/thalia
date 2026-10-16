@@ -30,8 +30,8 @@ async function visibleItem(db: Database, userId: string, itemId: string) {
   const [item] = await db.select().from(items).where(eq(items.id, itemId));
   if (item === undefined) throw new AuthError("NOT_FOUND");
   await requirePermission(db, userId, "view", {
-    type: "library",
-    id: item.libraryId,
+    type: "item",
+    id: item.id,
   });
   return item;
 }
@@ -39,8 +39,8 @@ async function visibleItem(db: Database, userId: string, itemId: string) {
 async function manageableItem(db: Database, userId: string, itemId: string) {
   const item = await visibleItem(db, userId, itemId);
   await requirePermission(db, userId, "subtitles:edit", {
-    type: "library",
-    id: item.libraryId,
+    type: "item",
+    id: item.id,
   });
   return item;
 }

@@ -48,8 +48,8 @@ export function createSubtitleHandler(db: Database) {
       const [first] = folders;
       if (first === undefined) return failure(404, "No such subtitle track.");
       await requirePermission(db, caller.user.id, "view", {
-        type: "library",
-        id: first.libraryId,
+        type: "item",
+        id: itemId,
       });
       const found = await firstInRoots(folders, async (folder) => {
         const file = Bun.file(folder.file(track));

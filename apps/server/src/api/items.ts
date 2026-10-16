@@ -234,15 +234,15 @@ export function listItemCards(
   });
 }
 
-/** Reads one item's detail, checking access to the library that holds it. */
+/** Reads one Item's detail after checking its inherited Access rules. */
 export function getItemDetail(db: Database, caller: Caller, id: string) {
   return Effect.gen(function* () {
     const [card] = yield* fromHost(() => browseCards(db, eq(items.id, id)));
     if (!card) return yield* new ApiError({ code: "NOT_FOUND" });
     yield* fromHost(() =>
       requirePermission(db, caller.user.id, "view", {
-        type: "library",
-        id: card.libraryId,
+        type: "item",
+        id,
       }),
     );
     const [[detail], itemCredits, itemVersions, children] = yield* fromHost(

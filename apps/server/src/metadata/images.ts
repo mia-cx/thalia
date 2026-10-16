@@ -29,7 +29,7 @@ async function owner(
     db,
     actorId,
     permission,
-    item ? { type: "library", id: item.libraryId } : server,
+    item ? { type: "item", id: itemId } : server,
   );
   return item;
 }

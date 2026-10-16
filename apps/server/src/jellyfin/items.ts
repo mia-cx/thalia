@@ -1,5 +1,6 @@
 import { maxPageSize } from "../api/pagination.ts";
 import {
+  getItemView,
   type ItemView,
   type ItemViewQuery,
   type ItemViewSort,
@@ -528,14 +529,13 @@ export const browseRoutes: Route[] = [
     path: "/Items/{id}",
     handle: async ({ db, caller, params }) => {
       const id = requiredGuid(params.id);
-      const [libraries, page, serverId] = await Promise.all([
+      const [libraries, view, serverId] = await Promise.all([
         viewableLibraries(db, caller.user.id),
-        listItemViews(db, caller.user.id, { ids: [id] }),
+        getItemView(db, caller.user.id, id),
         readServerId(db),
       ]);
       const library = libraries.find((candidate) => candidate.id === id);
       if (library !== undefined) return json(libraryDto(library, serverId));
-      const [view] = page.items;
       if (view === undefined) {
         const person = (await listContributorCredits(db, caller.user.id)).find(
           (person) => person.id === id,
@@ -569,8 +569,8 @@ export const browseRoutes: Route[] = [
         CanDownload:
           playableKinds.has(view.kind) &&
           (await checkPermission(db, caller.user.id, "download", {
-            type: "library",
-            id: view.libraryId,
+            type: "item",
+            id: view.id,
           })),
         People: (
           await listContributorCredits(db, caller.user.id, { ids: [id] })

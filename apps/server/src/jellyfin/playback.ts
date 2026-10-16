@@ -284,7 +284,7 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
                 context.db,
                 context.caller.user.id,
                 "download",
-                { type: "library", id: item.libraryId },
+                { type: "item", id: itemId },
               );
             }
             const version = await versionOf(

@@ -57,8 +57,8 @@ export async function editItemMetadata(
     .where(eq(items.id, id));
   if (subject === undefined) throw new AuthError("NOT_FOUND");
   await requirePermission(db, actorId, "metadata:edit", {
-    type: "library",
-    id: subject.libraryId,
+    type: "item",
+    id,
   });
   await db.transaction(async (tx) => {
     const [library] = await tx
