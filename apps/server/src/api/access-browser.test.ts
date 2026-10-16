@@ -43,6 +43,22 @@ async function click(page: Page, selector: string, text?: string) {
 
 const optionSelector = "[data-slot=select-item],[data-slot=combobox-item]";
 
+/** Waits until an element's bounding box stops moving between reads. */
+async function waitForSettled(page: Page, expression: string) {
+  let last = "";
+  for (let i = 0; i < 40; i++) {
+    const next = await page.eval<string>(
+      `(() => { const el = ${expression}; if (!el) return null; const r = el.getBoundingClientRect(); return JSON.stringify([r.x, r.y]); })()`,
+    );
+    if (next === last) return;
+    last = next;
+    await Bun.sleep(50);
+  }
+}
+
+const optionFinder = (label: string) =>
+  `[...document.querySelectorAll('${optionSelector}')].find(i => i.textContent.trim().startsWith(${JSON.stringify(label)}))`;
+
 /** Picks an open Select or Combobox option by the start of its text. */
 async function pick(page: Page, label: string) {
   await page.waitFor(
@@ -51,15 +67,17 @@ async function pick(page: Page, label: string) {
   // The floating layer follows its anchor on scroll, so scroll first, let it
   // settle, then measure the option's viewport point.
   await page.eval(
-    `(() => { const el = [...document.querySelectorAll('${optionSelector}')].find(i => i.textContent.trim().startsWith(${JSON.stringify(label)})); const r = el.getBoundingClientRect(); if (r.bottom < 0 || r.top > innerHeight) window.scrollBy(0, r.top - innerHeight / 2); })()`,
+    `(() => { const el = ${optionFinder(label)}; const r = el.getBoundingClientRect(); if (r.bottom < 0 || r.top > innerHeight) window.scrollBy(0, r.top - innerHeight / 2); })()`,
   );
-  await Bun.sleep(300);
+  await waitForSettled(page, optionFinder(label));
   const point = await page.eval<{ x: number; y: number }>(
-    `(() => { const el = [...document.querySelectorAll('${optionSelector}')].find(i => i.textContent.trim().startsWith(${JSON.stringify(label)})); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: Math.max(4, Math.min(innerHeight - 4, r.y + r.height / 2)) }; })()`,
+    `(() => { const el = ${optionFinder(label)}; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: Math.max(4, Math.min(innerHeight - 4, r.y + r.height / 2)) }; })()`,
   );
   await mouse(page, point);
   // The closing animation keeps its layer up briefly; the next click must not hit it.
-  await Bun.sleep(400);
+  await page.waitFor(
+    `document.querySelectorAll('${optionSelector}').length === 0`,
+  );
 }
 
 /** Lists the labels of the currently open Select options. */
@@ -74,7 +92,7 @@ async function typeObject(page: Page, text: string) {
   await page.eval(
     "document.getElementById('access-object')?.scrollIntoView({ block: 'center' })",
   );
-  await Bun.sleep(150);
+  await waitForSettled(page, "document.getElementById('access-object')");
   await page.eval(fill("access-object", text));
 }
 
