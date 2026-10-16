@@ -3,7 +3,7 @@ import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
 import type { Snippet } from "svelte";
 import { cn } from "$lib/utils.ts";
 
-/** A list row inside a panel; with `href` the whole row is a link, with `onclick` a button. */
+/** A list row inside a panel; with `href` the whole row is a link, with `onclick` a button. `actions` holds trailing controls kept outside the row's link. */
 const {
   title,
   caption,
@@ -14,6 +14,7 @@ const {
   current = false,
   leading,
   children,
+  actions,
 }: {
   title: string;
   caption?: string;
@@ -26,6 +27,8 @@ const {
   current?: boolean;
   leading?: Snippet;
   children?: Snippet;
+  /** Trailing controls such as a remove button, kept outside the row's link. */
+  actions?: Snippet;
 } = $props();
 
 const rowClass =
@@ -61,9 +64,54 @@ const rowClass =
   {#if href || onclick}
     <ChevronRightIcon class="size-4 shrink-0 text-label-tertiary" />
   {/if}
+  {#if actions}
+    <span class="relative z-10 shrink-0">{@render actions()}</span>
+  {/if}
 {/snippet}
 
-{#if href}
+{#snippet text()}
+  {#if leading}
+    <span class="shrink-0">{@render leading()}</span>
+  {/if}
+  <span class="min-w-0 flex-1">
+    <span class="block truncate text-subheadline font-medium text-label"
+      >{title}</span
+    >
+    {#if caption}
+      <span
+        class="block text-footnote {tone === 'destructive'
+          ? 'break-words text-destructive'
+          : 'truncate text-label-secondary'}">{caption}</span
+      >
+    {/if}
+    {#if typeof detail === "string"}
+      <span class="block truncate text-footnote text-label-secondary"
+        >{detail}</span
+      >
+    {:else if detail}
+      {@render detail()}
+    {/if}
+  </span>
+{/snippet}
+
+{#if href && actions}
+  <div
+    class={cn(rowClass, "transition-colors hover:bg-fill")}
+    aria-current={current ? "page" : undefined}
+  >
+    <a
+      {href}
+      class="flex min-w-0 flex-1 items-center gap-3 no-underline after:absolute after:inset-0"
+    >
+      {@render text()}
+    </a>
+    {#if children}
+      {@render children()}
+    {/if}
+    <ChevronRightIcon class="size-4 shrink-0 text-label-tertiary" />
+    <span class="relative z-10 shrink-0">{@render actions()}</span>
+  </div>
+{:else if href}
   <a
     {href}
     aria-current={current ? "page" : undefined}

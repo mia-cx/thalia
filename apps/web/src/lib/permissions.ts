@@ -1,9 +1,9 @@
 import type { ThaliaClient } from "./api.ts";
 
-/** One permission name, taken from the API's own group shape. */
+/** One permission name, taken from the Action names an Access rule carries. */
 export type Permission = Awaited<
-  ReturnType<ThaliaClient["groups"]["list"]>
->[number]["permissions"][number];
+  ReturnType<ThaliaClient["access"]["rulesForSubject"]>
+>[number]["action"];
 
 // Every permission needs a key here, so the build fails when the server adds one.
 const displayOrder = {

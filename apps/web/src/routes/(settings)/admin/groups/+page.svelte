@@ -1,5 +1,7 @@
 <script lang="ts">
 import { toast } from "svelte-sonner";
+import { goto } from "$app/navigation";
+import { groupSummary } from "$lib/access.ts";
 import { client } from "$lib/api.ts";
 import AdminPage from "$lib/components/admin/AdminPage.svelte";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
@@ -8,13 +10,7 @@ import ListRow from "$lib/components/admin/ListRow.svelte";
 import { Badge } from "$lib/components/ui/badge/index.ts";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
-import { Switch } from "$lib/components/ui/switch/index.ts";
 import { readFailure } from "$lib/errors.ts";
-import {
-  type Permission,
-  permissionLabels,
-  permissionNames,
-} from "$lib/permissions.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import type { PageProps } from "./$types";
 
@@ -25,45 +21,23 @@ const list = resource(() => client.groups.list());
 const denied = $derived(
   list.failure?.code === "FORBIDDEN" || list.failure?.code === "UNAUTHORIZED",
 );
-type GroupRow = NonNullable<typeof list.data>[number];
 
 type FailureShape = ReturnType<typeof readFailure>;
 
 let addName = $state("");
-let addPerms = $state<Permission[]>([]);
 let addBusy = $state(false);
 let addFailure = $state<FailureShape | undefined>(undefined);
-
-function ordered(row: GroupRow): Permission[] {
-  return permissionNames.filter((name) => row.permissions.includes(name));
-}
-
-function caption(row: GroupRow): string {
-  if (row.builtIn && row.name === "admins") return "Can do everything";
-  const labels = ordered(row).map((name) => permissionLabels[name]);
-  return labels.length === 0 ? "No permissions" : labels.join(", ");
-}
-
-function toggle(perms: Permission[], permission: Permission, on: boolean) {
-  return on ? [...perms, permission] : perms.filter((p) => p !== permission);
-}
-
-function samePermissions(a: readonly Permission[], b: readonly Permission[]) {
-  return a.length === b.length && a.every((perm) => b.includes(perm));
-}
 
 async function addGroup(event: SubmitEvent) {
   event.preventDefault();
   addBusy = true;
   addFailure = undefined;
   const name = addName;
-  const perms = [...addPerms];
   try {
-    const created = await client.groups.create({ name, permissions: perms });
+    const created = await client.groups.create({ name });
     if (addName === name) addName = "";
-    if (samePermissions(addPerms, perms)) addPerms = [];
     toast.success(`${created.name} created`);
-    await list.reload();
+    await goto(`/admin/groups/${created.id}`);
   } catch (error) {
     addFailure = readFailure(error);
   } finally {
@@ -76,14 +50,14 @@ async function addGroup(event: SubmitEvent) {
   <FormGroup
     loading={list.data === undefined && !list.failure ? 3 : undefined}
     failure={list.failure ?? undefined}
-    description="Admins and users are built in and can't be edited. Admins can do everything, and every new account joins users.{adminLocked
+    description="Admins and users are built in. Admins can do everything, and every new account joins users.{adminLocked
       ? ' Only an admin can change groups.'
       : ''}"
   >
     {#each list.data ?? [] as row (row.id)}
       <ListRow
         title={row.name}
-        caption={caption(row)}
+        caption={groupSummary(row)}
         href="/admin/groups/{row.id}"
       >
         {#if row.builtIn}
@@ -117,21 +91,6 @@ async function addGroup(event: SubmitEvent) {
           disabled={adminLocked}
         />
       </FormRow>
-      {#each permissionNames as permission (permission)}
-        <FormRow
-          label={permissionLabels[permission]}
-          for="add-{permission}"
-          inline
-        >
-          <Switch
-            id="add-{permission}"
-            checked={addPerms.includes(permission)}
-            onCheckedChange={(on) =>
-              (addPerms = toggle(addPerms, permission, on))}
-            disabled={adminLocked}
-          />
-        </FormRow>
-      {/each}
       {#snippet actions()}
         <Button type="submit" disabled={addBusy || adminLocked}
           >Create group</Button
