@@ -5,7 +5,7 @@ import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import { verifyPlaybackToken } from "../auth/playback-tokens.ts";
 import { authenticate } from "../auth/sessions.ts";
-import { items } from "../db/schema/index.ts";
+import { items, sessionRegistry } from "../db/schema/index.ts";
 import { serveVersionFile } from "../playback/direct.ts";
 import { planPlayback } from "../playback/planning.ts";
 import { parseHlsName } from "../playback/playlists.ts";
@@ -13,7 +13,13 @@ import { browseAsUser, browseUser } from "./browse.ts";
 import { json, noTimeouts, type RequestContext, type Route } from "./http.ts";
 import { mediaSource, type PlannedSource } from "./media.ts";
 import { readDeviceProfile } from "./profile.ts";
-import { parseGuid, readBody, requiredGuid, toGuid } from "./request.ts";
+import {
+  parseGuid,
+  readBody,
+  requiredGuid,
+  ticksPerSecond,
+  toGuid,
+} from "./request.ts";
 
 type HlsHandler = ReturnType<typeof createHlsHandler>;
 
@@ -67,7 +73,48 @@ async function versionOf(
   return version;
 }
 
-async function directStream(context: RequestContext, itemId: string) {
+async function directStream(
+  hls: HlsHandler,
+  context: RequestContext,
+  itemId: string,
+) {
+  // A progressive plan's TranscodingUrl is `stream.mp4` on this same route: a
+  // non-static request naming a session whose decision is progressive forwards
+  // to the first-party stream route through the shared handler. `static=true`
+  // and session-less requests keep their file direct stream.
+  if (
+    context.request.method === "GET" &&
+    context.query.get("static")?.toLowerCase() !== "true"
+  ) {
+    const sessionId = parseGuid(context.query.get("playSessionId") ?? "");
+    const playback = context.url.searchParams.get("token");
+    if (sessionId !== undefined && playback !== null) {
+      const [session] = await context.db
+        .select({ decision: sessionRegistry.decision })
+        .from(sessionRegistry)
+        .where(eq(sessionRegistry.id, sessionId))
+        .limit(1);
+      if (session?.decision?.delivery === "progressive") {
+        const ticks = Number(context.query.get("startTimeTicks") ?? "0");
+        const start =
+          Number.isFinite(ticks) && ticks > 0 ? ticks / ticksPerSecond : 0;
+        // A paused progressive stream idles for minutes.
+        context.server.timeout(context.request, 0);
+        const response = await hls(
+          new Request(
+            new URL(
+              `/api/playback/${sessionId}/${itemId}/stream?token=${encodeURIComponent(playback)}&start=${start}`,
+              context.request.url,
+            ),
+            { signal: context.request.signal },
+          ),
+          noTimeouts,
+        );
+        if (response === undefined) throw new AuthError("NOT_FOUND");
+        return response;
+      }
+    }
+  }
   const userId = await mediaUserId(context, itemId);
   const version = await versionOf(
     context,
@@ -163,6 +210,11 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
               : subtitleIndex < 0
                 ? null
                 : subtitleIndex;
+          // A resume or server-side seek rides the progressive TranscodingUrl.
+          const startTicks =
+            body.number("StartTimeTicks") ?? query.integer("StartTimeTicks");
+          const startTimeTicks =
+            startTicks !== undefined && startTicks > 0 ? startTicks : undefined;
           const externalSubtitle = version.externalSubtitles.some(
             (track) => track.index === subtitleStreamIndex,
           );
@@ -208,6 +260,7 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
             };
             planned = {
               method: plan.method,
+              delivery: plan.delivery,
               query:
                 token === null
                   ? null
@@ -219,6 +272,7 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
                     }),
               audioStreamIndex: plan.audioStreamIndex,
               subtitleStreamIndex,
+              startTimeTicks,
             };
           } catch (error) {
             // No path plays for this profile. The source still answers, with
@@ -245,7 +299,7 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
           const name = context.params.name ?? "";
           // `stream`, or `stream.mkv` as jellyfin-web and Kodi spell it.
           return /^stream(\.[a-z0-9]+)?$/i.test(name)
-            ? directStream(context, itemId)
+            ? directStream(hls, context, itemId)
             : sessionHls(hls, context, itemId, undefined, name);
         },
       },
@@ -257,14 +311,14 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
               path,
               anonymous: true,
               handle: (context) =>
-                directStream(context, requiredGuid(context.params.id)),
+                directStream(hls, context, requiredGuid(context.params.id)),
             },
             {
               method: "HEAD",
               path,
               anonymous: true,
               handle: (context) =>
-                directStream(context, requiredGuid(context.params.id)),
+                directStream(hls, context, requiredGuid(context.params.id)),
             },
           ] satisfies Route[],
       ),
@@ -284,7 +338,7 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
                 context.db,
                 context.caller.user.id,
                 "download",
-                { type: "library", id: item.libraryId },
+                { type: "item", id: itemId },
               );
             }
             const version = await versionOf(

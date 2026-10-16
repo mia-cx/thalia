@@ -1,7 +1,10 @@
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { RPCHandler } from "@orpc/server/fetch";
 import type { Database } from "../db/client.ts";
-import { createDirectPlayHandler } from "../playback/direct.ts";
+import {
+  createDirectPlayHandler,
+  createDownloadHandler,
+} from "../playback/direct.ts";
 import { createPluginRuntime, type PluginRuntime } from "../plugins/runtime.ts";
 import type { Transcoder } from "../transcoder/index.ts";
 import type { ApiContext } from "./context.ts";
@@ -22,6 +25,7 @@ export function createApiHandler(
   const rpc = new RPCHandler<ApiContext>(thaliaRouter);
   const openapi = new OpenAPIHandler<ApiContext>(thaliaRouter);
   const direct = createDirectPlayHandler(db);
+  const download = createDownloadHandler(db);
   const hls = createHlsHandler(db, transcoder);
   return async (
     request: Request,
@@ -33,6 +37,8 @@ export function createApiHandler(
       return Response.json(await openApiDocument());
     const played = await direct(request, peerAddress);
     if (played !== undefined) return played;
+    const downloaded = await download(request, peerAddress);
+    if (downloaded !== undefined) return downloaded;
     const streamed = await hls(request, server);
     if (streamed !== undefined) return streamed;
     // Bun.serve drops connections idle for ten seconds; the event stream must outlive that.

@@ -4,6 +4,7 @@ import { RPCLink } from "@orpc/client/fetch";
 import type { RouterClient } from "@orpc/server";
 import { eq, sql } from "drizzle-orm";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
+import { setPermissionOverride } from "../auth/permissions.ts";
 import { authenticate, createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
@@ -13,8 +14,10 @@ import {
   contributors,
   credits,
   episodes,
+  files,
   items,
   progress,
+  streams,
   versions,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
@@ -303,17 +306,72 @@ describe.skipIf(!databaseUrl)("browse details", () => {
           order: 0,
         },
       ]);
-      await db.insert(versions).values(
-        ["Director's Cut", "Broadcast"].map((label) => ({
-          itemId: seeded.first.id,
-          itemKind: "episode" as const,
-          libraryId: library.id,
-          label,
-          format: "video" as const,
-          bytes: 5_000_000_000n,
-          durationSeconds: 3300,
-        })),
+      const insertedVersions = await db
+        .insert(versions)
+        .values(
+          ["Director's Cut", "Broadcast"].map((label) => ({
+            itemId: seeded.first.id,
+            itemKind: "episode" as const,
+            libraryId: library.id,
+            label,
+            format: "video" as const,
+            bytes: 5_000_000_000n,
+            durationSeconds: 3300,
+          })),
+        )
+        .returning();
+      const broadcast = insertedVersions.find(
+        (version) => version.label === "Broadcast",
       );
+      if (!broadcast) throw new Error("Version insert returned no row.");
+      const [file] = await db
+        .insert(files)
+        .values({
+          versionId: broadcast.id,
+          itemId: seeded.first.id,
+          libraryId: library.id,
+          rootId: library.rootId,
+          path: "episode.mkv",
+          order: 0,
+          bytes: 5_000_000_000n,
+          modifiedAt: new Date(),
+          container: "mkv",
+          durationSeconds: 3300,
+        })
+        .returning();
+      if (!file) throw new Error("File insert returned no row.");
+      await db.insert(streams).values([
+        {
+          versionId: broadcast.id,
+          fileId: file.id,
+          index: 0,
+          kind: "video",
+          codec: "h264",
+          profile: "high",
+          width: 1920,
+          height: 1080,
+          hdr: "sdr",
+          disposition: { default: true },
+        },
+        {
+          versionId: broadcast.id,
+          fileId: file.id,
+          index: 1,
+          kind: "audio",
+          codec: "aac",
+          language: "eng",
+          channels: 2,
+        },
+        {
+          versionId: broadcast.id,
+          fileId: file.id,
+          index: 2,
+          kind: "subtitle",
+          codec: "subrip",
+          title: "Forced",
+          disposition: { forced: true },
+        },
+      ]);
       const caller = await authenticate(db, token);
 
       const show = await runApi(getItemDetail(db, caller, seeded.show.id));
@@ -389,7 +447,100 @@ describe.skipIf(!databaseUrl)("browse details", () => {
         format: "video",
         durationSeconds: 3300,
         bytes: 5_000_000_000,
+        container: "mkv",
       });
+      expect(episode.versions[0]?.streams).toEqual([
+        {
+          index: 0,
+          kind: "video",
+          codec: "h264",
+          profile: "high",
+          language: null,
+          title: null,
+          channels: null,
+          width: 1920,
+          height: 1080,
+          hdr: "sdr",
+          default: true,
+          forced: false,
+        },
+        {
+          index: 1,
+          kind: "audio",
+          codec: "aac",
+          profile: null,
+          language: "eng",
+          title: null,
+          channels: 2,
+          width: null,
+          height: null,
+          hdr: null,
+          default: false,
+          forced: false,
+        },
+        {
+          index: 2,
+          kind: "subtitle",
+          codec: "subrip",
+          profile: null,
+          language: null,
+          title: "Forced",
+          channels: null,
+          width: null,
+          height: null,
+          hdr: null,
+          default: false,
+          forced: true,
+        },
+      ]);
+      // The other Version has no File: no container, no Streams.
+      expect(episode.versions[1]).toMatchObject({
+        container: null,
+        streams: [],
+      });
+      expect(episode.canDownload).toBe(true);
+    }));
+
+  test("canDownload is false when download is denied on the library", () =>
+    withDatabase(async (db) => {
+      await migrateDatabase(db);
+      const { admin, viewer, token } = await seedViewer(db);
+      const library = await addLibrary(db, "Shows", "shows");
+      const seeded = await seedShow(db, library.id);
+      const caller = await authenticate(db, token);
+      expect(
+        (await runApi(getItemDetail(db, caller, seeded.first.id))).canDownload,
+      ).toBe(true);
+      await setPermissionOverride(db, admin.id, viewer.id, "download", false);
+      expect(
+        (await runApi(getItemDetail(db, caller, seeded.first.id))).canDownload,
+      ).toBe(false);
+    }));
+
+  test("an Item download deny overrides its Library allow", () =>
+    withDatabase(async (db) => {
+      await migrateDatabase(db);
+      const { viewer, token } = await seedViewer(db);
+      const library = await addLibrary(db, "Shows", "shows");
+      const seeded = await seedShow(db, library.id);
+      await db.insert(accessRules).values([
+        {
+          userId: viewer.id,
+          libraryId: library.id,
+          action: "download",
+          allowed: true,
+        },
+        {
+          userId: viewer.id,
+          itemId: seeded.first.id,
+          action: "download",
+          allowed: false,
+        },
+      ]);
+      const caller = await authenticate(db, token);
+      expect(
+        (await runApi(getItemDetail(db, caller, seeded.first.id))).canDownload,
+      ).toBe(false);
     }));
 
   test("a season's children carry overview, runtime and the caller's progress", () =>

@@ -17,8 +17,8 @@ const {
 }: {
   title: string;
   caption?: string;
-  /** A second caption line, for counts and sizes that don't fit the first. */
-  detail?: string;
+  /** A second caption line, or extra content under the caption such as a progress bar. */
+  detail?: string | Snippet;
   /** The caption's colour; destructive marks a failure such as an unreachable registry. */
   tone?: "secondary" | "destructive";
   href?: string;
@@ -47,10 +47,12 @@ const rowClass =
           : 'truncate text-label-secondary'}">{caption}</span
       >
     {/if}
-    {#if detail}
+    {#if typeof detail === "string"}
       <span class="block truncate text-footnote text-label-secondary"
         >{detail}</span
       >
+    {:else if detail}
+      {@render detail()}
     {/if}
   </span>
   {#if children}

@@ -8,23 +8,26 @@ const libraries = [
 ];
 
 describe("shell navigation", () => {
-  test("orders Search, Home, Movies, Shows and adds Settings for admins only", () => {
+  test("orders Search, Home, Movies, Shows, Downloads and adds Settings for admins only", () => {
     const admin = navigation(true, []);
     expect(admin.map((e) => e.label)).toEqual([
       "Search",
       "Home",
       "Movies",
       "Shows",
+      "Downloads",
       "Settings",
     ]);
-    expect(admin[4].href).toBe("/admin");
+    expect(admin[5].href).toBe("/admin");
     const viewer = navigation(false, []);
     expect(viewer.map((e) => e.label)).toEqual([
       "Search",
       "Home",
       "Movies",
       "Shows",
+      "Downloads",
     ]);
+    expect(viewer[4].href).toBe("/downloads");
   });
 
   test("lists a medium's libraries as children only with two or more, sorted by name", () => {

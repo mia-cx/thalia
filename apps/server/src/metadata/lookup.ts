@@ -24,8 +24,8 @@ async function subject(db: Database, actorId: string, id: string) {
   const [item] = await db.select().from(items).where(eq(items.id, id));
   if (item === undefined) return null;
   await requirePermission(db, actorId, "view", {
-    type: "library",
-    id: item.libraryId,
+    type: "item",
+    id: item.id,
   });
   const ids = await db
     .select({ provider: providerIds.provider, value: providerIds.value })
@@ -172,8 +172,8 @@ export async function selectRemoteMetadata(
   const item = await subject(db, actorId, itemId);
   if (item === null) throw new AuthError("NOT_FOUND");
   await requirePermission(db, actorId, "metadata:edit", {
-    type: "library",
-    id: item.libraryId,
+    type: "item",
+    id: item.id,
   });
   if (Object.keys(input.providerIds).length === 0)
     throw new AuthError("INVALID_INPUT");
@@ -245,7 +245,7 @@ export async function downloadRemoteArtwork(
     db,
     actorId,
     "metadata:edit",
-    item ? { type: "library", id: item.libraryId } : server,
+    item ? { type: "item", id: item.id } : server,
   );
   // Libraries and metadata identities have no artwork owner in the core.
   if (item === null) return;

@@ -12,7 +12,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { alias, type PgSelect } from "drizzle-orm/pg-core";
-import { viewableLibraryIds } from "../auth/permissions.ts";
+import { checkPermission, viewableLibraryIds } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import {
   artwork,
@@ -380,6 +380,25 @@ function toView(row: ViewRow) {
 /** One Item as a translation layer shows it: medium fields, selected artwork, provider ids and the caller's marks. */
 export type ItemView = ReturnType<typeof toView>;
 
+/** Reads one visible Item; a denied Item reads as absent in translation layers. */
+export async function getItemView(
+  db: Database,
+  userId: string,
+  itemId: string,
+) {
+  const [row] = await db
+    .select({ id: items.id })
+    .from(items)
+    .where(eq(items.id, itemId));
+  if (
+    !row ||
+    !(await checkPermission(db, userId, "view", { type: "item", id: itemId }))
+  )
+    return undefined;
+  const [view] = await selectViews(db, userId, eq(items.id, itemId), {});
+  return view ? toView(view) : undefined;
+}
+
 /**
  * Lists Item views the user may see, offset-paged, with the total that match.
  * Items outside the user's viewable libraries never match, so a denied id reads as absent.
@@ -412,13 +431,8 @@ export async function listVersionViews(
   userId: string,
   itemId: string,
 ) {
-  return (
-    (
-      await listVersionViewsForItems(db, userId, [itemId], {
-        externalSubtitles: true,
-      })
-    ).get(itemId) ?? []
-  );
+  if (!(await getItemView(db, userId, itemId))) return [];
+  return (await loadVersionViews(db, [itemId], true)).get(itemId) ?? [];
 }
 
 /**
@@ -434,8 +448,17 @@ export async function listVersionViewsForItems(
   { externalSubtitles = false } = {},
 ): Promise<Map<string, VersionView[]>> {
   const viewable = await viewableLibraryIds(db, userId);
+  if (viewable.length === 0 || itemIds.length === 0) return new Map();
+  return loadVersionViews(db, itemIds, externalSubtitles, viewable);
+}
+
+async function loadVersionViews(
+  db: Database,
+  itemIds: string[],
+  externalSubtitles: boolean,
+  viewable?: string[],
+): Promise<Map<string, VersionView[]>> {
   const byItem = new Map<string, VersionView[]>();
-  if (viewable.length === 0 || itemIds.length === 0) return byItem;
   const rows = await versionRows(db, itemIds, viewable);
   const filesPerVersion = new Map<string, number>();
   for (const row of rows)
@@ -508,7 +531,7 @@ export async function listVersionViewsForItems(
 }
 
 // Versions joined to their Files and the root path each File's path is relative to.
-function versionRows(db: Database, itemIds: string[], viewable: string[]) {
+function versionRows(db: Database, itemIds: string[], viewable?: string[]) {
   return db
     .select({
       itemId: versions.itemId,
@@ -530,7 +553,9 @@ function versionRows(db: Database, itemIds: string[], viewable: string[]) {
         inArray(versions.itemId, itemIds),
         eq(versions.origin, "imported"),
         eq(versions.format, "video"),
-        inArray(versions.libraryId, viewable),
+        viewable === undefined
+          ? undefined
+          : inArray(versions.libraryId, viewable),
       ),
     )
     .orderBy(

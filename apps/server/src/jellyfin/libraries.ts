@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { listItemViews } from "../api/views.ts";
+import { getItemView, listItemViews } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
 import type { JsonObject, JsonValue } from "../db/schema/common.ts";
 import {
@@ -382,13 +382,7 @@ const innerRoutes: Extract<Route, { anonymous?: false }>[] = [
         });
       else {
         const edit = metadataEdit(dto);
-        if (
-          (
-            await listItemViews(context.db, context.caller.user.id, {
-              ids: [id],
-            })
-          ).items.length
-        )
+        if (await getItemView(context.db, context.caller.user.id, id))
           await editItemMetadata(context.db, context.caller.user.id, id, edit);
         else
           await editContributorMetadata(

@@ -88,6 +88,8 @@ export const ItemDetail = Schema.Struct({
       character: Schema.NullOr(Schema.String),
     }),
   ),
+  /** Whether the caller may download this Item's files. */
+  canDownload: Schema.Boolean,
   versions: Schema.Array(
     Schema.Struct({
       id: Schema.UUID,
@@ -95,6 +97,24 @@ export const ItemDetail = Schema.Struct({
       format: Schema.Literal("video", "audio", "ebook", "image"),
       durationSeconds: Schema.NullOr(Schema.Number),
       bytes: Schema.Number,
+      /** The container of the Version's first File. */
+      container: Schema.NullOr(Schema.String),
+      streams: Schema.Array(
+        Schema.Struct({
+          index: Schema.Int,
+          kind: Schema.Literal("video", "audio", "subtitle"),
+          codec: Schema.String,
+          profile: Schema.NullOr(Schema.String),
+          language: Schema.NullOr(Schema.String),
+          title: Schema.NullOr(Schema.String),
+          channels: Schema.NullOr(Schema.Int),
+          width: Schema.NullOr(Schema.Int),
+          height: Schema.NullOr(Schema.Int),
+          hdr: Schema.NullOr(Schema.String),
+          default: Schema.Boolean,
+          forced: Schema.Boolean,
+        }),
+      ),
     }),
   ),
   children: Schema.Array(DetailChild),
@@ -366,10 +386,11 @@ export const Group = Schema.Struct({
   permissions: Schema.Array(PermissionName),
 });
 
-/** The per-user bitrate cap and content-rating ceiling. */
+/** The per-user bitrate cap, content-rating ceiling and direct-stream preference. */
 export const UserSettings = Schema.Struct({
   bitrateCapBps: Schema.NullOr(Schema.Int),
   contentRatingCeiling: Schema.NullOr(Schema.String),
+  preferDirectStream: Schema.Boolean,
 });
 
 /** One user's full access shape behind the per-user screen. */

@@ -1,14 +1,17 @@
 <script lang="ts">
+import CircleCheckIcon from "@lucide/svelte/icons/circle-check";
+import DownloadIcon from "@lucide/svelte/icons/download";
 import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
 import HeartIcon from "@lucide/svelte/icons/heart";
 import PlayIcon from "@lucide/svelte/icons/play";
 import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
 import StarIcon from "@lucide/svelte/icons/star";
-import { onDestroy } from "svelte";
+import { onDestroy, onMount } from "svelte";
 import { toast } from "svelte-sonner";
 import { page } from "$app/state";
 import { client } from "$lib/api.ts";
 import {
+  cardLabel,
   type DetailChild,
   episodeCode,
   type ItemDetail,
@@ -18,6 +21,11 @@ import { Button } from "$lib/components/ui/button/index.ts";
 import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.ts";
 import * as Popover from "$lib/components/ui/popover/index.ts";
 import * as Tooltip from "$lib/components/ui/tooltip/index.ts";
+import {
+  type DownloadRecord,
+  downloads,
+  downloadsSupported,
+} from "$lib/downloads/index.ts";
 import { followLibrary } from "$lib/events.ts";
 import { pickVersion } from "$lib/playback.ts";
 import { createRatingWrites } from "$lib/rating.ts";
@@ -126,6 +134,51 @@ function moveStars(event: KeyboardEvent) {
   star?.focus();
 }
 
+const downloadVersion = $derived(pickVersion(detail.versions, null, undefined));
+const downloadable = $derived(
+  (detail.kind === "movie" || detail.kind === "episode") &&
+    detail.canDownload &&
+    downloadsSupported() &&
+    !$downloads.unavailable &&
+    downloadVersion !== undefined,
+);
+const downloadRecord = $derived(
+  $downloads.records.find((record) => record.itemId === detail.id),
+);
+
+function downloadLabel(record: DownloadRecord | undefined): string {
+  if (record === undefined) return "Download";
+  switch (record.state) {
+    case "queued":
+    case "downloading":
+      return record.bytes > 0
+        ? `Downloading, ${Math.round((record.written / record.bytes) * 100)}%`
+        : "Downloading";
+    case "paused":
+      return "Download paused";
+    case "failed":
+      return "Download failed";
+    case "complete":
+      return "Downloaded";
+  }
+}
+
+async function downloadItem() {
+  if (downloadVersion === undefined) return;
+  try {
+    await downloads.start({
+      itemId: detail.id,
+      versionId: downloadVersion.id,
+      title: cardLabel(detail),
+      bytes: downloadVersion.bytes,
+      container: downloadVersion.container,
+      streams: [...downloadVersion.streams],
+    });
+  } catch {
+    toast.error("Couldn't start the download");
+  }
+}
+
 let refreshAbort: AbortController | undefined;
 
 async function refreshMetadata() {
@@ -147,6 +200,9 @@ async function refreshMetadata() {
   }
 }
 
+onMount(() => {
+  if (downloadsSupported()) void downloads.restore();
+});
 onDestroy(() => refreshAbort?.abort());
 </script>
 
@@ -269,6 +325,44 @@ onDestroy(() => refreshAbort?.abort());
       </div>
     </Popover.Content>
   </Popover.Root>
+
+  {#if downloadable}
+    {@const dl = downloadLabel(downloadRecord)}
+    <Tooltip.Root>
+      <Tooltip.Trigger>
+        {#snippet child({ props })}
+          {#if downloadRecord === undefined}
+            <Button
+              {...props}
+              variant="glass"
+              size="icon-lg"
+              class="size-11"
+              onclick={downloadItem}
+              aria-label="Download"
+            >
+              <DownloadIcon />
+            </Button>
+          {:else}
+            <Button
+              {...props}
+              variant="glass"
+              size="icon-lg"
+              class="size-11 text-tint"
+              href="/downloads"
+              aria-label={dl}
+            >
+              {#if downloadRecord.state === "complete"}
+                <CircleCheckIcon />
+              {:else}
+                <DownloadIcon />
+              {/if}
+            </Button>
+          {/if}
+        {/snippet}
+      </Tooltip.Trigger>
+      <Tooltip.Content>{dl}</Tooltip.Content>
+    </Tooltip.Root>
+  {/if}
 
   {#if admin}
     <DropdownMenu.Root>

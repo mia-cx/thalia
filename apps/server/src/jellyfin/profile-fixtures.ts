@@ -3,6 +3,8 @@
  * closed source, so its profile is a direct-play client that opens MKV with
  * TrueHD and draws every subtitle itself. Swiftfin's is its AVPlayer profile
  * reduced to HLS. Findroid's is the empty "Direct play all" profile it sends.
+ * The progressive profile takes a single MP4 transcode over plain http, as a
+ * client without HLS support would.
  */
 export const deviceProfiles = {
   infuse: {
@@ -76,6 +78,26 @@ export const deviceProfiles = {
     SubtitleProfiles: [
       { Format: "vtt", Method: "Hls" },
       { Format: "srt", Method: "External" },
+    ],
+  },
+  progressive: {
+    Name: "MP4 transcode, no HLS",
+    MaxStreamingBitrate: 20_000_000,
+    DirectPlayProfiles: [],
+    TranscodingProfiles: [
+      {
+        Type: "Video",
+        Container: "mp4",
+        Protocol: "http",
+        Context: "Streaming",
+        VideoCodec: "h264",
+        AudioCodec: "aac",
+      },
+    ],
+    CodecProfiles: [],
+    SubtitleProfiles: [
+      { Format: "srt", Method: "External" },
+      { Format: "ass", Method: "External" },
     ],
   },
   findroid: {

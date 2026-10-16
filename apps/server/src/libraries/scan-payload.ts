@@ -1,4 +1,6 @@
-import type { JobPayload, ScanChange } from "../db/schema/index.ts";
+import { and, eq, sql } from "drizzle-orm";
+import type { Database } from "../db/client.ts";
+import { type JobPayload, jobs, type ScanChange } from "../db/schema/index.ts";
 import type { createJobQueue, Dedupe } from "../jobs/queue.ts";
 import { rootedKey } from "./roots.ts";
 
@@ -6,6 +8,56 @@ type Queue = ReturnType<typeof createJobQueue>;
 type EnqueueOptions = Parameters<Queue["enqueue"]>[1];
 
 type ScanPayload = Extract<JobPayload, { type: "scan" }>;
+type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+/** Retains queued move sources and passes their earlier provider assertions to the follow-up. Runs under the Library write lock. */
+export async function queuedScanMoveSources(
+  tx: Transaction,
+  libraryId: string,
+  changes: readonly ScanChange[],
+) {
+  const queued = await tx
+    .select({ id: jobs.id, payload: jobs.payload })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.type, "scan"),
+        eq(jobs.state, "queued"),
+        sql`${jobs.payload}->>'libraryId' = ${libraryId}`,
+        sql`${jobs.payload}->'changes' is not null`,
+      ),
+    )
+    .orderBy(jobs.id)
+    .for("update");
+  let assertions = scanAssertions(changes);
+  const sources = new Set<string>();
+  for (const { id, payload } of queued) {
+    if (payload.type !== "scan") continue;
+    const pending = payload.changes ?? [];
+    const moved = new Set(
+      pending.flatMap((change) =>
+        change.kind === "move"
+          ? [rootedKey({ rootId: change.rootId, path: change.previousPath })]
+          : [],
+      ),
+    );
+    for (const key of moved) sources.add(key);
+    const carried = assertions.filter(
+      (assertion) =>
+        moved.has(rootedKey(assertion)) &&
+        Object.keys(assertion.providerIds).length > 0,
+    );
+    // Earlier assertions precede the follow-up's changes, so its corrections
+    // still win. Locking its row prevents an enqueue from losing either input.
+    if (carried.length > 0)
+      await tx
+        .update(jobs)
+        .set({ payload: { ...payload, changes: [...carried, ...pending] } })
+        .where(eq(jobs.id, id));
+    assertions = scanAssertions([...assertions, ...pending]);
+  }
+  return sources;
+}
 
 /** Retains provider assertions at their surviving destinations, in event arrival order. */
 export function scanAssertions(changes: readonly ScanChange[]) {

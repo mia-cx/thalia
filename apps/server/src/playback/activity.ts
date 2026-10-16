@@ -63,19 +63,19 @@ export async function listPlaybackActivity(
 /** Renews one owned playback session without changing its state, position, or play count. */
 export async function pingPlayback(db: Database, actorId: string, id: string) {
   const [session] = await db
-    .select({ userId: sessionRegistry.userId, libraryId: items.libraryId })
+    .select({ userId: sessionRegistry.userId, itemId: sessionRegistry.itemId })
     .from(sessionRegistry)
     .innerJoin(items, eq(items.id, sessionRegistry.itemId))
     .where(eq(sessionRegistry.id, id));
   if (session === undefined) throw new AuthError("NOT_FOUND");
   if (session.userId !== actorId) throw new AuthError("FORBIDDEN");
   await requirePermission(db, actorId, "view", {
-    type: "library",
-    id: session.libraryId,
+    type: "item",
+    id: session.itemId,
   });
   await requirePermission(db, actorId, "play", {
-    type: "library",
-    id: session.libraryId,
+    type: "item",
+    id: session.itemId,
   });
   await db
     .update(sessionRegistry)

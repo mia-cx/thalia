@@ -9,17 +9,21 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { setupAdmin } from "../auth/accounts.ts";
 import { AuthError } from "../auth/errors.ts";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   events,
   files,
+  itemAncestors,
   items,
   jobs,
   libraries,
   probeCache,
+  progress,
+  providerIds,
   scanFailures,
   segmentTimelines,
   versions,
@@ -33,14 +37,20 @@ import { createKeyframeFixture } from "../mediums/video-common/keyframe-fixtures
 import { readKeyframeIndex } from "../mediums/video-common/keyframes.ts";
 import { probeVideo } from "../mediums/video-common/probe.ts";
 import { twoRungPolicy } from "../stored/testing.ts";
-import { libraryConcurrencyKey, registerLibraryJobs } from "./jobs.ts";
+import {
+  libraryConcurrencyKey,
+  registerLibraryJobs,
+  runScanJob,
+} from "./jobs.ts";
 import {
   keyframesConcurrencyKey,
   runKeyframeIndexJob,
 } from "./keyframe-index.ts";
 import type { RootedPath } from "./roots.ts";
 import { libraryScanSource, scanDirectory, scanShowDirectory } from "./scan.ts";
+import { enqueueScan } from "./scan-payload.ts";
 import { addRoot, insertLibraries } from "./testing.ts";
+import { MissingLibraryPathError } from "./walker.ts";
 
 /** An ffprobe plus index read, like a watcher-reported probe carries. */
 const probeWithIndex = async (path: string) => ({
@@ -93,6 +103,232 @@ async function expectHandlerError(
 }
 
 describe.skipIf(!databaseUrl)("library scan jobs", () => {
+  for (const medium of ["movies", "shows"] as const) {
+    for (const assertion of [
+      "none",
+      "running",
+      "follow-up",
+      "during-write",
+    ] as const) {
+      test(`${medium}: a queued rename preserves identity and ${assertion} provider assertions during reconciliation`, () =>
+        withDatabase((db) =>
+          withTempRoot(async (root) => {
+            const scan =
+              medium === "movies" ? scanDirectory : scanShowDirectory;
+            const before =
+              medium === "movies" ? "Alien (1979).mkv" : "Alien S01E01.mkv";
+            const after =
+              medium === "movies" ? "Renamed (2026).mkv" : "Renamed S01E01.mkv";
+            const neighbour =
+              medium === "movies" ? "Heat (1995).mkv" : "Heat S01E01.mkv";
+            const deleted =
+              medium === "movies" ? "Deleted (2020).mkv" : "Deleted S01E01.mkv";
+            for (const path of [before, neighbour, deleted])
+              await createVideoFixture(join(root, path));
+            const library = await insertLibrary(db, medium, root, medium);
+            await scan(db, library.id, ".");
+            const fileRows = await db.select().from(files);
+            const original = fileRows.find((file) => file.path === before);
+            const removed = fileRows.find((file) => file.path === deleted);
+            const other = fileRows.find((file) => file.path === neighbour);
+            if (!original || !removed || !other)
+              throw new Error("Fixture Files missing.");
+            const removedAncestors = new Set(
+              (
+                await db
+                  .select()
+                  .from(itemAncestors)
+                  .where(eq(itemAncestors.descendantId, removed.itemId))
+              ).map((row) => row.ancestorId),
+            );
+            const [rootItem] = await db
+              .select({ id: items.id })
+              .from(items)
+              .innerJoin(itemAncestors, eq(itemAncestors.ancestorId, items.id))
+              .where(
+                and(
+                  eq(itemAncestors.descendantId, original.itemId),
+                  isNull(items.parentId),
+                ),
+              );
+            if (!rootItem) throw new Error("Fixture root Item missing.");
+            const itemIdsBefore = (await db.select().from(items))
+              .filter((item) => !removedAncestors.has(item.id))
+              .map((item) => item.id)
+              .sort();
+            const admin = await setupAdmin(db, {
+              username: "admin",
+              password: "admin-pass",
+            });
+            await db.insert(progress).values({
+              userId: admin.id,
+              itemId: original.itemId,
+              versionId: original.versionId,
+              format: "video",
+              positionSeconds: 33,
+              playCount: 2,
+            });
+            const progressBefore = await db.select().from(progress);
+            const assertedIds: Record<string, string> =
+              medium === "movies" ? { tmdb: "348" } : { tvdb: "123" };
+            const queue = createJobQueue(db);
+            const options = {
+              concurrencyKey: libraryConcurrencyKey(library.id),
+            };
+            const earlierAssertion =
+              assertion === "running" || assertion === "during-write";
+            await enqueueScan(
+              queue,
+              {
+                type: "scan",
+                libraryId: library.id,
+                path: ".",
+                reconcileMissing: true,
+                changes: earlierAssertion
+                  ? [
+                      {
+                        kind: "add",
+                        rootId: library.rootId,
+                        path: before,
+                        providerIds: assertedIds,
+                      },
+                    ]
+                  : [],
+              },
+              { ...options, priority: 1 },
+            );
+            const running = await queue.claim(["scan"]);
+            if (running?.payload.type !== "scan")
+              throw new Error("Scan not claimed.");
+            const base = await libraryScanSource(db, library);
+            // The assertion race renames before the walk, after the claim
+            // fixed its input. The other cases rename after the held walk.
+            if (earlierAssertion)
+              await rename(join(root, before), join(root, after));
+            await rm(join(root, deleted));
+            const walked = Promise.withResolvers<void>();
+            const release = Promise.withResolvers<void>();
+            let submitted = false;
+            const queueFollowup = async () => {
+              const followup = await enqueueScan(
+                queue,
+                {
+                  type: "scan",
+                  libraryId: library.id,
+                  path: ".",
+                  reconcileMissing: true,
+                  changes: [
+                    {
+                      kind: "move",
+                      rootId: library.rootId,
+                      path: after,
+                      previousPath: before,
+                      providerIds: assertion === "follow-up" ? assertedIds : {},
+                    },
+                  ],
+                },
+                options,
+              );
+              expect(followup.id).not.toBe(running.id);
+            };
+            const scanning = runScanJob(db, running.payload, running, {
+              ...base,
+              verify: async (file) => {
+                await base.verify(file);
+                if (assertion !== "during-write" || submitted) return;
+                submitted = true;
+                await queueFollowup();
+              },
+              walk: async (path, recursive) => {
+                const snapshot = await base.walk(path, recursive);
+                walked.resolve();
+                await release.promise;
+                return snapshot;
+              },
+            });
+            try {
+              await walked.promise;
+              if (!earlierAssertion)
+                await rename(join(root, before), join(root, after));
+              if (assertion !== "during-write") await queueFollowup();
+            } finally {
+              release.resolve();
+            }
+            if (earlierAssertion) {
+              await scanning;
+              await queue.complete(running);
+            } else {
+              // Lock-time verification rejects the stale walk. Reclaim its
+              // retry immediately, without sleeping through the queue delay.
+              const error: unknown = await scanning.catch(
+                (error: unknown) => error,
+              );
+              expect(error).toBeInstanceOf(MissingLibraryPathError);
+              await queue.fail(running, error);
+              await db
+                .update(jobs)
+                .set({ runAfter: new Date(0) })
+                .where(eq(jobs.id, running.id));
+              const retry = await queue.claim(["scan"]);
+              expect(retry?.id).toBe(running.id);
+              if (retry?.payload.type !== "scan")
+                throw new Error("Retry not claimed.");
+              await runScanJob(db, retry.payload, retry);
+              await queue.complete(retry);
+            }
+            // Retain only the queued move's source; genuine deletions still go.
+            expect(
+              await db.select().from(files).where(eq(files.id, original.id)),
+            ).toHaveLength(1);
+            expect(
+              await db.select().from(files).where(eq(files.id, removed.id)),
+            ).toEqual([]);
+            const followup = await queue.claim(["scan"]);
+            if (followup?.payload.type !== "scan")
+              throw new Error("Follow-up not claimed.");
+            await runScanJob(db, followup.payload, followup);
+            await queue.complete(followup);
+            expect(
+              await db.select().from(files).where(eq(files.path, after)),
+            ).toMatchObject([
+              {
+                id: original.id,
+                itemId: original.itemId,
+                versionId: original.versionId,
+              },
+            ]);
+            expect(
+              await db
+                .select()
+                .from(versions)
+                .where(eq(versions.id, original.versionId)),
+            ).toHaveLength(1);
+            expect(await db.select().from(progress)).toEqual(progressBefore);
+            expect(
+              (await db.select().from(items)).map((item) => item.id).sort(),
+            ).toEqual(itemIdsBefore);
+            expect(
+              await db.select().from(files).where(eq(files.id, other.id)),
+            ).toHaveLength(1);
+            if (assertion !== "none") {
+              expect(await db.select().from(providerIds)).toMatchObject([
+                {
+                  itemId: rootItem.id,
+                  provider: medium === "movies" ? "tmdb" : "tvdb",
+                  value: medium === "movies" ? "348" : "123",
+                  metadataDerived: false,
+                },
+              ]);
+              expect(await db.select().from(providerIds)).toHaveLength(1);
+            }
+            expect(
+              (await listJobs(db, { type: "scan" })).map((job) => job.state),
+            ).toEqual(["completed", "completed"]);
+          }),
+        ));
+    }
+  }
+
   test("a full scan cleans up a vanished folder represented only by failures", () =>
     withDatabase((db) =>
       withTempRoot(async (root) => {

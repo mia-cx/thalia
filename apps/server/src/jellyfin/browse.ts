@@ -1,5 +1,6 @@
 import {
   countItemKinds,
+  getItemView,
   type ItemView,
   type ItemViewQuery,
   listContributorCredits,
@@ -268,18 +269,16 @@ export const additionalBrowseRoutes: Route[] = [
         | Awaited<ReturnType<typeof itemDtos>>[number]
         | ReturnType<typeof libraryDto>
       )[] = [];
-      let [item] = (
-        await listItemViews(db, caller.user.id, {
-          ids: [requiredGuid(params.itemId)],
-        })
-      ).items;
+      let item = await getItemView(
+        db,
+        caller.user.id,
+        requiredGuid(params.itemId),
+      );
       if (item === undefined) throw new AuthError("NOT_FOUND");
       const libraryId = item.libraryId;
       const ancestors: ItemView[] = [];
       while (item?.parentId != null) {
-        [item] = (
-          await listItemViews(db, caller.user.id, { ids: [item.parentId] })
-        ).items;
+        item = await getItemView(db, caller.user.id, item.parentId);
         if (item !== undefined) ancestors.push(item);
       }
       result.push(...(await itemDtos(context, ancestors)));
@@ -302,9 +301,11 @@ export const additionalBrowseRoutes: Route[] = [
       path,
       handle: async (context) => {
         const id = requiredGuid(context.params.itemId);
-        const [baseline] = (
-          await listItemViews(context.db, context.caller.user.id, { ids: [id] })
-        ).items;
+        const baseline = await getItemView(
+          context.db,
+          context.caller.user.id,
+          id,
+        );
         if (baseline === undefined) throw new AuthError("NOT_FOUND");
         return viewsResult(context, {
           ...(await browseSelection(context)),

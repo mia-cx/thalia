@@ -149,7 +149,12 @@ const positive = (value: string | null | undefined) => {
  * Translates a Jellyfin DeviceProfile into the engine's client profile.
  * DirectPlayProfiles give the containers and codecs a client opens as files,
  * an empty field meaning any, as in Jellyfin. HLS TranscodingProfiles add the codecs it decodes over HLS, first in
- * preference. Unconditional CodecProfiles narrow video profiles, level, size,
+ * preference and marking the profile HLS-capable. An http TranscodingProfile
+ * that outputs mp4 marks the profile progressive, since the progressive
+ * stream is always fragmented MP4; its codecs then replace the HLS ones,
+ * because live sessions for that client stream progressively. Stored HLS
+ * keeps its own codec lists when the client supports both transports.
+ * Unconditional CodecProfiles narrow video profiles, level, size,
  * audio channels and HDR flavours; a profile without any VideoRangeType
  * condition takes every flavour, as Jellyfin does. Embedded SubtitleProfiles
  * give the formats it draws. `maxStreamingBitrate` from the request wins over
@@ -165,9 +170,16 @@ export function readDeviceProfile(
   const isVideo = (entry: { type?: string | null }) =>
     (lowered(entry.type) ?? "video") === "video";
   const direct = (profile.directplayprofiles ?? []).filter(isVideo);
-  const hls = (profile.transcodingprofiles ?? []).filter(
-    (entry) => isVideo(entry) && lowered(entry.protocol) === "hls",
+  const transcode = (profile.transcodingprofiles ?? []).filter(isVideo);
+  const hls = transcode.filter((entry) => lowered(entry.protocol) === "hls");
+  // A progressive stream is always fragmented MP4, so only an http profile
+  // that outputs mp4 counts; an http mkv/ts one matches nothing we serve.
+  const http = transcode.filter(
+    (entry) =>
+      lowered(entry.protocol) === "http" &&
+      translate("container", entry.container).includes("mp4"),
   );
+  const progressive = http.length > 0;
   // Jellyfin reads an empty DirectPlayProfile field as any value, and
   // Swiftfin's direct play mode sends only the type.
   const directNames = (
@@ -179,12 +191,15 @@ export function readDeviceProfile(
         ? translate(kind, entry[field])
         : Object.values(jellyfinNames[kind]).flat(),
     );
+  // A progressive client's live sessions stream progressively, so its HLS
+  // codecs do not count toward the decode list; direct play codecs always do.
   const decodes = (
+    entries: typeof transcode,
     kind: "video" | "audio",
     field: "videocodec" | "audiocodec",
   ) => [
     ...new Set([
-      ...hls.flatMap((entry) => translate(kind, entry[field])),
+      ...entries.flatMap((entry) => translate(kind, entry[field])),
       ...directNames(kind, field),
     ]),
   ];
@@ -226,38 +241,41 @@ export function readDeviceProfile(
       )
       .map((condition) => condition.value ?? "");
 
-  const videoNames = decodes("video", "videocodec");
-  const videoCodecs = videoNames.map((codec) => {
-    const found = conditions(["video"], codec);
-    const profiles = equalsAny(found, "videoprofile");
-    return {
+  const codecs = (entries: typeof transcode) => ({
+    videoCodecs: decodes(entries, "video", "videocodec").map((codec) => {
+      const found = conditions(["video"], codec);
+      const profiles = equalsAny(found, "videoprofile");
+      return {
+        codec,
+        ...(profiles.length === 0
+          ? {}
+          : {
+              profiles: profiles.flatMap((value) =>
+                value.split("|").map(profileName),
+              ),
+            }),
+        maxLevel: limit(found, "videolevel"),
+        maxWidth: limit(found, "width"),
+        maxHeight: limit(found, "height"),
+      };
+    }),
+    audioCodecs: decodes(entries, "audio", "audiocodec").map((codec) => ({
       codec,
-      ...(profiles.length === 0
-        ? {}
-        : {
-            profiles: profiles.flatMap((value) =>
-              value.split("|").map(profileName),
-            ),
-          }),
-      maxLevel: limit(found, "videolevel"),
-      maxWidth: limit(found, "width"),
-      maxHeight: limit(found, "height"),
-    };
+      maxChannels:
+        limit(conditions(["videoaudio", "audio"], codec), "audiochannels") ??
+        uncappedChannels,
+    })),
   });
-  const audioNames = decodes("audio", "audiocodec");
+  const liveEntries = progressive ? http : hls;
+  const videoNames = decodes(liveEntries, "video", "videocodec");
   const ranges = videoNames.flatMap((codec) =>
     equalsAny(conditions(["video"], codec), "videorangetype"),
   );
   const bitrate = maxStreamingBitrate ?? profile.maxstreamingbitrate;
   return {
     containers: [...new Set(directNames("container", "container"))],
-    videoCodecs,
-    audioCodecs: audioNames.map((codec) => ({
-      codec,
-      maxChannels:
-        limit(conditions(["videoaudio", "audio"], codec), "audiochannels") ??
-        uncappedChannels,
-    })),
+    ...codecs(liveEntries),
+    ...(progressive && hls.length > 0 ? { hlsCodecs: codecs(hls) } : {}),
     subtitleFormats: [
       ...new Set(
         (profile.subtitleprofiles ?? [])
@@ -280,5 +298,7 @@ export function readDeviceProfile(
       bitrate == null || !Number.isFinite(bitrate) || bitrate <= 0
         ? null
         : Math.floor(bitrate),
+    progressive,
+    hls: hls.length > 0,
   };
 }

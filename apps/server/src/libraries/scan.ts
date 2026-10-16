@@ -60,7 +60,7 @@ import {
   rootedKey,
   rootsOf,
 } from "./roots.ts";
-import { scanAssertions } from "./scan-payload.ts";
+import { queuedScanMoveSources, scanAssertions } from "./scan-payload.ts";
 import { persistScanTimelines } from "./timelines.ts";
 import {
   type LibraryFile,
@@ -644,17 +644,23 @@ export async function pruneEmptiedItems(
  * Removes the imported Files a walk missed from these root Items'
  * subtrees. A stale File inside the scan's Item folder is confirmed
  * missing first; one outside it goes only when it is gone from its root.
+ * Queued moves retain their source Files until the follow-up applies them.
  * Returns the leaf Item ids whose Files were removed, for pruning.
  */
 async function reconcileStaleFiles(
   tx: Transaction,
+  libraryId: string,
   source: ScanSource,
   rules: ScanRules,
   scope: string,
   itemIds: readonly string[],
   walkedKeys: ReadonlySet<string>,
+  changes: readonly ScanChange[],
 ): Promise<string[]> {
-  if (itemIds.length === 0) return [];
+  if (itemIds.length === 0) {
+    await queuedScanMoveSources(tx, libraryId, changes);
+    return [];
+  }
   const held = await tx
     .select({
       id: files.id,
@@ -676,11 +682,15 @@ async function reconcileStaleFiles(
   await source.confirmMissing(
     stale.filter((file) => inScope(rules, scope, false, file.path)),
   );
-  const gone = [];
+  const missing = [];
   for (const file of stale) {
     if (inScope(rules, scope, false, file.path) || !(await source.exists(file)))
-      gone.push(file);
+      missing.push(file);
   }
+  // Enqueues do not take the Library lock. Read them after the filesystem
+  // checks, just before deletion, so a move arriving during the write counts.
+  const pendingMoves = await queuedScanMoveSources(tx, libraryId, changes);
+  const gone = missing.filter((file) => !pendingMoves.has(rootedKey(file)));
   const goneIds = gone.map((file) => file.id);
   if (goneIds.length > 0)
     await tx.delete(files).where(inArray(files.id, goneIds));
@@ -1223,13 +1233,17 @@ export async function scanDirectory(
         );
       const touched = await reconcileStaleFiles(
         tx,
+        libraryId,
         source,
         rules,
         path,
         [...new Set([...itemIds, ...atFolder.map((row) => row.id)])],
         walkedKeys,
+        changes,
       );
       await pruneEmptiedItems(tx, touched, deletedArtwork);
+    } else {
+      await queuedScanMoveSources(tx, libraryId, changes);
     }
 
     await persistScanFailures(tx, rules, path, walked, result);
@@ -1819,13 +1833,17 @@ export async function scanShowDirectory(
         );
       const touched = await reconcileStaleFiles(
         tx,
+        libraryId,
         source,
         rules,
         path,
         [...new Set([...itemIds, ...atFolder.map((row) => row.id)])],
         walkedKeys,
+        changes,
       );
       await pruneEmptiedItems(tx, touched, deletedArtwork);
+    } else {
+      await queuedScanMoveSources(tx, libraryId, changes);
     }
 
     await persistScanFailures(tx, rules, path, walked, result);
