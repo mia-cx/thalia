@@ -42,6 +42,12 @@ describe("matchSections", () => {
     ]);
   });
 
+  test("matches the playback section by keyword", () => {
+    expect(matchSections("autoplay", false).map((s) => s.id)).toEqual([
+      "playback",
+    ]);
+  });
+
   test("no match returns empty", () => {
     expect(matchSections("zzz", true)).toEqual([]);
   });
@@ -71,6 +77,7 @@ describe("currentSection", () => {
     expect(at("/settings")).toBeUndefined();
     expect(at("/settings/account")).toBe("account");
     expect(at("/settings/account/password")).toBe("account");
+    expect(at("/settings/playback")).toBe("playback");
   });
 });
 

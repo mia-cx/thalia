@@ -8,6 +8,7 @@ import {
   sessions,
   settings,
   userGroups,
+  userSettings,
   users,
 } from "../db/schema/index.ts";
 import { hashLocalPassword, publicUserFields } from "./accounts.ts";
@@ -87,6 +88,41 @@ export async function writeClientPreference(
       target: settings.key,
       set: { value, updatedAt: new Date() },
     });
+}
+
+/** Reads a user's playback preferences; a user with no settings row gets the defaults. */
+export async function readPlaybackPreferences(
+  db: Database,
+  actorId: string,
+  userId: string,
+): Promise<{ preferDirectStream: boolean; autoplayNextEpisode: boolean }> {
+  await requireAccountAccess(db, actorId, userId);
+  const [row] = await db
+    .select({
+      preferDirectStream: userSettings.preferDirectStream,
+      autoplayNextEpisode: userSettings.autoplayNextEpisode,
+    })
+    .from(userSettings)
+    .where(eq(userSettings.userId, userId));
+  return row ?? { preferDirectStream: false, autoplayNextEpisode: true };
+}
+
+/** Writes a user's playback preferences; omitted fields keep their stored value. */
+export async function writePlaybackPreferences(
+  db: Database,
+  actorId: string,
+  userId: string,
+  input: { preferDirectStream?: boolean; autoplayNextEpisode?: boolean },
+): Promise<void> {
+  await requireAccountAccess(db, actorId, userId);
+  const fields = Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined),
+  );
+  if (Object.keys(fields).length === 0) return;
+  await db
+    .insert(userSettings)
+    .values({ userId, ...fields })
+    .onConflictDoUpdate({ target: userSettings.userId, set: fields });
 }
 
 /** Sets only the display name for its owner or an administrator; the username stays. */

@@ -1,5 +1,6 @@
 <script lang="ts">
 import ActivityIcon from "@lucide/svelte/icons/activity";
+import CirclePlayIcon from "@lucide/svelte/icons/circle-play";
 import GaugeIcon from "@lucide/svelte/icons/gauge";
 import LibraryIcon from "@lucide/svelte/icons/library";
 import PuzzleIcon from "@lucide/svelte/icons/puzzle";
@@ -38,6 +39,7 @@ const icons = {
   puzzle: PuzzleIcon,
   settings: SettingsIcon,
   "user-round": UserRoundIcon,
+  "circle-play": CirclePlayIcon,
 } satisfies Record<AdminIcon, Component>;
 
 const current = $derived(currentSection(page.url));

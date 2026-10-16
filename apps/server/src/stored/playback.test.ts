@@ -7,8 +7,7 @@ import type { RouterClient } from "@orpc/server";
 import { and, eq } from "drizzle-orm";
 import * as HLS from "hls-parser";
 import type { thaliaRouter } from "../api/router.ts";
-import { setupAdmin } from "../auth/accounts.ts";
-import { writeUserSettings } from "../auth/admin.ts";
+import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { authenticate, createApiKey } from "../auth/sessions.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import type { JsonObject } from "../db/schema/common.ts";
@@ -378,7 +377,11 @@ describe.skipIf(!databaseUrl)("stored playback", () => {
           username: "admin",
           password: "admin-pass",
         });
-        const { token } = await createApiKey(db, admin.id, "player");
+        const viewer = await createLocalUser(db, admin.id, {
+          username: "viewer",
+          password: "viewer-pass",
+        });
+        const { token } = await createApiKey(db, viewer.id, "player");
         await withStoredLibrary(
           db,
           threeRungs,
@@ -460,11 +463,16 @@ describe.skipIf(!databaseUrl)("stored playback", () => {
                 (await decisionOf(httpOnly.sessionId))?.storedVariantIds,
               ).toBeUndefined();
 
-              await writeUserSettings(db, admin.id, admin.id, {
-                bitrateCapBps: null,
-                contentRatingCeiling: null,
-                preferDirectStream: true,
+              // The viewer turns the preference on through their own account.
+              const response = await fetch(`${base}/api/account`, {
+                method: "PATCH",
+                headers: {
+                  authorization: `Bearer ${token}`,
+                  "content-type": "application/json",
+                },
+                body: JSON.stringify({ preferDirectStream: true }),
               });
+              expect(response.ok).toBe(true);
               // The preference on: the stored group gives way to the live
               // decision served as one progressive stream.
               const on = await plan({ ...remuxClient, progressive: true });

@@ -9,7 +9,8 @@ export type AdminIcon =
   | "shield-check"
   | "puzzle"
   | "settings"
-  | "user-round";
+  | "user-round"
+  | "circle-play";
 
 /** One admin section: sidebar row, phone list row and search target. */
 export type AdminSection = {
@@ -111,6 +112,13 @@ export const personalSections: readonly AdminSection[] = [
     label: "Account",
     icon: "user-round",
     keywords: ["name", "display name", "password", "profile"],
+  },
+  {
+    id: "playback",
+    href: "/settings/playback",
+    label: "Playback",
+    icon: "circle-play",
+    keywords: ["direct stream", "quality", "autoplay", "next episode"],
   },
 ];
 
