@@ -176,6 +176,13 @@
       "when": 1792014944840,
       "tag": "0024_prefer_direct_stream",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792190608960,
+      "tag": "0025_autoplay_next_episode",
+      "breakpoints": true
     }
   ]
 }

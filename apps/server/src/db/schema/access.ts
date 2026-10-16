@@ -112,6 +112,9 @@ export const userSettings = pgTable(
     preferDirectStream: boolean("prefer_direct_stream")
       .notNull()
       .default(false),
+    autoplayNextEpisode: boolean("autoplay_next_episode")
+      .notNull()
+      .default(true),
   },
   (table) => [
     check("user_settings_bitrate_check", sql`${table.bitrateCapBps} > 0`),
