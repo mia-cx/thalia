@@ -129,14 +129,7 @@ const search = authenticated
   )
   .output(Schema.standardSchemaV1(Schema.Array(BrowseCard)))
   .handler(async ({ context, input }) =>
-    runApi(
-      searchItems(
-        context.db,
-        context.caller,
-        input.query,
-        input.kinds ?? ["movie", "show"],
-      ),
-    ),
+    runApi(searchItems(context.db, context.caller, input.query, input.kinds)),
   );
 
 const streamEvents = authenticated
