@@ -49,7 +49,8 @@ while the spinner holds.
 With a user's Prefer direct stream setting on, an Item whose cut has an
 adaptive group of two or more variants gets one progressive stream of the best
 Version that passes instead of the stored HLS group. HLS-only players still
-get HLS.
+get HLS. Users set it on their own Playback settings page, and an admin can
+set it for any user from the user's admin page.
 
 ## Segment timeline
 
