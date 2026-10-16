@@ -7,11 +7,11 @@ export type PickedObject =
 </script>
 
 <script lang="ts">
-import CheckIcon from "@lucide/svelte/icons/check";
 import { Combobox } from "bits-ui";
 import { onDestroy } from "svelte";
 import { client } from "$lib/api.ts";
 import { resource } from "$lib/resource.svelte.ts";
+import ObjectPickerOption from "./ObjectPickerOption.svelte";
 
 /** A searchable object picker listing the Server, Libraries and Items. */
 let {
@@ -22,9 +22,12 @@ let {
   value?: PickedObject;
 } = $props();
 
-type Option =
-  | { key: string; label: string; object: PickedObject }
-  | { key: string; label: string; meta: string; object: PickedObject };
+type Option = {
+  key: string;
+  label: string;
+  meta?: string;
+  object: PickedObject;
+};
 
 let input = $state("");
 let open = $state(false);
@@ -145,33 +148,6 @@ function pick(next: string) {
 </script>
 
 
-{#snippet optionRow(option: Option)}
-  <Combobox.Item
-    value={option.key}
-    label={option.label}
-    data-slot="combobox-item"
-    class="relative flex w-full cursor-default items-center gap-2.5 rounded-sm py-1.5 pr-2.5 pl-7 text-subheadline outline-none select-none data-highlighted:bg-fill-strong data-disabled:pointer-events-none data-disabled:opacity-45"
-  >
-    {#snippet children({ selected })}
-      <span
-        class="pointer-events-none absolute left-2 flex size-4 items-center justify-center"
-      >
-        {#if selected}
-          <CheckIcon class="pointer-events-none" />
-        {/if}
-      </span>
-      <span class="min-w-0 flex-1">
-        <span class="block truncate">{option.label}</span>
-        {#if "meta" in option && option.meta}
-          <span class="block truncate text-footnote text-label-secondary"
-            >{option.meta}</span
-          >
-        {/if}
-      </span>
-    {/snippet}
-  </Combobox.Item>
-{/snippet}
-
 <Combobox.Root
   type="single"
   value={sel}
@@ -197,7 +173,7 @@ function pick(next: string) {
       class="outline-none material-thick text-label data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-97 data-[state=open]:duration-(--duration-fast) data-[state=open]:ease-smooth-out data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-99 data-[state=closed]:duration-(--duration-quick) relative z-50 max-h-(--bits-floating-available-height) min-w-(--bits-floating-anchor-width) origin-(--bits-floating-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg p-1.5 shadow-float"
     >
       {#if showServer}
-        {@render optionRow(serverOption)}
+        <ObjectPickerOption option={serverOption} />
       {/if}
       {#if libraryOptions.length > 0}
         <Combobox.Group>
@@ -206,7 +182,7 @@ function pick(next: string) {
             >Libraries</Combobox.GroupHeading
           >
           {#each libraryOptions as library (library.key)}
-            {@render optionRow(library)}
+            <ObjectPickerOption option={library} />
           {/each}
         </Combobox.Group>
       {/if}
@@ -217,7 +193,7 @@ function pick(next: string) {
             >Items</Combobox.GroupHeading
           >
           {#each itemOptions as item (item.key)}
-            {@render optionRow(item)}
+            <ObjectPickerOption option={item} />
           {/each}
         </Combobox.Group>
       {/if}
