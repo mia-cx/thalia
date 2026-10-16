@@ -3,12 +3,10 @@ import { page } from "$app/state";
 import { navIcons } from "$lib/components/nav-icons.ts";
 import { isCurrentSection, type NavEntry, navigation } from "$lib/shell.ts";
 
-/** The floating phone tab bar shared by the browse and admin shells. */
-const { admin }: { admin: boolean } = $props();
-
+/** The floating phone tab bar shared by the browse and settings shells. */
 const tabs = $derived(
-  ["home", "movies", "shows", "downloads", "search", "settings"]
-    .map((icon) => navigation(admin, []).find((e) => e.icon === icon))
+  ["home", "search", "downloads", "settings"]
+    .map((icon) => navigation([]).find((e) => e.icon === icon))
     .filter((e): e is NavEntry => e !== undefined),
 );
 </script>

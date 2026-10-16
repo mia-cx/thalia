@@ -6,6 +6,7 @@ import PuzzleIcon from "@lucide/svelte/icons/puzzle";
 import SearchIcon from "@lucide/svelte/icons/search";
 import SettingsIcon from "@lucide/svelte/icons/settings";
 import ShieldCheckIcon from "@lucide/svelte/icons/shield-check";
+import UserRoundIcon from "@lucide/svelte/icons/user-round";
 import UsersIcon from "@lucide/svelte/icons/users";
 import type { Component } from "svelte";
 import { page } from "$app/state";
@@ -15,6 +16,7 @@ import {
   adminSectionGroups,
   currentSection,
   matchSections,
+  personalSections,
 } from "$lib/admin.ts";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
 import ListRow from "$lib/components/admin/ListRow.svelte";
@@ -23,8 +25,9 @@ import { Input } from "$lib/components/ui/input/index.ts";
 /** The admin section nav: sidebar rows on desktop, grouped list rows on phone. */
 let {
   variant,
+  admin,
   query = $bindable(""),
-}: { variant: "sidebar" | "list"; query?: string } = $props();
+}: { variant: "sidebar" | "list"; admin: boolean; query?: string } = $props();
 
 const icons = {
   gauge: GaugeIcon,
@@ -34,12 +37,15 @@ const icons = {
   "shield-check": ShieldCheckIcon,
   puzzle: PuzzleIcon,
   settings: SettingsIcon,
+  "user-round": UserRoundIcon,
 } satisfies Record<AdminIcon, Component>;
 
 const current = $derived(currentSection(page.url));
 const searching = $derived(query.trim() !== "");
-const matched = $derived(matchSections(query));
-const groups = $derived(searching ? [] : adminSectionGroups);
+const matched = $derived(matchSections(query, admin));
+const groups = $derived(
+  searching ? [] : [personalSections, ...(admin ? adminSectionGroups : [])],
+);
 </script>
 
 <div class="relative">
@@ -70,6 +76,7 @@ const groups = $derived(searching ? [] : adminSectionGroups);
     {:else}
       <div class="flex flex-col gap-4">
         {#each groups as group, i (i)}
+          {#if i === 1}<hr class="mx-2.5 h-px border-0 bg-separator" />{/if}
           <ul class="flex flex-col gap-0.5">
             {#each group as section (section.id)}
               <li>{@render sideRow(section)}</li>
@@ -89,6 +96,7 @@ const groups = $derived(searching ? [] : adminSectionGroups);
       </FormGroup>
     {:else}
       {#each groups as group, i (i)}
+        {#if i === 1}<hr class="h-px border-0 bg-separator" />{/if}
         <FormGroup>
           {#each group as section (section.id)}
             {@render listRow(section)}

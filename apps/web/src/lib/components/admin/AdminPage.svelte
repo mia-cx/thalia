@@ -17,7 +17,7 @@ const {
 </script>
 
 <svelte:head>
-  <title>{title} · Thalia admin</title>
+  <title>{title} · Thalia settings</title>
 </svelte:head>
 
 <div class="mx-auto w-full max-w-3xl">
@@ -26,7 +26,7 @@ const {
       <AdminBackLink href={parent.href} label={parent.label} always />
     </div>
   {:else}
-    <AdminBackLink href="/admin" label="Settings" />
+    <AdminBackLink href="/settings" label="Settings" />
     <!-- The hidden back row is the phone offset; desktop pads like browse. -->
     <div class="hidden lg:block lg:h-8" aria-hidden="true"></div>
   {/if}

@@ -533,5 +533,87 @@ describe.skipIf(!databaseUrl || browser === undefined)(
         }),
       60_000,
     );
+
+    test(
+      "the phone Menu button yields to Back on item pages",
+      () =>
+        withDatabase(async (db, url) => {
+          if (browser === undefined) throw new Error("Expected a browser.");
+          await migrateDatabase(db);
+          await setupAdmin(db, {
+            username: "admin",
+            password: "admin-pass",
+          });
+          const { token } = await login(
+            db,
+            {
+              username: "admin",
+              password: "admin-pass",
+              clientName: "Thalia Web",
+              deviceId: "libraries-browser-nav",
+              deviceName: "Chromium",
+            },
+            "127.0.0.1",
+          );
+          const [library] = await insertLibraries(db, {
+            name: "Movies",
+            medium: "movies",
+            rootPath: "/srv/movies",
+          });
+          if (library === undefined) throw new Error("Fixture missing.");
+          const item = await insertItem(db, {
+            libraryId: library.id,
+            kind: "movie",
+            title: "Onward",
+            canonicalFolder: "onward",
+            extension: {},
+          });
+          const server = await startThalia("api", {
+            databaseUrl: url,
+            port: 0,
+          });
+          const base = `http://127.0.0.1:${server.apiServer?.port}`;
+          const page = await openPage();
+          try {
+            await page.send("Emulation.setDeviceMetricsOverride", {
+              width: 390,
+              height: 844,
+              deviceScaleFactor: 2,
+              mobile: true,
+            });
+            await signIn(page, base, token, "/movies");
+            expect(
+              await page.eval<boolean>(
+                `document.querySelector('button[aria-label="Menu"]') !== null`,
+              ),
+            ).toBe(true);
+
+            await page.goto(`${base}/movies/${item.id}`);
+            await page.waitFor(
+              `document.querySelector('a[aria-label="Back"], button[aria-label="Back"]')`,
+            );
+            expect(
+              await page.eval<boolean>(
+                `document.querySelector('button[aria-label="Menu"]') === null`,
+              ),
+            ).toBe(true);
+            expect(
+              await page.eval<boolean>(`(() => {
+                const back = document.querySelector('[aria-label="Back"]');
+                const r = back.getBoundingClientRect();
+                const hit = document.elementFromPoint(
+                  r.left + r.width / 2,
+                  r.top + r.height / 2,
+                );
+                return hit === back || back.contains(hit);
+              })()`),
+            ).toBe(true);
+          } finally {
+            await page.close();
+            await server.stop();
+          }
+        }),
+      60_000,
+    );
   },
 );

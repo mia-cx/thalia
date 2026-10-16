@@ -1,12 +1,14 @@
 <script lang="ts">
 import ChevronUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
+import MenuIcon from "@lucide/svelte/icons/menu";
 import PanelLeftIcon from "@lucide/svelte/icons/panel-left";
-import { onNavigate } from "$app/navigation";
+import { afterNavigate, onNavigate } from "$app/navigation";
 import { page } from "$app/state";
 import AccountMenu from "$lib/components/AccountMenu.svelte";
 import { navIcons } from "$lib/components/nav-icons.ts";
 import TabBar from "$lib/components/TabBar.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
+import * as Sheet from "$lib/components/ui/sheet/index.ts";
 import * as Tooltip from "$lib/components/ui/tooltip/index.ts";
 import {
   isCurrent,
@@ -18,8 +20,17 @@ import type { LayoutProps } from "./$types";
 
 const { data, children }: LayoutProps = $props();
 
-const entries = $derived(navigation(data.me.admin, data.libraries));
+const entries = $derived(navigation(data.libraries));
+// The Menu button only lives on top-level destinations; deeper pages have Back.
+const menuShown = $derived(
+  entries.some((entry) => page.url.pathname === entry.href.split("?")[0]),
+);
 const settings = $derived(entries.find((e) => e.icon === "settings"));
+
+let drawer = $state(false);
+afterNavigate(() => {
+  drawer = false;
+});
 
 let collapsed = $state(
   typeof document !== "undefined" &&
@@ -60,10 +71,10 @@ onNavigate((nav) => {
   <title>Thalia</title>
 </svelte:head>
 
-{#snippet navRow(entry: NavEntry, children: boolean)}
+{#snippet navRow(entry: NavEntry, children: boolean, expanded: boolean)}
   {@const Icon = navIcons[entry.icon]}
-  {@const current = isCurrentSection(page.url, entry, children && !collapsed)}
-  <Tooltip.Root disabled={!collapsed}>
+  {@const current = isCurrentSection(page.url, entry, children && expanded)}
+  <Tooltip.Root disabled={expanded}>
     <Tooltip.Trigger>
       {#snippet child({ props })}
         <a
@@ -74,25 +85,25 @@ onNavigate((nav) => {
           class:bg-tint-fill={current}
           class:font-semibold={current}
           class:text-tint={current}
-          class:h-9={!collapsed}
-          class:size-11={collapsed}
-          class:justify-center={collapsed}
-          class:px-0={collapsed}
+          class:h-9={expanded}
+          class:size-11={!expanded}
+          class:justify-center={!expanded}
+          class:px-0={!expanded}
         >
           <Icon
             class="size-4.5 shrink-0 {current
               ? 'text-tint'
               : 'text-label-secondary'}"
           />
-          <span class:sr-only={collapsed}>{entry.label}</span>
+          <span class:sr-only={!expanded}>{entry.label}</span>
         </a>
       {/snippet}
     </Tooltip.Trigger>
-    {#if collapsed}
+    {#if !expanded}
       <Tooltip.Content side="right">{entry.label}</Tooltip.Content>
     {/if}
   </Tooltip.Root>
-  {#if !collapsed && children}
+  {#if expanded && children}
     <ul class="mt-0.5 flex flex-col gap-0.5">
       {#each entry.children as child (child.href)}
         <li>
@@ -160,13 +171,13 @@ onNavigate((nav) => {
     <nav aria-label="Main" class="mt-4 min-h-0 flex-1 overflow-y-auto">
       <ul class="flex flex-col gap-0.5">
         {#each entries.filter((e) => e.icon !== "settings") as entry (entry.href)}
-          <li>{@render navRow(entry, true)}</li>
+          <li>{@render navRow(entry, true, !collapsed)}</li>
         {/each}
       </ul>
     </nav>
 
     {#if settings}
-      <div class="mt-auto">{@render navRow(settings, false)}</div>
+      <div class="mt-auto">{@render navRow(settings, false, !collapsed)}</div>
     {/if}
 
     <hr class="my-2 h-px border-0 bg-separator" />
@@ -222,9 +233,45 @@ onNavigate((nav) => {
     </AccountMenu>
   </aside>
 
-  <TabBar admin={data.me.admin} />
+  <TabBar />
 
   <div class="relative">
+    {#if menuShown}
+      <div class="absolute top-3 left-(--gutter) z-30 lg:hidden">
+      <Sheet.Root bind:open={drawer}>
+        <Sheet.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              variant="glass"
+              size="icon"
+              aria-label="Menu"
+              class="rounded-full"
+            >
+              <MenuIcon />
+            </Button>
+          {/snippet}
+        </Sheet.Trigger>
+        <Sheet.Content side="left">
+          <Sheet.Header>
+            <Sheet.Title>Thalia</Sheet.Title>
+          </Sheet.Header>
+          <nav aria-label="Drawer" class="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+            <ul class="flex flex-col gap-0.5">
+              {#each entries.filter((e) => e.icon !== "settings") as entry (entry.href)}
+                <li>{@render navRow(entry, true, true)}</li>
+              {/each}
+            </ul>
+            {#if settings}
+              <hr class="my-2 h-px border-0 bg-separator" />
+              {@render navRow(settings, false, true)}
+            {/if}
+          </nav>
+        </Sheet.Content>
+      </Sheet.Root>
+      </div>
+    {/if}
+
     <div class="absolute top-3 right-(--gutter) z-30 lg:hidden">
       <AccountMenu align="end" user={data.me.user}>
         {#snippet trigger(props, monogram)}

@@ -13,9 +13,8 @@ export type NavEntry = {
   children: readonly { href: string; label: string }[];
 };
 
-/** The shell's destinations for a caller: Search, Home, Movies, Shows, then Settings for admins. */
+/** The shell's destinations for a caller: Search, Home, Movies, Shows, Downloads, then Settings. */
 export function navigation(
-  admin: boolean,
   libraries: readonly ShellLibrary[],
 ): readonly NavEntry[] {
   const children = (medium: "movies" | "shows", href: string) => {
@@ -41,14 +40,8 @@ export function navigation(
       children: children("shows", "/shows"),
     },
     { href: "/downloads", label: "Downloads", icon: "downloads", children: [] },
+    { href: "/settings", label: "Settings", icon: "settings", children: [] },
   ];
-  if (admin)
-    entries.push({
-      href: "/admin",
-      label: "Settings",
-      icon: "settings",
-      children: [],
-    });
   return entries;
 }
 
@@ -81,6 +74,11 @@ export function isCurrentSection(
   entry: NavEntry,
   childrenShown: boolean,
 ): boolean {
-  if (!isCurrent(url, entry.href)) return false;
+  // Settings also covers the admin pages the sidebar nests under it.
+  const active =
+    isCurrent(url, entry.href) ||
+    (entry.icon === "settings" &&
+      (url.pathname === "/admin" || url.pathname.startsWith("/admin/")));
+  if (!active) return false;
   return !(childrenShown && entry.children.some((c) => isCurrent(url, c.href)));
 }
