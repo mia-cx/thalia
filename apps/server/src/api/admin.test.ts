@@ -14,6 +14,7 @@ import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { groups, jobs, settings } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
+import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import {
@@ -211,11 +212,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
               bitrateCapBps: null,
               contentRatingCeiling: null,
             }),
-          () =>
-            viewerClient.groups.setPermissions({
-              id: Bun.randomUUIDv7(),
-              permissions: [],
-            }),
+          () => viewerClient.groups.create({ name: "forbidden" }),
           () => viewerClient.settings.update({ trustedProxyAddresses: [] }),
           () =>
             viewerClient.settings.setProviderKey({
@@ -270,7 +267,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
         if (!usersGroup) throw new Error("Seed group missing.");
         expect(access.user.username).toBe("alice");
         expect(access.groupIds).toEqual([usersGroup.id]);
-        expect(access.overrides).toEqual([]);
+        expect(access).not.toHaveProperty("overrides");
         expect(access.libraryAccess).toEqual([]);
         expect(access.settings).toEqual({
           bitrateCapBps: null,
@@ -398,7 +395,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
       }
     }));
 
-  test("users.setGroups and setOverride refresh the access shape", () =>
+  test("users.setGroups refreshes the access shape", () =>
     withDatabase(async (db, url) => {
       await migrateDatabase(db);
       const { admin, token } = await seed(db);
@@ -422,20 +419,6 @@ describe.skipIf(!databaseUrl)("admin api", () => {
           groupIds: [custom.id],
         });
         expect(grouped.groupIds).toEqual([custom.id]);
-        const overridden = await client.users.setOverride({
-          id: viewer.id,
-          permission: "play",
-          allowed: false,
-        });
-        expect(overridden.overrides).toEqual([
-          { permission: "play", allowed: false },
-        ]);
-        const inherited = await client.users.setOverride({
-          id: viewer.id,
-          permission: "play",
-          allowed: null,
-        });
-        expect(inherited.overrides).toEqual([]);
         const conflict = await fetch(`${base}/api/users/${admin.id}/groups`, {
           method: "PUT",
           headers: {
@@ -542,43 +525,103 @@ describe.skipIf(!databaseUrl)("admin api", () => {
       }
     }));
 
-  test("groups.create and setPermissions edit custom groups only", () =>
+  test("groups.create makes an empty group and access.setRule writes its rules", () =>
     withDatabase(async (db, url) => {
       await migrateDatabase(db);
-      const { token } = await seed(db);
+      const { admin, token } = await seed(db);
+      const [library] = await insertLibraries(db, {
+        name: "Shows",
+        medium: "shows",
+        rootPath: "/srv/shows",
+      });
+      if (!library) throw new Error("Library insert returned no row.");
+      const item = await insertItem(db, {
+        libraryId: library.id,
+        kind: "show",
+        title: "Bluey",
+        canonicalFolder: "Bluey",
+        extension: {},
+      });
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
       try {
         const base = `http://127.0.0.1:${server.apiServer?.port}`;
-        const headers = { authorization: `Bearer ${token}` };
+        const headers = {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        };
         const client = createThaliaClient({ origin: base, headers });
-        const created = await client.groups.create({
-          name: "editors",
-          permissions: ["metadata:edit"],
-        });
+        const created = await client.groups.create({ name: "family" });
         expect(created).toMatchObject({
-          name: "editors",
+          name: "family",
           builtIn: false,
-          permissions: ["metadata:edit"],
+          rules: { server: [], libraries: 0, items: 0 },
         });
-        const updated = await client.groups.setPermissions({
-          id: created.id,
-          permissions: ["view", "subtitles:edit"],
+        const subject = { type: "group" as const, id: created.id };
+        for (const [action, allowed] of [
+          ["view", true],
+          ["play", true],
+          ["download", false],
+        ] as const)
+          await client.access.setRule({
+            subject,
+            object: { type: "server" },
+            action,
+            allowed,
+          });
+        await client.access.setRule({
+          subject,
+          object: { type: "library", id: library.id },
+          action: "view",
+          allowed: true,
         });
-        expect(updated.permissions).toEqual(["view", "subtitles:edit"]);
-        const [admins] = await db
+        await client.access.setRule({
+          subject,
+          object: { type: "item", id: item.id },
+          action: "download",
+          allowed: false,
+        });
+        const [usersGroup] = await db
           .select()
           .from(groups)
-          .where(eq(groups.name, "admins"));
-        if (!admins) throw new Error("Seed group missing.");
-        const builtIn = await fetch(
-          `${base}/api/groups/${admins.id}/permissions`,
-          {
-            method: "PUT",
-            headers: { ...headers, "content-type": "application/json" },
-            body: JSON.stringify({ permissions: ["view"] }),
-          },
+          .where(eq(groups.name, "users"));
+        if (!usersGroup) throw new Error("Seed group missing.");
+        // Built-in Groups take rules like any other subject now.
+        await client.access.setRule({
+          subject: { type: "group", id: usersGroup.id },
+          object: { type: "server" },
+          action: "metadata:edit",
+          allowed: false,
+        });
+        const listed = await client.groups.list();
+        const family = listed.find((group) => group.id === created.id);
+        expect(family?.rules).toEqual({
+          server: [
+            { action: "view", allowed: true },
+            { action: "play", allowed: true },
+            { action: "download", allowed: false },
+          ],
+          libraries: 1,
+          items: 1,
+        });
+        const users = listed.find((group) => group.id === usersGroup.id);
+        expect(users?.rules.server).toContainEqual({
+          action: "metadata:edit",
+          allowed: false,
+        });
+        for (const [method, path] of [
+          ["PUT", `/api/groups/${created.id}/permissions`],
+          ["PUT", `/api/users/${usersGroup.id}/overrides/view`],
+        ] as const) {
+          const gone = await fetch(`${base}${path}`, {
+            method,
+            headers,
+            body: JSON.stringify({ allowed: true }),
+          });
+          expect(gone.status).toBe(404);
+        }
+        expect(await client.users.get({ id: admin.id })).not.toHaveProperty(
+          "overrides",
         );
-        expect(builtIn.status).toBe(400);
       } finally {
         await server.stop();
       }

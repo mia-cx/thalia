@@ -64,11 +64,9 @@ describe("openapi document", () => {
         "/users/{id}/sessions",
         "/sessions/{id}/revoke",
         "/users/{id}/groups",
-        "/users/{id}/overrides/{permission}",
         "/users/{id}/settings",
         "/users/{id}/libraries/{libraryId}",
         "/groups",
-        "/groups/{id}/permissions",
         "/settings",
         "/settings/providers/{name}",
         "/libraries/viewable",
@@ -79,6 +77,10 @@ describe("openapi document", () => {
         "/store/status",
       ]),
     );
+    const paths = Object.keys(doc.paths ?? {});
+    expect(paths).toContain("/access/rules");
+    expect(paths).not.toContain("/users/{id}/overrides/{permission}");
+    expect(paths).not.toContain("/groups/{id}/permissions");
   });
 
   test("declares the list query parameters and the get path parameter", async () => {

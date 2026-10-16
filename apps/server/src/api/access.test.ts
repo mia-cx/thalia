@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
+import { server } from "../auth/access.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
-import { createGroup, setPermissionOverride } from "../auth/permissions.ts";
+import {
+  checkPermission,
+  createGroup,
+  setPermissionOverride,
+  setUserGroups,
+} from "../auth/permissions.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import { insertItem, insertItems } from "../db/item-fixtures.ts";
 import { accessRules, serverOnlyActions } from "../db/schema/index.ts";
@@ -146,6 +152,70 @@ describe.skipIf(!databaseUrl)("Access rule mutations", () => {
         });
       } finally {
         await server.stop();
+      }
+    }));
+
+  test("a removed user rule falls back to Groups, and deny wins between Groups", () =>
+    withDatabase(async (db, url) => {
+      const admin = await setupAdmin(db, {
+        username: "admin",
+        password: "admin-pass",
+      });
+      const viewer = await createLocalUser(db, admin.id, {
+        username: "viewer",
+        password: "viewer-pass",
+      });
+      const first = await createGroup(db, admin.id, {
+        name: "first",
+        permissions: [],
+      });
+      const second = await createGroup(db, admin.id, {
+        name: "second",
+        permissions: [],
+      });
+      await setUserGroups(db, admin.id, viewer.id, [first.id, second.id]);
+      const { token } = await createApiKey(db, admin.id, "admin");
+      const api = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const client = createThaliaClient({
+          origin: `http://127.0.0.1:${api.apiServer?.port}`,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        await client.access.setRule({
+          subject: { type: "group", id: first.id },
+          object: { type: "server" },
+          action: "view",
+          allowed: true,
+        });
+        const subject = { type: "user" as const, id: viewer.id };
+        const viewKey = {
+          subject,
+          object: { type: "server" as const },
+          action: "view" as const,
+        };
+        await client.access.setRule({ ...viewKey, allowed: false });
+        expect(await checkPermission(db, viewer.id, "view", server)).toBe(
+          false,
+        );
+        await client.access.removeRule(viewKey);
+        expect(await checkPermission(db, viewer.id, "view", server)).toBe(true);
+        await client.access.setRule({
+          subject: { type: "group", id: first.id },
+          object: { type: "server" },
+          action: "download",
+          allowed: true,
+        });
+        await client.access.setRule({
+          subject: { type: "group", id: second.id },
+          object: { type: "server" },
+          action: "download",
+          allowed: false,
+        });
+        expect(await checkPermission(db, viewer.id, "download", server)).toBe(
+          false,
+        );
+      } finally {
+        await api.stop();
       }
     }));
 });
