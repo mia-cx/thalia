@@ -168,7 +168,7 @@ describe.skipIf(!databaseUrl || browser === undefined)("next Episode", () => {
                 .where(eq(sessionRegistry.itemId, itemId));
               expect(sessions).toHaveLength(1);
             }
-            expect(await page.eval("location.pathname")).toBe(
+            expect(await page.eval<string>("location.pathname")).toBe(
               `/play/${second}`,
             );
           } finally {
