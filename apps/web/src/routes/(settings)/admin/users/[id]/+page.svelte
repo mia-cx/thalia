@@ -9,6 +9,7 @@ import AdminPage from "$lib/components/admin/AdminPage.svelte";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
 import FormRow from "$lib/components/admin/FormRow.svelte";
 import ListRow from "$lib/components/admin/ListRow.svelte";
+import SubjectRules from "$lib/components/admin/SubjectRules.svelte";
 import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 import { Badge } from "$lib/components/ui/badge/index.ts";
 import { Button } from "$lib/components/ui/button/index.ts";
@@ -30,7 +31,11 @@ const id = $derived(page.params.id ?? "");
 
 const access = resource(() => client.users.get({ id }));
 const groups = resource(() => client.groups.list());
-const libs = resource(() => client.libraries.list());
+const rules = resource(() =>
+  data.me.admin
+    ? client.access.rulesForSubject({ subject: { type: "user", id } })
+    : Promise.resolve(undefined),
+);
 const sessions = resource(() => client.users.sessions({ id }));
 
 let loadedId = untrack(() => id);
@@ -39,12 +44,13 @@ $effect(() => {
   loadedId = id;
   resetRouteState();
   access.clear();
+  rules.clear();
   sessions.clear();
   const target = id;
   const generation = routeGeneration;
   void serial(target, async () => {
     if (!currentVisit(target, generation)) return;
-    await Promise.all([access.reload(), sessions.reload()]);
+    await Promise.all([access.reload(), rules.reload(), sessions.reload()]);
   });
 });
 
@@ -88,10 +94,6 @@ let overrideSel = $state<Record<string, string>>({});
 let overrideBusy = $state<Record<string, boolean>>({});
 let overrideFailures = $state<Record<string, FailureShape>>({});
 
-let accessSel = $state<Record<string, string>>({});
-let libraryBusy = $state<Record<string, boolean>>({});
-let libraryFailures = $state<Record<string, FailureShape>>({});
-
 let revoking = $state<Record<string, boolean>>({});
 let revokeFailures = $state<Record<string, FailureShape>>({});
 
@@ -128,9 +130,6 @@ function resetRouteState() {
   overrideSel = {};
   overrideBusy = {};
   overrideFailures = {};
-  accessSel = {};
-  libraryBusy = {};
-  libraryFailures = {};
   revoking = {};
   revokeFailures = {};
 }
@@ -216,7 +215,7 @@ async function saveGroups(
           access.reload(),
           sessions.reload(),
           groups.reload(),
-          libs.reload(),
+          rules.reload(),
         ]);
       });
     }
@@ -297,6 +296,10 @@ async function setOverride(permission: Permission, value: string) {
     );
     if (!currentVisit(target, generation)) return;
     access.set(updated);
+    void serial(target, async () => {
+      if (!currentVisit(target, generation)) return;
+      await rules.reload();
+    });
     delete overrideSel[permission];
     toast.success(
       value === "allow"
@@ -312,51 +315,6 @@ async function setOverride(permission: Permission, value: string) {
     }
   } finally {
     if (currentVisit(target, generation)) overrideBusy[permission] = false;
-  }
-}
-
-function accessValue(libraryId: string): string {
-  const row = access.data?.libraryAccess.find(
-    (entry) => entry.libraryId === libraryId,
-  );
-  if (!row) return "inherit";
-  return row.allowed ? "allow" : "deny";
-}
-
-async function setAccess(libraryId: string, value: string) {
-  const target = id;
-  const generation = routeGeneration;
-  const name =
-    (libs.data ?? []).find((library) => library.id === libraryId)?.name ??
-    "library";
-  accessSel[libraryId] = value;
-  libraryBusy[libraryId] = true;
-  delete libraryFailures[libraryId];
-  try {
-    const updated = await serial(target, () =>
-      client.users.setLibraryAccess({
-        id: target,
-        libraryId,
-        allowed: value === "allow" ? true : value === "deny" ? false : null,
-      }),
-    );
-    if (!currentVisit(target, generation)) return;
-    access.set(updated);
-    delete accessSel[libraryId];
-    toast.success(
-      value === "allow"
-        ? `${name} allowed`
-        : value === "deny"
-          ? `${name} denied`
-          : `${name} now follows groups`,
-    );
-  } catch (error) {
-    if (currentVisit(target, generation)) {
-      libraryFailures[libraryId] = readFailure(error);
-      delete accessSel[libraryId];
-    }
-  } finally {
-    if (currentVisit(target, generation)) libraryBusy[libraryId] = false;
   }
 }
 
@@ -552,87 +510,54 @@ async function revoke(sessionId: string) {
     {/snippet}
   </FormGroup>
 
-  <FormGroup
-    title="Permissions"
-    failure={Object.values(overrideFailures).at(-1) || undefined}
-    description="From groups follows this user's groups. Allow and Deny override them.{adminLocked
-      ? ' Only an admin can change this.'
-      : ''}"
-  >
-    {#each permissionNames as permission (permission)}
-      {@const value = overrideSel[permission] ?? overrideValue(permission)}
-      <FormRow
-        label={permissionLabels[permission]}
-        for="override-{permission}"
-        inline
-      >
-        <Select.Root
-          type="single"
-          {value}
-          onValueChange={(next) => setOverride(permission, next)}
-          disabled={overrideBusy[permission] === true ||
-            !access.data ||
-            adminLocked}
+  <div id="permissions" class="scroll-mt-20">
+    <FormGroup
+      title="Permissions"
+      failure={Object.values(overrideFailures).at(-1) || undefined}
+      description="From groups follows this user's groups. Allow and Deny override them.{adminLocked
+        ? ' Only an admin can change this.'
+        : ''}"
+    >
+      {#each permissionNames as permission (permission)}
+        {@const value = overrideSel[permission] ?? overrideValue(permission)}
+        <FormRow
+          label={permissionLabels[permission]}
+          for="override-{permission}"
+          inline
         >
-          <Select.Trigger id="override-{permission}">
-            <Select.Value
-              >{overrideOptions.find((o) => o.value === value)
-                ?.label}</Select.Value
-            >
-          </Select.Trigger>
-          <Select.Content>
-            {#each overrideOptions as option (option.value)}
-              <Select.Item value={option.value}>{option.label}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
-      </FormRow>
-    {/each}
-  </FormGroup>
-
-  <FormGroup
-    title="Library access"
-    loading={libs.data === undefined && !libs.failure ? 3 : undefined}
-    failure={libs.failure ??
-      (Object.values(libraryFailures).at(-1) || undefined)}
-    description="Allow and Deny override groups.{adminLocked
-      ? ' Only an admin can change this.'
-      : ''}"
-  >
-    {#each libs.data ?? [] as library (library.id)}
-      {@const value = accessSel[library.id] ?? accessValue(library.id)}
-      <FormRow label={library.name} for="access-{library.id}" inline>
-        <Select.Root
-          type="single"
-          {value}
-          onValueChange={(next) => setAccess(library.id, next)}
-          disabled={libraryBusy[library.id] === true ||
-            !access.data ||
-            adminLocked}
-        >
-          <Select.Trigger id="access-{library.id}">
-            <Select.Value
-              >{overrideOptions.find((o) => o.value === value)
-                ?.label}</Select.Value
-            >
-          </Select.Trigger>
-          <Select.Content>
-            {#each overrideOptions as option (option.value)}
-              <Select.Item value={option.value}>{option.label}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
-      </FormRow>
-    {:else}
-      {#if libs.data !== undefined}
-        <div class="relative min-h-12 px-4 py-2.5">
-          <span class="text-subheadline text-label-secondary"
-            >No libraries yet.</span
+          <Select.Root
+            type="single"
+            {value}
+            onValueChange={(next) => setOverride(permission, next)}
+            disabled={overrideBusy[permission] === true ||
+              !access.data ||
+              adminLocked}
           >
-        </div>
-      {/if}
-    {/each}
-  </FormGroup>
+            <Select.Trigger id="override-{permission}">
+              <Select.Value
+                >{overrideOptions.find((o) => o.value === value)
+                  ?.label}</Select.Value
+              >
+            </Select.Trigger>
+            <Select.Content>
+              {#each overrideOptions as option (option.value)}
+                <Select.Item value={option.value}>{option.label}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </FormRow>
+      {/each}
+    </FormGroup>
+  </div>
+
+  {#if data.me.admin}
+    <SubjectRules
+      rules={rules.data}
+      failure={rules.failure ?? undefined}
+      loading={rules.loading}
+      onretry={() => rules.reload()}
+    />
+  {/if}
 </AdminPage>
 
 <ConfirmDialog

@@ -1,8 +1,14 @@
 import { Schema } from "effect";
-import { removeRule, setRule } from "../auth/rules.ts";
+import {
+  removeRule,
+  rulesForSubject,
+  rulesOnObject,
+  setRule,
+} from "../auth/rules.ts";
 import { actions, serverOnlyActions } from "../db/schema/index.ts";
-import { authenticatedMutation } from "./context.ts";
+import { authenticated, authenticatedMutation } from "./context.ts";
 import { fromHost, runApi } from "./errors.ts";
+import { ItemKind } from "./schema.ts";
 
 const ruleFields = {
   subject: Schema.Struct({
@@ -23,6 +29,36 @@ const validation = {
   message: () => "Server-only Actions require the server object.",
 };
 const result = Schema.standardSchemaV1(Schema.Struct({}));
+
+/** An Access rule with subject and object names resolved, as the API returns it. */
+const Rule = Schema.Struct({
+  subject: Schema.Struct({
+    type: Schema.Literal("user", "group"),
+    id: Schema.UUID,
+    name: Schema.String,
+  }),
+  object: Schema.Union(
+    Schema.Struct({
+      type: Schema.Literal("server"),
+      name: Schema.Literal("Server"),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("library"),
+      id: Schema.UUID,
+      name: Schema.String,
+    }),
+    Schema.Struct({
+      type: Schema.Literal("item"),
+      id: Schema.UUID,
+      name: Schema.String,
+      kind: ItemKind,
+      parentId: Schema.NullOr(Schema.UUID),
+      showId: Schema.NullOr(Schema.UUID),
+    }),
+  ),
+  action: Schema.Literal(...actions),
+  allowed: Schema.Boolean,
+});
 
 /** Admin-only Access rule writes, shared by RPC and REST. */
 export const accessProcedures = {
@@ -56,4 +92,39 @@ export const accessProcedures = {
       );
       return {};
     }),
+  rulesOnObject: authenticated
+    .route({ method: "GET", path: "/access/rules/object" })
+    .input(
+      Schema.standardSchemaV1(Schema.Struct({ object: ruleFields.object })),
+    )
+    .output(
+      Schema.standardSchemaV1(
+        Schema.Struct({
+          direct: Schema.Array(Rule),
+          inherited: Schema.Array(Rule),
+        }),
+      ),
+    )
+    .handler(
+      async ({ context, input }) =>
+        await runApi(
+          fromHost(() =>
+            rulesOnObject(context.db, context.caller.user.id, input.object),
+          ),
+        ),
+    ),
+  rulesForSubject: authenticated
+    .route({ method: "GET", path: "/access/rules/subject" })
+    .input(
+      Schema.standardSchemaV1(Schema.Struct({ subject: ruleFields.subject })),
+    )
+    .output(Schema.standardSchemaV1(Schema.Array(Rule)))
+    .handler(
+      async ({ context, input }) =>
+        await runApi(
+          fromHost(() =>
+            rulesForSubject(context.db, context.caller.user.id, input.subject),
+          ),
+        ),
+    ),
 };

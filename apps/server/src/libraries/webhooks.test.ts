@@ -138,9 +138,25 @@ describe.skipIf(!databaseUrl)("servarr webhooks", () => {
           expect(
             (await db.select().from(files)).map((file) => file.path),
           ).toEqual([path]);
-          // The original assertion named a path no walk saw, so its provider
-          // ids drop rather than landing on the sole surviving group.
-          expect(await db.select().from(providerIds)).toEqual([]);
+          // A queued move carries the old-path assertion into its follow-up.
+          // A move flushed after the write cannot inform that earlier scan.
+          if (flush === "before") {
+            const [item] = await db
+              .select()
+              .from(items)
+              .where(sql`${items.parentId} is null`);
+            if (!item) throw new Error("Scanned root Item missing.");
+            expect(await db.select().from(providerIds)).toMatchObject([
+              {
+                itemId: item.id,
+                provider: medium === "movies" ? "tmdb" : "tvdb",
+                value: medium === "movies" ? "348" : "12345",
+                metadataDerived: false,
+              },
+            ]);
+          } else {
+            expect(await db.select().from(providerIds)).toEqual([]);
+          }
           expect(await queue.claim(["scan"])).toBeUndefined();
         }),
       ),
