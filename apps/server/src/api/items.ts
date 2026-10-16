@@ -92,9 +92,10 @@ const heroFields = {
 };
 
 // A Season names its Show directly; an Episode reaches it through its Season.
-const ownSeason = alias(seasons, "own_season");
-const episodeSeason = alias(seasons, "episode_season");
-const showItem = alias(items, "show_item");
+// Exported for queries that place Items the same way, such as the gap list.
+export const ownSeason = alias(seasons, "own_season");
+export const episodeSeason = alias(seasons, "episode_season");
+export const showItem = alias(items, "show_item");
 
 const browseFields = {
   ...cardFields,

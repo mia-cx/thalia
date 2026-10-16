@@ -13,7 +13,7 @@ A kind of media with its own model, scanner, browser and translation layer: movi
 _Avoid_: media type, library type, content type, category
 
 **Library**:
-One medium's collection, reached through one or more roots. Its medium decides where its Items show up and how their metadata is fetched, not how its folders are laid out.
+One medium's collection of Versions, reached through one or more roots. It shows the Items those Versions belong to. Its medium decides where its Items show up and how their metadata is fetched, not how its folders are laid out.
 _Avoid_: folder, source, collection
 
 **Root**:
@@ -21,7 +21,7 @@ An absolute folder of a Library. No root equals or contains another, in any Libr
 _Avoid_: root folder, mount point
 
 **Item**:
-Any node in a library tree: a movie, show, season, episode, album, track, book, photo, channel. It has a kind, at most one parent, metadata, artwork, credits, provider ids and per-user progress.
+Any node in the server's catalogue: a movie, show, season, episode, album, track, book, photo, channel. It belongs to the server, not to a Library, and appears in every Library holding one of its Versions or its descendants'. It has a kind, at most one parent, metadata, artwork, credits, provider ids and per-user progress. One provider id names at most one Item. An Item with no Versions left on or below it is deleted.
 _Avoid_: title, entry, BaseItem, resource
 
 **Item folder**:
@@ -37,7 +37,7 @@ The medium-specific type of an Item, such as movie, show, season, episode, album
 _Avoid_: type, item type, class
 
 **Version**:
-One edition of an Item's content: a quality, a cut, a translation or a format. Most Items have one. Containers such as shows and albums have none.
+One copy of an Item's content, as a single File or a playlist of Files: a quality, a cut, a translation or a format. It belongs to the Library whose root holds its Files. Most Items have one. Containers such as shows and albums have none.
 _Avoid_: MediaSource, media, edition, quality, variant
 
 **Format**:
@@ -129,7 +129,7 @@ Something a user does to an object: view, play, download or edit metadata or sub
 _Avoid_: permission, right, privilege, scope
 
 **Access rule**:
-An allow or deny of one Action on one Item, Library, Playlist or the server, for one user or Group. The rule on the most specific object decides. On the same object, a user's rule beats their Groups', and between Groups, deny wins.
+An allow or deny of one Action on one Item, Library, Playlist or the server, for one user or Group. The rule on the most specific object decides. On the same object, a user's rule beats their Groups', and between Groups, deny wins. An Item no rule names is reached through its Versions' Libraries: a user may act on it if they may act on any of its Versions.
 _Avoid_: permission, ACL entry, policy, grant, override
 
 **Permission**:

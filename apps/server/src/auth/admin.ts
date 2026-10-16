@@ -146,6 +146,7 @@ export async function readUserAccess(
     .select({
       bitrateCapBps: userSettings.bitrateCapBps,
       contentRatingCeiling: userSettings.contentRatingCeiling,
+      preferDirectStream: userSettings.preferDirectStream,
     })
     .from(userSettings)
     .where(eq(userSettings.userId, userId));
@@ -154,7 +155,11 @@ export async function readUserAccess(
     groupIds: membershipRows.map((row) => row.groupId),
     overrides,
     libraryAccess: access,
-    settings: stored ?? { bitrateCapBps: null, contentRatingCeiling: null },
+    settings: stored ?? {
+      bitrateCapBps: null,
+      contentRatingCeiling: null,
+      preferDirectStream: false,
+    },
   };
 }
 
@@ -211,12 +216,16 @@ export async function setGroupPermissions(
 /** The largest cap the playback planner accepts, since it reads the column as a number. */
 const maxBitrateCapBps = BigInt(Number.MAX_SAFE_INTEGER);
 
-/** Writes a user's bitrate cap and content-rating ceiling for a caller holding users:manage. */
+/** Writes a user's bitrate cap, content-rating ceiling and direct-stream preference for a caller holding users:manage. */
 export async function writeUserSettings(
   db: Pick<Database, "select" | "insert">,
   actorId: string,
   userId: string,
-  input: { bitrateCapBps: bigint | null; contentRatingCeiling: string | null },
+  input: {
+    bitrateCapBps: bigint | null;
+    contentRatingCeiling: string | null;
+    preferDirectStream?: boolean;
+  },
 ) {
   await requirePermission(db, actorId, "users:manage", server);
   if (
@@ -242,17 +251,22 @@ export async function writeUserSettings(
       userId,
       bitrateCapBps: input.bitrateCapBps,
       contentRatingCeiling,
+      preferDirectStream: input.preferDirectStream ?? false,
     })
     .onConflictDoUpdate({
       target: userSettings.userId,
       set: {
         bitrateCapBps: input.bitrateCapBps,
         contentRatingCeiling,
+        ...(input.preferDirectStream === undefined
+          ? {}
+          : { preferDirectStream: input.preferDirectStream }),
       },
     })
     .returning({
       bitrateCapBps: userSettings.bitrateCapBps,
       contentRatingCeiling: userSettings.contentRatingCeiling,
+      preferDirectStream: userSettings.preferDirectStream,
     });
   if (!stored) throw new Error("User settings upsert returned no row.");
   return stored;

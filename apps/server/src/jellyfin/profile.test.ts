@@ -31,6 +31,7 @@ describe("DeviceProfile translation", () => {
   test("an HLS-only client opens no files and decodes its transcoding codecs", () => {
     const profile = readDeviceProfile(deviceProfiles.swiftfin);
     expect(profile.containers).toEqual([]);
+    expect(profile.hlsCodecs).toBeUndefined();
     expect(profile.videoCodecs).toEqual([
       {
         codec: "h264",
@@ -54,6 +55,104 @@ describe("DeviceProfile translation", () => {
     // Only Embed counts: HLS subtitles convert to WebVTT whatever the client says.
     expect(profile.subtitleFormats).toEqual([]);
     expect(profile.hdr).toEqual(["sdr", "hdr10", "hlg"]);
+  });
+
+  test("an http TranscodingProfile marks the profile progressive and counts its codecs", () => {
+    const profile = readDeviceProfile(deviceProfiles.progressive);
+    expect(profile.progressive).toBe(true);
+    expect(profile.hls).toBe(false);
+    expect(profile.hlsCodecs).toBeUndefined();
+    expect(profile.videoCodecs.map((entry) => entry.codec)).toEqual(["h264"]);
+    expect(profile.audioCodecs.map((entry) => entry.codec)).toEqual(["aac"]);
+    // HLS-only and direct-play fixtures stay on HLS delivery.
+    for (const name of ["infuse", "findroid"] as const) {
+      const other = readDeviceProfile(deviceProfiles[name]);
+      expect(other.progressive).toBe(false);
+      expect(other.hls).toBe(false);
+    }
+    const swiftfin = readDeviceProfile(deviceProfiles.swiftfin);
+    expect(swiftfin.progressive).toBe(false);
+    expect(swiftfin.hls).toBe(true);
+  });
+
+  test("a progressive client's codecs come from its http profile, not the HLS one", () => {
+    const mixed = readDeviceProfile({
+      DirectPlayProfiles: [],
+      TranscodingProfiles: [
+        {
+          Type: "Video",
+          Protocol: "hls",
+          Container: "mp4",
+          VideoCodec: "h264,hevc",
+          AudioCodec: "aac,ac3",
+        },
+        {
+          Type: "Video",
+          Protocol: "http",
+          Container: "mp4",
+          VideoCodec: "h264",
+          AudioCodec: "aac",
+        },
+      ],
+      CodecProfiles: [
+        {
+          Type: "Video",
+          Codec: "h264,hevc",
+          Conditions: [
+            { Condition: "LessThanEqual", Property: "Height", Value: "1080" },
+          ],
+        },
+        {
+          Type: "Audio",
+          Codec: "aac,ac3",
+          Conditions: [
+            {
+              Condition: "LessThanEqual",
+              Property: "AudioChannels",
+              Value: "2",
+            },
+          ],
+        },
+      ],
+    });
+    expect(mixed.progressive).toBe(true);
+    expect(mixed.hls).toBe(true);
+    expect(mixed.videoCodecs.map((entry) => entry.codec)).toEqual(["h264"]);
+    expect(mixed.hlsCodecs?.videoCodecs.map((entry) => entry.codec)).toEqual([
+      "h264",
+      "hevc",
+    ]);
+    expect(mixed.videoCodecs[0]?.maxHeight).toBe(1080);
+    expect(
+      mixed.hlsCodecs?.videoCodecs.map((entry) => entry.maxHeight),
+    ).toEqual([1080, 1080]);
+    expect(mixed.audioCodecs).toEqual([{ codec: "aac", maxChannels: 2 }]);
+    expect(mixed.hlsCodecs?.audioCodecs).toEqual([
+      { codec: "aac", maxChannels: 2 },
+      { codec: "ac3", maxChannels: 2 },
+    ]);
+    // An http profile that outputs no mp4 never turns progressive on.
+    const mkvOnly = readDeviceProfile({
+      DirectPlayProfiles: [],
+      TranscodingProfiles: [
+        {
+          Type: "Video",
+          Protocol: "hls",
+          Container: "mp4",
+          VideoCodec: "h264",
+          AudioCodec: "aac",
+        },
+        {
+          Type: "Video",
+          Protocol: "http",
+          Container: "mkv",
+          VideoCodec: "h264",
+          AudioCodec: "aac",
+        },
+      ],
+    });
+    expect(mkvOnly.progressive).toBe(false);
+    expect(mkvOnly.hls).toBe(true);
   });
 
   test("Findroid's empty profile accepts nothing, so no path plays", () => {

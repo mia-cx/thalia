@@ -2,17 +2,25 @@
 import { onDestroy } from "svelte";
 import { checkHealth } from "$lib/admin.ts";
 import { client } from "$lib/api.ts";
-import { cardLabel, itemHref } from "$lib/browse.ts";
+import { cardLabel, formatBytes, itemHref } from "$lib/browse.ts";
 import Artwork from "$lib/components/Artwork.svelte";
 import AdminPage from "$lib/components/admin/AdminPage.svelte";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
 import FormRow from "$lib/components/admin/FormRow.svelte";
+import LibraryStats from "$lib/components/admin/LibraryStats.svelte";
 import ListRow from "$lib/components/admin/ListRow.svelte";
 import ScanState from "$lib/components/admin/ScanState.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
+import { Progress } from "$lib/components/ui/progress/index.ts";
+import { type FailureCode, readFailure } from "$lib/errors.ts";
 import { followEvents } from "$lib/events.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import type { ScanStatus } from "$lib/scan.ts";
+import {
+  type LibraryGaps,
+  type LibraryStats as LibraryStatsData,
+  replaceLibraryEntry,
+} from "$lib/stats.ts";
 
 type Session = NonNullable<
   Awaited<ReturnType<typeof client.playback.sessions>>
@@ -20,7 +28,15 @@ type Session = NonNullable<
 
 const libraries = resource(() => client.libraries.list());
 const sessions = resource(() => client.playback.sessions());
+const freeSpace = resource(() => client.libraries.freeSpace());
 let scans = $state<Record<string, ScanStatus | null>>({});
+let stats = $state<readonly LibraryStatsData[]>([]);
+let gaps = $state<readonly LibraryGaps[]>([]);
+let statsFailures = $state<
+  Record<string, { code: FailureCode; message: string } | undefined>
+>({});
+// Bumps per library on every library.changed; open gap dialogs reconcile on it.
+let revisions = $state<Record<string, number>>({});
 
 let health = $state<"ready" | "no-database" | "unreachable" | undefined>(
   undefined,
@@ -76,6 +92,100 @@ function clientLabel(session: Session) {
   return `${session.clientName} on ${session.deviceName}`;
 }
 
+// One library's stats and gaps reload together; a scan's event burst coalesces
+// to one in-flight refetch plus one rerun when it was marked dirty.
+const refreshing = new Map<string, { running: boolean; dirty: boolean }>();
+
+// A load bumps every library it covers and applies answers only for those
+// still at its sequence, so an older whole-list answer can't overwrite a
+// newer per-library refetch.
+const statsSeq = new Map<string, number>();
+function bumpStatsSeq(ids: readonly string[]) {
+  const captured = new Map<string, number>();
+  for (const id of ids) {
+    const next = (statsSeq.get(id) ?? 0) + 1;
+    statsSeq.set(id, next);
+    captured.set(id, next);
+  }
+  return captured;
+}
+const seqMatches = (captured: Map<string, number>, id: string) =>
+  statsSeq.get(id) === captured.get(id);
+
+async function loadLibraryStats(libraryId: string) {
+  const captured = bumpStatsSeq([libraryId]);
+  try {
+    const [nextStats, nextGaps] = await Promise.all([
+      client.libraries.stats({ id: libraryId }),
+      client.libraries.metadataGaps({ id: libraryId }),
+    ]);
+    if (!seqMatches(captured, libraryId)) return;
+    const [statEntry] = nextStats;
+    const [gapEntry] = nextGaps;
+    if (statEntry !== undefined) stats = replaceLibraryEntry(stats, statEntry);
+    if (gapEntry !== undefined) gaps = replaceLibraryEntry(gaps, gapEntry);
+    statsFailures = { ...statsFailures, [libraryId]: undefined };
+  } catch (error) {
+    if (!seqMatches(captured, libraryId)) return;
+    statsFailures = { ...statsFailures, [libraryId]: readFailure(error) };
+  }
+}
+
+function refreshLibraryStats(libraryId: string) {
+  const state = refreshing.get(libraryId) ?? { running: false, dirty: false };
+  refreshing.set(libraryId, state);
+  if (state.running) {
+    state.dirty = true;
+    return;
+  }
+  state.running = true;
+  void (async () => {
+    try {
+      do {
+        state.dirty = false;
+        await loadLibraryStats(libraryId);
+      } while (state.dirty);
+    } finally {
+      state.running = false;
+      refreshing.delete(libraryId);
+    }
+  })();
+}
+
+async function loadAllStats() {
+  const list = libraries.data;
+  if (list === undefined) return;
+  const captured = bumpStatsSeq(list.map((library) => library.id));
+  const [statsResult, gapsResult] = await Promise.allSettled([
+    client.libraries.stats({}),
+    client.libraries.metadataGaps({}),
+  ]);
+  // Merge per library so entries a newer refetch already answered stay put.
+  for (const library of list) {
+    if (!seqMatches(captured, library.id)) continue;
+    const statEntry =
+      statsResult.status === "fulfilled"
+        ? statsResult.value.find((entry) => entry.libraryId === library.id)
+        : undefined;
+    const gapEntry =
+      gapsResult.status === "fulfilled"
+        ? gapsResult.value.find((entry) => entry.libraryId === library.id)
+        : undefined;
+    if (statEntry !== undefined) stats = replaceLibraryEntry(stats, statEntry);
+    if (gapEntry !== undefined) gaps = replaceLibraryEntry(gaps, gapEntry);
+    const failed =
+      statsResult.status === "rejected"
+        ? statsResult.reason
+        : gapsResult.status === "rejected"
+          ? gapsResult.reason
+          : undefined;
+    statsFailures = {
+      ...statsFailures,
+      [library.id]: failed === undefined ? undefined : readFailure(failed),
+    };
+  }
+}
+
 const controller = new AbortController();
 void loadHealth();
 void followEvents(
@@ -83,6 +193,14 @@ void followEvents(
   (event) => {
     if (event.kind === "library.changed" || event.kind === "job.progress")
       void loadScans();
+    if (event.kind === "library.changed") {
+      revisions = {
+        ...revisions,
+        [event.libraryId]: (revisions[event.libraryId] ?? 0) + 1,
+      };
+      refreshLibraryStats(event.libraryId);
+      void freeSpace.reload();
+    }
     if (event.kind === "session.state") void sessions.reload();
   },
   controller.signal,
@@ -93,8 +211,18 @@ const timer = setInterval(() => {
   void loadScans();
   void sessions.reload();
 }, reloadMs);
+let knownLibraryIds = "";
 $effect(() => {
   if (libraries.data !== undefined) void loadScans();
+});
+$effect(() => {
+  const list = libraries.data;
+  if (list === undefined) return;
+  const ids = list.map((library) => library.id).join("");
+  if (ids === knownLibraryIds) return;
+  knownLibraryIds = ids;
+  void loadAllStats();
+  void freeSpace.reload();
 });
 onDestroy(() => {
   controller.abort();
@@ -162,6 +290,70 @@ onDestroy(() => {
     {/snippet}
   </FormGroup>
 
+  {#each libraries.data ?? [] as library (library.id)}
+    <LibraryStats
+      {library}
+      stats={stats.find((entry) => entry.libraryId === library.id)}
+      gaps={gaps.find((entry) => entry.libraryId === library.id)}
+      failure={statsFailures[library.id]}
+      onretry={() => refreshLibraryStats(library.id)}
+      revision={revisions[library.id] ?? 0}
+    />
+  {/each}
+
+  {#if (freeSpace.data !== undefined && freeSpace.data.length > 0) || freeSpace.failure !== undefined}
+    <FormGroup title="Free space" failure={freeSpace.failure ?? undefined}>
+      {#each freeSpace.data ?? [] as filesystem (filesystem.roots[0]?.id)}
+        {#if filesystem.state === "available"}
+          {@const multiLibrary =
+            new Set(filesystem.roots.map((root) => root.libraryId)).size > 1}
+          <FormRow
+            label="{formatBytes(filesystem.availableBytes)} free of {formatBytes(
+              filesystem.totalBytes,
+            )}"
+          >
+            {#each filesystem.roots as root (root.id)}
+              <span
+                class="block truncate text-footnote text-label-secondary"
+                title={multiLibrary
+                  ? `${root.libraryName} · ${root.path}`
+                  : root.path}
+                >{multiLibrary
+                  ? `${root.libraryName} · ${root.path}`
+                  : root.path}</span
+              >
+            {/each}
+            <span class="space-usage mt-2 block">
+              <Progress
+                value={filesystem.usedBytes}
+                max={filesystem.totalBytes}
+                aria-label="Space used"
+                aria-valuetext="{Math.round(
+                  (filesystem.usedBytes / filesystem.totalBytes) * 100,
+                )}% used"
+              />
+            </span>
+          </FormRow>
+        {:else}
+          {@const root = filesystem.roots[0]}
+          <ListRow
+            title={root?.path ?? ""}
+            caption="Can't read this folder from the server"
+          />
+        {/if}
+      {/each}
+      {#snippet actions()}
+        {#if freeSpace.failure}
+          <Button
+            variant="secondary"
+            onclick={() => freeSpace.reload()}
+            disabled={freeSpace.loading}>Try again</Button
+          >
+        {/if}
+      {/snippet}
+    </FormGroup>
+  {/if}
+
   <FormGroup
     title="Now playing"
     loading={sessions.data === undefined ? 1 : undefined}
@@ -205,3 +397,15 @@ onDestroy(() => {
     {/snippet}
   </FormGroup>
 </AdminPage>
+
+<style>
+  /* Forced colors strips the bar's fill; keep it and outline the track. */
+  @media (forced-colors: active) {
+    .space-usage :global([data-slot="progress"]) {
+      border: 1px solid CanvasText;
+    }
+    .space-usage :global([data-slot="progress-indicator"]) {
+      forced-color-adjust: none;
+    }
+  }
+</style>

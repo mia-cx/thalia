@@ -22,8 +22,16 @@ const swiftfin =
 
 type Source = {
   TranscodingUrl?: string;
-  MediaStreams: { Type: string; DeliveryUrl?: string }[];
+  TranscodingSubProtocol?: string;
+  MediaStreams: {
+    Type: string;
+    DeliveryUrl?: string;
+    DeliveryMethod?: string;
+  }[];
 };
+
+const mp4Client =
+  'MediaBrowser Client="Mp4Only", Version="1.0", Device="Box", DeviceId="mp4-1"';
 
 describe.skipIf(!databaseUrl)("jellyfin streaming", () => {
   let root: string;
@@ -123,6 +131,7 @@ describe.skipIf(!databaseUrl)("jellyfin streaming", () => {
           );
           const [source] = hls.MediaSources;
           const masterUrl = new URL(source?.TranscodingUrl ?? "", base);
+          expect(masterUrl.pathname).toBe(`/videos/${itemGuid}/master.m3u8`);
           const masterResponse = await fetch(masterUrl);
           expect(masterResponse.status).toBe(200);
           const master = HLS.parse(await masterResponse.text());
@@ -202,6 +211,79 @@ describe.skipIf(!databaseUrl)("jellyfin streaming", () => {
             positionSeconds: 2,
             completed: false,
           });
+        } finally {
+          await thalia.stop();
+          await rm(scratch, { recursive: true, force: true });
+        }
+      }),
+    60_000,
+  );
+
+  test(
+    "a client without HLS gets a progressive MP4 TranscodingUrl it can follow",
+    () =>
+      withDatabase(async (db, url) => {
+        const { movies } = await seedMovies(db, root, ["Atmos"]);
+        const movie = movies.get("Atmos");
+        if (movie === undefined) throw new Error("Expected the movie.");
+        const scratch = await mkdtemp(join(tmpdir(), "thalia-jellyfin-mp4-"));
+        const thalia = await startThalia("all", {
+          databaseUrl: url,
+          port: 0,
+          transcoderOptions: {
+            port: 0,
+            scratchDir: join(scratch, "scratch"),
+            idleMs: 30_000,
+            waitMs: 20_000,
+            transcodeSlots: 1,
+          },
+        });
+        try {
+          const base = `http://127.0.0.1:${thalia.apiServer?.port}`;
+          const send = (request: Request) =>
+            fetch(new URL(new URL(request.url).pathname, base), request);
+          const itemGuid = toGuid(movie.itemId);
+          const token = await jellyfinLogin(send, mp4Client);
+          const info = await fetch(`${base}/Items/${itemGuid}/PlaybackInfo`, {
+            method: "POST",
+            headers: {
+              authorization: `${mp4Client}, Token="${token}"`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              DeviceProfile: deviceProfiles.progressive,
+              StartTimeTicks: 20_000_000,
+            }),
+          });
+          expect(info.status).toBe(200);
+          const { MediaSources } = (await info.json()) as {
+            MediaSources: Source[];
+          };
+          const [source] = MediaSources;
+          expect(source?.TranscodingSubProtocol).toBe("http");
+          // A text track in a progressive plan is served on the side.
+          const subtitle = source?.MediaStreams.find(
+            (entry) => entry.Type === "Subtitle",
+          );
+          expect(subtitle?.DeliveryMethod).toBe("External");
+          const streamUrl = new URL(source?.TranscodingUrl ?? "", base);
+          expect(streamUrl.pathname).toBe(`/videos/${itemGuid}/stream.mp4`);
+          // The resume position rides the URL the client follows unchanged.
+          expect(streamUrl.searchParams.get("StartTimeTicks")).toBe("20000000");
+          // Players fetch the URL bare; its token authenticates.
+          const stream = await fetch(streamUrl);
+          expect(stream.status).toBe(200);
+          expect(stream.headers.get("content-type")).toBe("video/mp4");
+          expect(Number(stream.headers.get("x-stream-offset"))).toBeGreaterThan(
+            0,
+          );
+          const reader = stream.body?.getReader();
+          if (reader === undefined) throw new Error("Expected a body.");
+          const first = await reader.read();
+          await reader.cancel();
+          expect(new TextDecoder().decode(first.value?.slice(4, 8))).toBe(
+            "ftyp",
+          );
         } finally {
           await thalia.stop();
           await rm(scratch, { recursive: true, force: true });

@@ -306,20 +306,24 @@ export async function readCapabilityTable(
   };
 }
 
-async function userBitrateCap(
+async function userPlaybackSettings(
   db: Database,
   userId: string,
-): Promise<number | null> {
+): Promise<{ bitrateCapBps: number | null; preferDirectStream: boolean }> {
   const [row] = await db
-    .select({ cap: userSettings.bitrateCapBps })
+    .select({
+      cap: userSettings.bitrateCapBps,
+      preferDirectStream: userSettings.preferDirectStream,
+    })
     .from(userSettings)
     .where(eq(userSettings.userId, userId))
     .limit(1);
-  if (row === undefined || row.cap === null) return null;
-  const cap = Number(row.cap);
-  if (!Number.isSafeInteger(cap) || cap <= 0)
+  if (row === undefined)
+    return { bitrateCapBps: null, preferDirectStream: false };
+  const cap = row.cap === null ? null : Number(row.cap);
+  if (cap !== null && (!Number.isSafeInteger(cap) || cap <= 0))
     throw new Error("Invalid playback settings.");
-  return cap;
+  return { bitrateCapBps: cap, preferDirectStream: row.preferDirectStream };
 }
 
 /** Names the app and device behind a caller's credential; an API key names the client only. */
@@ -429,9 +433,17 @@ export async function planPlayback(
     qualityRung === undefined
       ? input.profile
       : boxProfile(input.profile, qualityRung);
+  const hlsProfile = { ...input.profile, ...input.profile.hlsCodecs };
+  const storedProfile =
+    input.profile.hlsCodecs === undefined
+      ? profile
+      : qualityRung === undefined
+        ? hlsProfile
+        : boxProfile(hlsProfile, qualityRung);
+  const userPlayback = await userPlaybackSettings(db, caller.user.id);
   const caps: PlaybackCaps = {
     globalDefault: playbackSettings.bitrateCapBps,
-    userOverride: await userBitrateCap(db, caller.user.id),
+    userOverride: userPlayback.bitrateCapBps,
     sessionRequest: input.bitrateCapBps ?? null,
     isLan: isLanAddress(identity.address),
   };
@@ -455,7 +467,9 @@ export async function planPlayback(
   // Stream, so a burn-in over HLS or another audio Stream stays live, or
   // fails the plan when no live path exists.
   const storedEligible =
-    !requiresBurnIn(source, profile, true) && (selection.audio ?? 0) === 0;
+    !requiresBurnIn(source, profile, true) &&
+    (selection.audio ?? 0) === 0 &&
+    input.profile.hls !== false;
   const segmentTimelineId = version.timelineAligned
     ? version.segmentTimelineId
     : null;
@@ -474,10 +488,20 @@ export async function planPlayback(
       storedCaps,
     );
   // An "original" pick skips stored rungs so the source File plays as is.
-  const storedVariantIds =
+  const pickedStored =
     input.quality === "original" || !storedEligible
       ? []
-      : pickStored(profile, caps, decision?.method ?? null).variantIds;
+      : pickStored(storedProfile, caps, decision?.method ?? null).variantIds;
+  // Prefer direct stream trades the stored adaptive group for one live
+  // progressive stream of the best passing Version, but only when the client
+  // profile accepts progressive delivery and a live decision exists to serve.
+  const storedVariantIds =
+    userPlayback.preferDirectStream &&
+    input.profile.progressive === true &&
+    decision !== null &&
+    pickedStored.length > 1
+      ? []
+      : pickedStored;
   const stored = storedVariantIds.length > 0;
   if (!stored && decision === null) throw new AuthError("INVALID_INPUT");
   const method =

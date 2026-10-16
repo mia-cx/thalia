@@ -169,6 +169,13 @@
       "when": 1791978406608,
       "tag": "0023_clever_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792014944840,
+      "tag": "0024_prefer_direct_stream",
+      "breakpoints": true
     }
   ]
 }

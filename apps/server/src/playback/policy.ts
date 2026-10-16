@@ -17,6 +17,10 @@ export type ClientProfile = {
   maxBitrate?: number | null;
   /** The player can take one continuous fMP4 stream fed through Media Source Extensions. */
   progressive?: boolean;
+  /** The player can play HLS; absent means it can. */
+  hls?: boolean;
+  /** The codecs the player decodes over HLS, when they differ from videoCodecs and audioCodecs; absent means the same lists. */
+  hlsCodecs?: Pick<ClientProfile, "videoCodecs" | "audioCodecs">;
 };
 
 /** The policy bitrate caps applying to one session, in bits per second. */
