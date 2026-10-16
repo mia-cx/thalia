@@ -46,6 +46,11 @@ timeline; when the background index job has not reached the file yet the plan
 queues it at top priority and answers 503 PREPARING, and the client retries
 while the spinner holds.
 
+With a user's Prefer direct stream setting on, an Item whose cut has an
+adaptive group of two or more variants gets one progressive stream of the best
+Version that passes instead of the stored HLS group. HLS-only players still
+get HLS.
+
 ## Segment timeline
 
 One per Item, or one per cut when an Item has several cuts. Thalia derives it once from the Item's first Version: the subset of that Version's keyframes closest to a 4 s target. Every Version Thalia produces forces keyframes at those timestamps. A Version from elsewhere joins the adaptive group only when its keyframes include every timeline timestamp. Every media playlist, live or stored, uses these boundaries.

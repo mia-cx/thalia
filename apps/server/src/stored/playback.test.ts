@@ -8,7 +8,8 @@ import { and, eq } from "drizzle-orm";
 import * as HLS from "hls-parser";
 import type { thaliaRouter } from "../api/router.ts";
 import { setupAdmin } from "../auth/accounts.ts";
-import { createApiKey } from "../auth/sessions.ts";
+import { writeUserSettings } from "../auth/admin.ts";
+import { authenticate, createApiKey } from "../auth/sessions.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import type { JsonObject } from "../db/schema/common.ts";
 import { sessionRegistry, versions } from "../db/schema/index.ts";
@@ -18,12 +19,15 @@ import {
   withDatabase,
 } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
+import { readDeviceProfile } from "../jellyfin/profile.ts";
 import { scanDirectory } from "../libraries/scan.ts";
+import { planPlayback } from "../playback/planning.ts";
 import {
   drain,
   fixtureFolder,
   fixturePath,
   scanFolder,
+  twoRungPolicy,
   withStoredLibrary,
 } from "./testing.ts";
 
@@ -47,6 +51,87 @@ const threeRungs: JsonObject = {
 };
 
 describe.skipIf(!databaseUrl)("stored playback", () => {
+  test(
+    "dual-transport clients keep their HLS codecs when selecting stored rungs",
+    () =>
+      withDatabase(async (db) => {
+        await migrateDatabase(db);
+        const admin = await setupAdmin(db, {
+          username: "admin",
+          password: "admin-pass",
+        });
+        const { token } = await createApiKey(db, admin.id, "player");
+        const caller = await authenticate(db, token);
+        await withStoredLibrary(
+          db,
+          twoRungPolicy,
+          async ({ library, itemId, version }) => {
+            await scanFolder(db, library.id);
+            await drain(db);
+            const stored = await db
+              .select({ id: versions.id, rung: versions.rung })
+              .from(versions)
+              .where(eq(versions.origin, "stored"));
+            expect(stored).toHaveLength(2);
+            const http = {
+              Type: "Video",
+              Protocol: "http",
+              Container: "mp4",
+              VideoCodec: "h264",
+              AudioCodec: "aac",
+            };
+            const hls = {
+              ...http,
+              Protocol: "hls",
+              VideoCodec: "hevc,h264",
+            };
+            const plan = async (
+              transcodingProfiles: (typeof http)[],
+              quality?: string,
+            ) => {
+              const result = await planPlayback(
+                db,
+                caller,
+                {
+                  itemId,
+                  versionId: version.id,
+                  profile: readDeviceProfile({
+                    TranscodingProfiles: transcodingProfiles,
+                  }),
+                  quality,
+                },
+                {
+                  request: new Request("http://thalia.test/playback/plan"),
+                  peerAddress: "127.0.0.1",
+                },
+              );
+              const [session] = await db
+                .select({ decision: sessionRegistry.decision })
+                .from(sessionRegistry)
+                .where(eq(sessionRegistry.id, result.sessionId ?? ""));
+              return { result, decision: session?.decision };
+            };
+            const dual = await plan([http, hls]);
+            expect(dual.result.delivery).toBe("hls");
+            // Adaptive groups keep one codec family. HEVC wins at source
+            // quality; the H.264 rung remains available at 360p.
+            expect(dual.decision?.storedVariantIds).toEqual([
+              stored.find((row) => row.rung === "source")?.id ?? "",
+            ]);
+            const boxed = await plan([http, hls], "360p");
+            expect(boxed.decision?.storedVariantIds).toEqual([
+              stored.find((row) => row.rung === "360p")?.id ?? "",
+            ]);
+            const httpOnly = await plan([http]);
+            expect(httpOnly.result.delivery).toBe("progressive");
+            expect(httpOnly.decision?.storedVariantIds).toBeUndefined();
+          },
+          { videoCodec: "hevc", subtitles: [] },
+        );
+      }),
+    120_000,
+  );
+
   test(
     "plans complete stored rungs as variants served from disk, else falls back to the live path",
     () =>
@@ -275,6 +360,126 @@ describe.skipIf(!databaseUrl)("stored playback", () => {
                 .from(sessionRegistry)
                 .where(eq(sessionRegistry.id, live.sessionId ?? ""));
               expect(liveSession?.decision?.storedVariantIds).toBeUndefined();
+            } finally {
+              await server.stop();
+            }
+          },
+        );
+      }),
+    120_000,
+  );
+
+  test(
+    "prefer direct stream trades a stored group of two or more for one progressive stream",
+    () =>
+      withDatabase(async (db, url) => {
+        await migrateDatabase(db);
+        const admin = await setupAdmin(db, {
+          username: "admin",
+          password: "admin-pass",
+        });
+        const { token } = await createApiKey(db, admin.id, "player");
+        await withStoredLibrary(
+          db,
+          threeRungs,
+          async ({ library, itemId, version }) => {
+            await scanFolder(db, library.id);
+            await drain(db);
+            // The group the remux client picks is [360p, source].
+            await db
+              .update(versions)
+              .set({ complete: false })
+              .where(
+                and(eq(versions.origin, "stored"), eq(versions.rung, "240p")),
+              );
+            const server = await startThalia("api", {
+              databaseUrl: url,
+              port: 0,
+            });
+            try {
+              const base = `http://127.0.0.1:${server.apiServer?.port}`;
+              const client = createORPCClient<
+                RouterClient<typeof thaliaRouter>
+              >(
+                new RPCLink({
+                  url: `${base}/rpc`,
+                  headers: { authorization: `Bearer ${token}` },
+                }),
+              );
+              const plan = (
+                profile: Parameters<typeof client.playback.plan>[0]["profile"],
+              ) =>
+                client.playback.plan({
+                  itemId,
+                  versionId: version.id,
+                  profile,
+                });
+              const decisionOf = async (sessionId: string | null | undefined) =>
+                (
+                  await db
+                    .select({ decision: sessionRegistry.decision })
+                    .from(sessionRegistry)
+                    .where(eq(sessionRegistry.id, sessionId ?? ""))
+                )[0]?.decision;
+
+              // The preference off: a progressive-capable profile still takes
+              // the stored adaptive group over HLS.
+              const off = await plan({ ...remuxClient, progressive: true });
+              expect(off.delivery).toBe("hls");
+              expect(off.url).toContain("/hls/master.m3u8");
+              expect(await decisionOf(off.sessionId)).toMatchObject({
+                storedVariantIds: expect.any(Array),
+              });
+              expect(
+                (await decisionOf(off.sessionId))?.storedVariantIds,
+              ).toHaveLength(2);
+
+              // An http-only client never gets stored HLS, preference or not.
+              // planPlayback takes a raw profile; the rpc input schema leaves
+              // `hls` out, so this goes through the planner directly.
+              const httpOnly = await planPlayback(
+                db,
+                await authenticate(db, token),
+                {
+                  itemId,
+                  versionId: version.id,
+                  profile: {
+                    ...remuxClient,
+                    progressive: true,
+                    hls: false,
+                  },
+                },
+                {
+                  request: new Request("http://thalia.test/rpc/playback/plan"),
+                  peerAddress: "127.0.0.1",
+                },
+              );
+              expect(httpOnly.delivery).toBe("progressive");
+              expect(httpOnly.url).toContain("/stream?token=");
+              expect(
+                (await decisionOf(httpOnly.sessionId))?.storedVariantIds,
+              ).toBeUndefined();
+
+              await writeUserSettings(db, admin.id, admin.id, {
+                bitrateCapBps: null,
+                contentRatingCeiling: null,
+                preferDirectStream: true,
+              });
+              // The preference on: the stored group gives way to the live
+              // decision served as one progressive stream.
+              const on = await plan({ ...remuxClient, progressive: true });
+              expect(on.delivery).toBe("progressive");
+              expect(on.url).toContain("/stream?token=");
+              expect(
+                (await decisionOf(on.sessionId))?.storedVariantIds,
+              ).toBeUndefined();
+
+              // An HLS-only profile keeps the stored group regardless.
+              const hlsOnly = await plan(remuxClient);
+              expect(hlsOnly.delivery).toBe("hls");
+              expect(
+                (await decisionOf(hlsOnly.sessionId))?.storedVariantIds,
+              ).toHaveLength(2);
             } finally {
               await server.stop();
             }

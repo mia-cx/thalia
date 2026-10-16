@@ -275,6 +275,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
         expect(access.settings).toEqual({
           bitrateCapBps: null,
           contentRatingCeiling: null,
+          preferDirectStream: false,
         });
         const restGet = await fetch(`${base}/api/users/${created.id}`, {
           headers,
@@ -324,6 +325,7 @@ describe.skipIf(!databaseUrl)("admin api", () => {
         expect(updated.settings).toEqual({
           bitrateCapBps: cap,
           contentRatingCeiling: "PG-13",
+          preferDirectStream: false,
         });
         const cleared = await client.users.setSettings({
           id: viewer.id,
@@ -333,7 +335,64 @@ describe.skipIf(!databaseUrl)("admin api", () => {
         expect(cleared.settings).toEqual({
           bitrateCapBps: null,
           contentRatingCeiling: null,
+          preferDirectStream: false,
         });
+      } finally {
+        await server.stop();
+      }
+    }));
+
+  test("users.setSettings round trips preferDirectStream and keeps it when omitted", () =>
+    withDatabase(async (db, url) => {
+      await migrateDatabase(db);
+      const { admin, token } = await seed(db);
+      const viewer = await createLocalUser(db, admin.id, {
+        username: "viewer",
+        password: "viewer-pass",
+      });
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const base = `http://127.0.0.1:${server.apiServer?.port}`;
+        const client = createThaliaClient({
+          origin: base,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(
+          (await client.users.get({ id: viewer.id })).settings
+            .preferDirectStream,
+        ).toBe(false);
+        const set = await client.users.setSettings({
+          id: viewer.id,
+          bitrateCapBps: null,
+          contentRatingCeiling: null,
+          preferDirectStream: true,
+        });
+        expect(set.settings.preferDirectStream).toBe(true);
+        expect(
+          (await client.users.get({ id: viewer.id })).settings
+            .preferDirectStream,
+        ).toBe(true);
+        // A policy write that leaves the preference out keeps its value.
+        await client.users.setSettings({
+          id: viewer.id,
+          bitrateCapBps: 4_000_000,
+          contentRatingCeiling: null,
+        });
+        expect(
+          (await client.users.get({ id: viewer.id })).settings
+            .preferDirectStream,
+        ).toBe(true);
+        const off = await client.users.setSettings({
+          id: viewer.id,
+          bitrateCapBps: null,
+          contentRatingCeiling: null,
+          preferDirectStream: false,
+        });
+        expect(off.settings.preferDirectStream).toBe(false);
+        expect(
+          (await client.users.get({ id: viewer.id })).settings
+            .preferDirectStream,
+        ).toBe(false);
       } finally {
         await server.stop();
       }
