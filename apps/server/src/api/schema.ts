@@ -379,12 +379,18 @@ export const AdminUser = Schema.Struct({
   createdAt: Schema.String,
 });
 
-/** A permission group with its granted permission names. */
+/** A Group with a summary of its Access rules: its server rules, and how many Libraries and Items it has rules on. */
 export const Group = Schema.Struct({
   id: Schema.UUID,
   name: Schema.String,
   builtIn: Schema.Boolean,
-  permissions: Schema.Array(PermissionName),
+  rules: Schema.Struct({
+    server: Schema.Array(
+      Schema.Struct({ action: PermissionName, allowed: Schema.Boolean }),
+    ),
+    libraries: Schema.Int,
+    items: Schema.Int,
+  }),
 });
 
 /** The per-user bitrate cap, content-rating ceiling and direct-stream preference. */
@@ -398,9 +404,6 @@ export const UserSettings = Schema.Struct({
 export const UserAccess = Schema.Struct({
   user: AdminUser,
   groupIds: Schema.Array(Schema.UUID),
-  overrides: Schema.Array(
-    Schema.Struct({ permission: PermissionName, allowed: Schema.Boolean }),
-  ),
   libraryAccess: Schema.Array(
     Schema.Struct({ libraryId: Schema.UUID, allowed: Schema.Boolean }),
   ),

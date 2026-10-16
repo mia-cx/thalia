@@ -450,34 +450,40 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
 export const searchLimit = 24;
 
 /**
- * Finds the Movies and Shows the caller may view whose titles resemble the
- * query, best match first. Trigram similarity forgives a misspelling; word
- * similarity lets a prefix or one word of a longer title match.
+ * Finds the Items of the given kinds the caller may view whose titles resemble
+ * the query, best match first, as browse cards so a Season or Episode carries
+ * its Show. Trigram similarity forgives a misspelling; word similarity lets a
+ * prefix or one word of a longer title match.
  */
-export function searchItems(db: Database, caller: Caller, query: string) {
+export function searchItems(
+  db: Database,
+  caller: Caller,
+  query: string,
+  kinds: readonly Schema.Schema.Type<typeof ItemKind>[] = ["movie", "show"],
+) {
   return Effect.gen(function* () {
     const viewable = yield* fromHost(() =>
       viewableLibraryIds(db, caller.user.id),
     );
     if (viewable.length === 0) return [];
+    // Match on the Item's own title only: matching the Show title would bypass
+    // the title trigram index.
     return yield* fromHost(() =>
-      db
-        .select(cardFields)
-        .from(items)
-        .where(
-          and(
-            inLibraries(viewable),
-            inArray(items.kind, ["movie", "show"]),
-            sql`(${items.title} % ${query} or ${query} <% ${items.title})`,
-          ),
-        )
-        .orderBy(
+      browseCards(
+        db,
+        and(
+          inLibraries(viewable),
+          inArray(items.kind, [...kinds]),
+          sql`(${items.title} % ${query} or ${query} <% ${items.title})`,
+        ),
+        [
           sql`word_similarity(${query}, ${items.title}) desc`,
           sql`similarity(${items.title}, ${query}) desc`,
           asc(items.title),
           asc(items.id),
-        )
-        .limit(searchLimit),
+        ],
+        searchLimit,
+      ),
     );
   });
 }

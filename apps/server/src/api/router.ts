@@ -26,6 +26,7 @@ import { playbackProcedures } from "./playback.ts";
 import { pluginProcedures, registryProcedures } from "./plugins.ts";
 import {
   ApiEvent,
+  BrowseCard,
   connection,
   ItemCard,
   ItemDetail,
@@ -118,10 +119,24 @@ const SearchQuery = Schema.Trim.pipe(
 
 const search = authenticated
   .route({ method: "GET", path: "/search" })
-  .input(Schema.standardSchemaV1(Schema.Struct({ query: SearchQuery })))
-  .output(Schema.standardSchemaV1(Schema.Array(ItemCard)))
+  .input(
+    Schema.standardSchemaV1(
+      Schema.Struct({
+        query: SearchQuery,
+        kinds: Schema.optional(Schema.NonEmptyArray(ItemKind)),
+      }),
+    ),
+  )
+  .output(Schema.standardSchemaV1(Schema.Array(BrowseCard)))
   .handler(async ({ context, input }) =>
-    runApi(searchItems(context.db, context.caller, input.query)),
+    runApi(
+      searchItems(
+        context.db,
+        context.caller,
+        input.query,
+        input.kinds ?? ["movie", "show"],
+      ),
+    ),
   );
 
 const streamEvents = authenticated
