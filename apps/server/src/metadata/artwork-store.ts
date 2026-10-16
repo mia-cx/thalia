@@ -194,6 +194,7 @@ export async function storeArtworkBytes(
       bytes,
     );
   // Only colocated writes need the Item folder lock; a slow S3 PUT must hold no row lock.
+  let writtenRootPath = home.path;
   let fresh: WrittenOriginal | undefined =
     store.backend === "colocated"
       ? undefined
@@ -226,6 +227,7 @@ export async function storeArtworkBytes(
         );
       const artworkId = selected?.id ?? candidateId;
       const currentHome = await homeRoot(tx, itemId);
+      writtenRootPath = currentHome.path;
       fresh ??= await writeOriginal(
         currentHome.path,
         currentHome.canonicalFolder,
@@ -272,7 +274,7 @@ export async function storeArtworkBytes(
           .catch(() => true);
         if (!referenced)
           await removeArtworkFiles(
-            [{ ...fresh, rootPaths: [home.path] }],
+            [{ ...fresh, rootPaths: [writtenRootPath] }],
             store,
           );
       }

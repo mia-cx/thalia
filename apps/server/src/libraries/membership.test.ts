@@ -1,12 +1,246 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
+import { setupAdmin } from "../auth/accounts.ts";
 import { insertItem } from "../db/item-fixtures.ts";
-import { files, items, versions } from "../db/schema/index.ts";
+import {
+  events,
+  files,
+  items,
+  settings,
+  versions,
+} from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { homeLibraryId, homeLocation, inLibraries } from "./membership.ts";
+import { remoteMetadataProviders } from "../metadata/lookup.ts";
+import { subtitleFolder, writeSubtitle } from "../subtitles/store.ts";
+import { setItemLocation } from "./locations.ts";
+import {
+  homeLibraryId,
+  homeLocation,
+  inLibraries,
+  publishItemChange,
+} from "./membership.ts";
+import { assetRoots } from "./roots.ts";
+import { libraryMetadataGaps, libraryStats, librarySummary } from "./stats.ts";
 import { addRoot, insertLibraries } from "./testing.ts";
 
 describe.skipIf(!databaseUrl)("Version membership and home", () => {
+  // Proves shared copies have local aggregates but one global identity, with home-specific configuration and asset folders.
+  test("shared descendants switch home by import order and retain each root's asset folder", () =>
+    withDatabase(async (db) => {
+      const folder = await mkdtemp(join(tmpdir(), "thalia-home-"));
+      try {
+        const admin = await setupAdmin(db, {
+          username: "admin",
+          password: "admin-pass",
+        });
+        const [a, b] = await insertLibraries(db, [
+          { name: "A", medium: "shows", rootPath: join(folder, "a") },
+          { name: "B", medium: "shows", rootPath: join(folder, "b") },
+        ]);
+        if (!a || !b) throw new Error("Missing Libraries");
+        const aLater = await addRoot(db, a.id, join(folder, "a-later"));
+        const show = await insertItem(db, {
+          libraryId: a.id,
+          kind: "show",
+          title: "Shared",
+          canonicalFolder: "A show",
+          extension: {},
+        });
+        const season = await insertItem(db, {
+          libraryId: a.id,
+          kind: "season",
+          title: "Season",
+          canonicalFolder: "A show",
+          parentId: show.id,
+          extension: { seasonNumber: 1 },
+        });
+        const episode = await insertItem(db, {
+          libraryId: a.id,
+          kind: "episode",
+          title: "Episode",
+          canonicalFolder: "A show",
+          parentId: season.id,
+          extension: { episodeNumber: 1 },
+        });
+        for (const item of [show, season, episode]) {
+          await setItemLocation(
+            db,
+            item.id,
+            aLater,
+            "A later",
+            item.kind === "show" ? "" : null,
+          );
+          await setItemLocation(
+            db,
+            item.id,
+            b.rootId,
+            "Different B folder",
+            item.kind === "show" ? "" : null,
+          );
+        }
+        for (const [rootPath, name] of [
+          [a.rootPath, "A show"],
+          [b.rootPath, "Different B folder"],
+        ] as const) {
+          await mkdir(join(rootPath, name), { recursive: true });
+        }
+        const oldA = "00000000-0000-4000-8000-000000000001";
+        const oldB = "00000000-0000-4000-8000-000000000002";
+        const newA = "00000000-0000-4000-8000-000000000003";
+        for (const copy of [
+          {
+            id: oldB,
+            libraryId: b.id,
+            rootId: b.rootId,
+            bytes: 200n,
+            durationSeconds: 200,
+            createdAt: new Date("2020-01-01"),
+          },
+          {
+            id: oldA,
+            libraryId: a.id,
+            rootId: aLater,
+            bytes: 100n,
+            durationSeconds: 100,
+            createdAt: new Date("2020-01-01"),
+          },
+          {
+            id: newA,
+            libraryId: a.id,
+            rootId: a.rootId,
+            bytes: 150n,
+            durationSeconds: 150,
+            createdAt: new Date("2021-01-01"),
+          },
+        ]) {
+          await db.insert(versions).values({
+            ...copy,
+            itemId: episode.id,
+            itemKind: "episode",
+            format: "video",
+            label: copy.id,
+          });
+          await db.insert(files).values({
+            versionId: copy.id,
+            rootId: copy.rootId,
+            libraryId: copy.libraryId,
+            itemId: episode.id,
+            path: "episode.mkv",
+            order: 0,
+            bytes: copy.bytes,
+            modifiedAt: copy.createdAt,
+          });
+        }
+        for (const item of [show, season, episode]) {
+          expect(await homeLocation(db, item.id)).toEqual({
+            libraryId: a.id,
+            rootId: a.rootId,
+            path: a.rootPath,
+            canonicalFolder: "A show",
+          });
+        }
+        await db.insert(settings).values({
+          key: "metadata",
+          value: {
+            providerOrder: ["tvdb"],
+            libraries: { [a.id]: ["tvdb"], [b.id]: [] },
+          },
+        });
+        await db
+          .insert(settings)
+          .values({ key: "providers", value: { keys: { tvdb: "test-only" } } });
+        expect(
+          (await remoteMetadataProviders(db, admin.id, show.id)).map(
+            (provider) => provider.id,
+          ),
+        ).toEqual(["tvdb"]);
+        await publishItemChange(db, show.id);
+        expect(
+          (await db.select().from(events)).map((row) => row.payload),
+        ).toEqual(
+          expect.arrayContaining([
+            { kind: "library.changed", libraryId: a.id },
+            { kind: "library.changed", libraryId: b.id },
+          ]),
+        );
+        const stats = await libraryStats(db, admin.id);
+        expect(stats.find((row) => row.libraryId === a.id)).toMatchObject({
+          items: 1,
+          versions: 2,
+          bytes: 250,
+          runtimeSeconds: 150,
+          kinds: { shows: 1, seasons: 1, episodes: 1 },
+        });
+        expect(stats.find((row) => row.libraryId === b.id)).toMatchObject({
+          items: 1,
+          versions: 1,
+          bytes: 200,
+          runtimeSeconds: 200,
+          kinds: { shows: 1, seasons: 1, episodes: 1 },
+        });
+        expect(await librarySummary(db, admin.id)).toMatchObject({
+          shows: 1,
+          seasons: 1,
+          episodes: 1,
+          versions: 3,
+          bytes: 450,
+          runtimeSeconds: 200,
+        });
+        for (const gaps of await libraryMetadataGaps(db, admin.id))
+          expect(gaps).toMatchObject({
+            overview: 2,
+            providerIds: 2,
+            poster: 1,
+            still: 1,
+          });
+        await db.delete(versions).where(eq(versions.id, oldA));
+        for (const item of [show, season, episode])
+          expect((await homeLocation(db, item.id))?.libraryId).toBe(b.id);
+        expect(await remoteMetadataProviders(db, admin.id, show.id)).toEqual(
+          [],
+        );
+        const locations = await assetRoots(db, episode.id);
+        expect(locations[0]).toMatchObject({
+          id: b.rootId,
+          canonicalFolder: "Different B folder",
+        });
+        expect(
+          locations.find((root) => root.id === a.rootId)?.canonicalFolder,
+        ).toBe("A show");
+        const track = { language: "en", format: "srt" } as const;
+        await writeSubtitle(db, episode.id, track, "subtitle");
+        expect(
+          await Bun.file(
+            join(
+              b.rootPath,
+              "Different B folder",
+              ".thalia",
+              "subtitles",
+              `${episode.id}.en.srt`,
+            ),
+          ).text(),
+        ).toBe("subtitle");
+        expect(
+          await Bun.file(
+            join(
+              a.rootPath,
+              "A show",
+              ".thalia",
+              "subtitles",
+              `${episode.id}.en.srt`,
+            ),
+          ).exists(),
+        ).toBe(false);
+        await db.delete(versions);
+        await expect(subtitleFolder(db, episode.id)).rejects.toThrow();
+      } finally {
+        await rm(folder, { recursive: true, force: true });
+      }
+    }));
+
   // Proves container membership follows descendant copies without duplicating catalogue rows.
   test("a Show and Season appear once through duplicate Episode copies", () =>
     withDatabase(async (db) => {

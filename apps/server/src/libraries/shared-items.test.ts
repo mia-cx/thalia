@@ -10,6 +10,7 @@ import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
 import { homeLocation, inLibraries } from "./membership.ts";
 import { scanDirectory, scanShowDirectory } from "./scan.ts";
 import { deleteLibrary, updateLibrary } from "./service.ts";
+import { libraryStats, librarySummary } from "./stats.ts";
 import { insertLibraries } from "./testing.ts";
 
 describe.skipIf(!databaseUrl)("server-owned shared Items", () => {
@@ -68,6 +69,22 @@ describe.skipIf(!databaseUrl)("server-owned shared Items", () => {
                   .from(items)
                   .where(inLibraries([library.id])),
               ).toEqual([{ id: item.id }]);
+            const local = await libraryStats(db, admin.id);
+            for (const library of [a, b])
+              expect(
+                local.find((row) => row.libraryId === library.id),
+              ).toMatchObject({
+                items: 1,
+                versions: 1,
+                files: 1,
+                kinds: { movies: 1 },
+              });
+            expect(await librarySummary(db, admin.id)).toMatchObject({
+              movies: 1,
+              versions: 2,
+              files: 2,
+              bytes: local.reduce((sum, row) => sum + row.bytes, 0),
+            });
             const original = (
               await db.select({ id: versions.id }).from(versions)
             )

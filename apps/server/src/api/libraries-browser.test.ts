@@ -463,6 +463,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           const item = await insertItem(db, {
             libraryId: library.id,
             kind: "movie",
+            withVersion: true,
             title: "Poster Fails",
             year: 2001,
             canonicalFolder: "Poster Fails",

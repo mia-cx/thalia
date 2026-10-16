@@ -231,7 +231,7 @@ async function seedShow(db: Database, libraryId: string, content = true) {
   const episodes = [];
   for (const episodeNumber of [3, 1, 2]) {
     episodes[episodeNumber] = await insertItem(db, {
-      withVersion: content,
+      withVersion: content || episodeNumber !== 1,
       libraryId,
       kind: "episode",
       parentId: seasonOne.id,
@@ -385,7 +385,7 @@ describe.skipIf(!databaseUrl)("browse details", () => {
       const caller = await authenticate(db, token);
 
       const show = await runApi(getItemDetail(db, caller, seeded.show.id));
-      expect(show.children.map((child) => child.seasonNumber)).toEqual([1, 2]);
+      expect(show.children.map((child) => child.seasonNumber)).toEqual([1]);
       expect(show.posterArtworkId).toBe(seeded.poster.id);
       expect(show.show).toBeNull();
 

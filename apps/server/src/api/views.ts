@@ -128,7 +128,7 @@ function streamLanguages(
 const viewFields = {
   id: items.id,
   kind: items.kind,
-  libraryId: sql<string>`${homeLibraryId()}`,
+  libraryId: sql<string>`${homeLibraryId()}`.as("library_id"),
   parentId: items.parentId,
   title: items.title,
   year: items.year,
@@ -137,40 +137,40 @@ const viewFields = {
   genres: items.genres,
   tags: items.tags,
   addedAt: items.addedAt,
-  premiereDate,
-  endDate: sql<string | null>`${shows.lastAirDate}::text`,
+  premiereDate: premiereDate.as("premiere_date"),
+  endDate: sql<string | null>`${shows.lastAirDate}::text`.as("end_date"),
   status: shows.status,
-  seasonNumber,
+  seasonNumber: seasonNumber.as("season_number"),
   episodeNumber: episodes.episodeNumber,
   episodeEndNumber: episodes.episodeEndNumber,
   seasonId: episodes.seasonId,
-  showId: showItem.id,
-  showTitle: showItem.title,
-  showPoster: selectedArtwork("show_item", "poster"),
-  showBackdrop: selectedArtwork("show_item", "backdrop"),
-  poster: selectedArtwork("items", "poster"),
-  backdrop: selectedArtwork("items", "backdrop"),
-  logo: selectedArtwork("items", "logo"),
-  thumb: selectedArtwork("items", "thumb"),
+  showId: sql<string | null>`${showItem.id}`.as("show_id"),
+  showTitle: sql<string | null>`${showItem.title}`.as("show_title"),
+  showPoster: selectedArtwork("show_item", "poster").as("showPoster"),
+  showBackdrop: selectedArtwork("show_item", "backdrop").as("showBackdrop"),
+  poster: selectedArtwork("items", "poster").as("poster"),
+  backdrop: selectedArtwork("items", "backdrop").as("backdrop"),
+  logo: selectedArtwork("items", "logo").as("logo"),
+  thumb: selectedArtwork("items", "thumb").as("thumb"),
   // The first imported Version in label order, as the detail screen lists them.
   durationSeconds: sql<number | null>`(
     select ${versions.durationSeconds} from ${versions}
     where ${versions.itemId} = ${items.id} and ${versions.origin} = 'imported'
     order by ${versions.label}, ${versions.id}
     limit 1
-  )`,
+  )`.as("duration_seconds"),
   childCount: sql<number>`(
     select count(*)::int from ${items} as child where child.parent_id = ${items.id}
-  )`,
+  )`.as("child_count"),
   providerIds: sql<Record<string, string>>`(
     select coalesce(jsonb_object_agg(${providerIds.provider}, ${providerIds.value}), '{}'::jsonb)
     from ${providerIds} where ${providerIds.itemId} = ${items.id}
-  )`,
+  )`.as("provider_ids"),
   positionSeconds: progress.positionSeconds,
   completed: progress.completed,
   playCount: progress.playCount,
   playedAt: progress.playedAt,
-  favourite: sql<boolean>`${favourites.id} is not null`,
+  favourite: sql<boolean>`${favourites.id} is not null`.as("favourite"),
   rating: ratings.value,
   liked: ratings.liked,
 };
@@ -416,14 +416,34 @@ export async function listItemViews(
   const viewable = await viewableLibraryIds(db, userId);
   const where = filtersOf(viewable, query);
   if (viewable.length === 0) return { items: [], total: 0 };
-  const [rows, [counted]] = await Promise.all([
-    selectViews(db, userId, where, query),
-    withJoins(
-      db.select({ total: count() }).from(items).$dynamic(),
-      userId,
-    ).where(where),
-  ]);
-  return { items: rows.map(toView), total: counted?.total ?? 0 };
+  const matching = db
+    .$with("member_items")
+    .as(
+      withJoins(
+        db.select({ id: items.id }).from(items).$dynamic(),
+        userId,
+      ).where(where),
+    );
+  const total = db
+    .select({ total: count().as("total") })
+    .from(matching)
+    .as("catalogue_count");
+  const page = selectViews(
+    db,
+    userId,
+    inArray(items.id, db.select({ id: matching.id }).from(matching)),
+    query,
+  ).as("catalogue_page");
+  // The count survives an empty/out-of-range page; both sides share one filtered CTE and one statement.
+  const rows = await db
+    .with(matching)
+    .select({ total: total.total, item: page._.selectedFields })
+    .from(total)
+    .leftJoinLateral(page, sql`true`);
+  return {
+    items: rows.flatMap((row) => (row.item === null ? [] : [toView(row.item)])),
+    total: rows[0]?.total ?? 0,
+  };
 }
 
 /**

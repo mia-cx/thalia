@@ -189,13 +189,12 @@ async function refreshMetadata() {
     refreshAbort = new AbortController();
     // The job publishes a change per step: metadata, artwork and, for a
     // Show, its children. Keep reloading on each until the next refresh.
-    if (detail.homeLibraryId !== null)
-      void followLibrary(
-        (signal) => client.events.stream(undefined, { signal }),
-        detail.homeLibraryId,
-        reload,
-        refreshAbort.signal,
-      );
+    void followLibrary(
+      (signal) => client.events.stream(undefined, { signal }),
+      null,
+      reload,
+      refreshAbort.signal,
+    );
   } catch {
     toast.error("Couldn't refresh metadata");
   }
