@@ -5,6 +5,7 @@ import { toast } from "svelte-sonner";
 import {
   type AccessObject,
   type AccessSubject,
+  kindLabels,
   objectActions,
   objectHref,
   type Rule,
@@ -42,28 +43,32 @@ const {
       noun?: never;
     } = $props();
 
-const rules = resource(async () => {
-  if (object !== undefined) return client.access.rulesOnObject({ object });
-  if (subject === undefined)
-    throw new Error("AccessPanel needs an object or a subject.");
-  return client.access.rulesForSubject({ subject });
-});
-// The two call shapes share one resource; these views narrow it per mode.
-const objectRules = $derived(
-  object !== undefined
-    ? (rules.data as { direct: Rule[]; inherited: Rule[] } | undefined)
-    : undefined,
+const onObject = resource(async () =>
+  object === undefined ? undefined : client.access.rulesOnObject({ object }),
 );
-const subjectRules = $derived(
-  object === undefined ? (rules.data as Rule[] | undefined) : undefined,
+const forSubject = resource(async () =>
+  subject === undefined
+    ? undefined
+    : client.access.rulesForSubject({ subject }),
 );
-const users = resource(() => client.users.list());
-const groups = resource(() => client.groups.list());
+const rules = $derived(object !== undefined ? onObject : forSubject);
+const objectRules = $derived(onObject.data);
+const subjectRules = $derived(forSubject.data);
+
+// The subject picker's lists load only in object mode.
+const users = resource(async () =>
+  object === undefined ? undefined : client.users.list(),
+);
+const groups = resource(async () =>
+  object === undefined ? undefined : client.groups.list(),
+);
 
 type FailureShape = ReturnType<typeof readFailure>;
 
 let removing = $state<Record<string, boolean>>({});
-let rulesFailure = $state<FailureShape | undefined>(undefined);
+let rulesFailure = $state<
+  { objectType: Rule["object"]["type"]; failure: FailureShape } | undefined
+>(undefined);
 let addFailure = $state<FailureShape | undefined>(undefined);
 let addBusy = $state(false);
 let subjectSel = $state("");
@@ -77,13 +82,6 @@ const pickableGroups = $derived(
     (group) => !(group.builtIn && group.name === "admins"),
   ),
 );
-
-const kindLabels = {
-  movie: "Movie",
-  show: "Show",
-  season: "Season",
-  episode: "Episode",
-} as const;
 
 // Server-only Actions are offered only when the picked object is the server.
 const actionOptions = $derived(
@@ -179,7 +177,10 @@ async function remove(rule: Rule) {
       )
     )?.focus();
   } catch (error) {
-    rulesFailure = readFailure(error);
+    rulesFailure = {
+      objectType: rule.object.type,
+      failure: readFailure(error),
+    };
   } finally {
     removing[ruleKey(rule)] = false;
   }
@@ -281,7 +282,7 @@ const subjectGroups = $derived.by(() => {
         loading={subjectRules === undefined && !rules.failure
           ? 2
           : undefined}
-        failure={rules.failure ?? rulesFailure}
+        failure={rules.failure ?? rulesFailure?.failure}
       >
         {#if subjectRules !== undefined}
           <div class="relative min-h-12 px-4 py-2.5">
@@ -302,7 +303,12 @@ const subjectGroups = $derived.by(() => {
       </FormGroup>
     {:else}
       {#if subjectGroups.server.length > 0}
-        <FormGroup title="Server rules">
+        <FormGroup
+          title="Server rules"
+          failure={rulesFailure?.objectType === "server"
+            ? rulesFailure.failure
+            : undefined}
+        >
           {#each subjectGroups.server as rule (ruleKey(rule))}
             <ListRow title={permissionLabels[rule.action]}>
               {@render ruleBadge(rule)}
@@ -314,7 +320,12 @@ const subjectGroups = $derived.by(() => {
         </FormGroup>
       {/if}
       {#if subjectGroups.library.length > 0}
-        <FormGroup title="Library rules">
+        <FormGroup
+          title="Library rules"
+          failure={rulesFailure?.objectType === "library"
+            ? rulesFailure.failure
+            : undefined}
+        >
           {#each subjectGroups.library as rule (ruleKey(rule))}
             <ListRow
               href={objectHref(rule.object) ?? undefined}
@@ -330,7 +341,12 @@ const subjectGroups = $derived.by(() => {
         </FormGroup>
       {/if}
       {#if subjectGroups.item.length > 0}
-        <FormGroup title="Item rules">
+        <FormGroup
+          title="Item rules"
+          failure={rulesFailure?.objectType === "item"
+            ? rulesFailure.failure
+            : undefined}
+        >
           {#each subjectGroups.item as rule (ruleKey(rule))}
             <ListRow
               href={objectHref(rule.object) ?? undefined}
@@ -352,7 +368,7 @@ const subjectGroups = $derived.by(() => {
     <FormGroup
       title="Access"
       loading={objectRules === undefined && !rules.failure ? 2 : undefined}
-      failure={rules.failure ?? rulesFailure}
+      failure={rules.failure ?? rulesFailure?.failure}
     >
       {#each objectRules?.direct ?? [] as rule (ruleKey(rule))}
         {@const label = permissionLabels[rule.action]}

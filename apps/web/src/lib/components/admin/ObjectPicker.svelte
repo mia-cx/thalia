@@ -10,6 +10,7 @@ export type PickedObject =
 import { Combobox } from "bits-ui";
 import { onDestroy } from "svelte";
 import { client } from "$lib/api.ts";
+import { kindLabels } from "$lib/access.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import ObjectPickerOption from "./ObjectPickerOption.svelte";
 
@@ -37,17 +38,14 @@ const libraries = resource(() => client.libraries.list());
 
 type SearchCard = Awaited<ReturnType<typeof client.items.search>>[number];
 
-let items = $state<{ query: string; cards: readonly SearchCard[] } | undefined>(undefined);
+let items = $state<
+  { query: string; cards: readonly SearchCard[] } | undefined
+>(undefined);
+// The query the item search last failed for, so a retry can clear it.
+let failedQuery = $state<string | undefined>(undefined);
 let generation = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 onDestroy(() => clearTimeout(timer));
-
-const kindLabels = {
-  movie: "Movie",
-  show: "Show",
-  season: "Season",
-  episode: "Episode",
-} as const;
 
 const query = $derived(input.trim());
 const libraryOptions = $derived(
@@ -66,12 +64,8 @@ const libraryOptions = $derived(
 const itemOptions = $derived(
   (items?.cards ?? []).map((card): Option => {
     const meta = [
-      kindLabels[card.kind as keyof typeof kindLabels] ?? card.kind,
-      ...(card.show === null ||
-      card.kind === "movie" ||
-      card.kind === "show"
-        ? []
-        : [card.show.title]),
+      kindLabels[card.kind],
+      ...(card.show === null ? [] : [card.show.title]),
       ...(card.year === null ? [] : [String(card.year)]),
     ].join(" · ");
     return {
@@ -92,13 +86,19 @@ const optionList = $derived([
   ...libraryOptions,
   ...itemOptions,
 ]);
+const showServer = $derived(
+  query === "" || "server".includes(query.toLowerCase()),
+);
+// The current query's item search answered with no matches anywhere.
 const none = $derived(
   query !== "" &&
-    !"server".includes(query.toLowerCase()) &&
+    !showServer &&
     libraryOptions.length === 0 &&
     itemOptions.length === 0 &&
-    items?.query === query,
+    items?.query === query &&
+    failedQuery !== query,
 );
+const itemsFailed = $derived(failedQuery === query);
 
 // Items come from the API, debounced so typing does not fan out requests.
 $effect(() => {
@@ -117,9 +117,13 @@ $effect(() => {
         kinds: ["movie", "show", "season", "episode"],
       })
       .then((cards) => {
-        if (ticket === generation) items = { query: asked, cards };
+        if (ticket !== generation) return;
+        items = { query: asked, cards };
+        failedQuery = undefined;
       })
-      .catch(() => {});
+      .catch(() => {
+        if (ticket === generation) failedQuery = asked;
+      });
   }, 150);
 });
 
@@ -130,13 +134,6 @@ $effect(() => {
   }
 });
 
-const showServer = $derived(
-  query === "" || "server".includes(query.toLowerCase()),
-);
-const anyOption = $derived(
-  showServer || libraryOptions.length > 0 || itemOptions.length > 0,
-);
-
 function pick(next: string) {
   const option = optionList.find((entry) => entry.key === next);
   if (option === undefined) return;
@@ -146,7 +143,6 @@ function pick(next: string) {
   open = false;
 }
 </script>
-
 
 <Combobox.Root
   type="single"
@@ -186,7 +182,19 @@ function pick(next: string) {
           {/each}
         </Combobox.Group>
       {/if}
-      {#if itemOptions.length > 0}
+      {#if itemsFailed}
+        <Combobox.Group>
+          <Combobox.GroupHeading
+            class="px-2.5 pt-1.5 pb-1 text-footnote font-semibold text-label-secondary"
+            >Items</Combobox.GroupHeading
+          >
+          <div
+            class="relative flex w-full items-center rounded-sm py-1.5 pr-2.5 pl-7 text-subheadline text-label-secondary select-none"
+          >
+            Couldn't search items. Keep typing to try again.
+          </div>
+        </Combobox.Group>
+      {:else if itemOptions.length > 0}
         <Combobox.Group>
           <Combobox.GroupHeading
             class="px-2.5 pt-1.5 pb-1 text-footnote font-semibold text-label-secondary"
@@ -197,7 +205,7 @@ function pick(next: string) {
           {/each}
         </Combobox.Group>
       {/if}
-      {#if none || (query !== "" && !anyOption && items !== undefined)}
+      {#if none}
         <div
           class="relative flex w-full items-center rounded-sm py-1.5 pr-2.5 pl-7 text-subheadline text-label-secondary select-none"
         >

@@ -25,6 +25,14 @@ export const objectActions: Permission[] = [
   "subtitles:edit",
 ];
 
+/** An Item kind's display name, such as "Season". */
+export const kindLabels = {
+  movie: "Movie",
+  show: "Show",
+  season: "Season",
+  episode: "Episode",
+} as const;
+
 /** The page a rule's object lives on, or null when it has none. */
 export function objectHref(object: Rule["object"]): string | null {
   if (object.type === "library") return `/admin/libraries/${object.id}`;
