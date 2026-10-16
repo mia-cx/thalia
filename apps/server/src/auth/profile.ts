@@ -8,8 +8,8 @@ import {
   sessions,
   settings,
   userGroups,
-  users,
   userSettings,
+  users,
 } from "../db/schema/index.ts";
 import { hashLocalPassword, publicUserFields } from "./accounts.ts";
 import { readUserAccess, setFolderRules, writeUserSettings } from "./admin.ts";
