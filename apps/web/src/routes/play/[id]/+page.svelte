@@ -9,6 +9,4 @@ const startAt = $derived.by(() => {
 });
 </script>
 
-{#key page.params.id}
-  <Player id={page.params.id ?? ""} {versionId} {startAt} />
-{/key}
+<Player id={page.params.id ?? ""} {versionId} {startAt} />

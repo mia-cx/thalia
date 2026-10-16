@@ -12,18 +12,20 @@ import Volume1Icon from "@lucide/svelte/icons/volume-1";
 import Volume2Icon from "@lucide/svelte/icons/volume-2";
 import VolumeXIcon from "@lucide/svelte/icons/volume-x";
 import { onDestroy, untrack } from "svelte";
-import { afterNavigate, replaceState } from "$app/navigation";
+import { afterNavigate, goto, replaceState } from "$app/navigation";
 import { page } from "$app/state";
 import { client } from "$lib/api.ts";
 import { createBoost } from "$lib/audio-boost.ts";
 import { episodeCode, itemHref } from "$lib/browse.ts";
 import Failure from "$lib/components/Failure.svelte";
+import NextEpisodeCard from "$lib/components/NextEpisodeCard.svelte";
 import PlayerSettings from "$lib/components/PlayerSettings.svelte";
 import Scrubber from "$lib/components/Scrubber.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Slider from "$lib/components/ui/slider/index.ts";
+import { carryStreams } from "$lib/next-episode.ts";
 import { formatPosition, pickVersion } from "$lib/playback.ts";
-import { play } from "$lib/player.ts";
+import { play, type StreamChoice } from "$lib/player.ts";
 import { playerPrefs } from "$lib/player-prefs.ts";
 import { createPlayer, type PlayerState } from "$lib/player-state.ts";
 import { resource } from "$lib/resource.svelte.ts";
@@ -43,13 +45,44 @@ let {
 
 // The Version choice is part of the load: a link that names no Version plays
 // the one the viewer's progress is on, so the session waits for both reads.
-const item = resource(async () => {
-  const detail = await client.items.get({ id });
-  // A failed read still plays the first Version.
-  const progress = await client.playback
-    .getProgress({ itemId: detail.id })
-    .catch(() => null);
-  return { detail, progressVersionId: progress?.versionId ?? null };
+function loadItem() {
+  return resource(async () => {
+    const detail = await client.items.get({ id });
+    // A failed read still plays the first Version.
+    const progress = await client.playback
+      .getProgress({ itemId: detail.id })
+      .catch(() => null);
+    const next =
+      detail.kind === "episode"
+        ? await client.playback.next({ itemId: detail.id }).catch(() => null)
+        : null;
+    // #210 adds the typed field; read it defensively until it lands.
+    const account = await client.account.get().catch(() => null);
+    const autoplay =
+      (account as { autoplayNextEpisode?: boolean } | null)
+        ?.autoplayNextEpisode ?? true;
+    return {
+      detail,
+      progressVersionId: progress?.versionId ?? null,
+      next,
+      autoplay,
+    };
+  });
+}
+let item = $state(loadItem());
+let loadedId = untrack(() => id);
+/** The playing session's tracks, kept for the next Episode's Stream choice. */
+let carriedTracks = $state<PlayerState["tracks"]>(undefined);
+
+// Moving on swaps the Item under the same player chrome: the old player
+// closes and the detail reloads, then a new player opens on the same video.
+$effect(() => {
+  if (id === loadedId) return;
+  loadedId = id;
+  void player?.close();
+  player = undefined;
+  playerState = undefined;
+  item = loadItem();
 });
 
 let video = $state<HTMLVideoElement>();
@@ -90,20 +123,39 @@ const stopped = $derived(playerState?.notice !== undefined);
 $effect(() => {
   if (video === undefined || detail === undefined) return;
   if (detail.versions.length === 0) return;
-  // Constructed once; URL Version changes never remount the player.
+  // Constructed once per Item; URL Version changes never remount the player.
   if (player !== undefined) return;
   const initial = version;
   if (initial === undefined) return;
   const media = video;
   const detailNow = detail;
-  const nextBoost = createBoost(media);
-  boost = nextBoost;
+  const itemData = item.data;
+  if (itemData === undefined) return;
+  // The audio graph attaches to the element once and is reused across
+  // Episodes; createMediaElementSource throws on a second call.
+  boost ??= createBoost(media);
+  const amplify = boost.amplify;
+  // The previous Episode's playing Streams carry their languages across.
+  const carried = carryStreams(carriedTracks, initial.streams);
+  carriedTracks = undefined;
   player = untrack(() =>
     createPlayer({
       media,
       versions: detailNow.versions,
       versionId: initial.id,
       startAt,
+      upNext: itemData.next === null ? null : { autoplay: itemData.autoplay },
+      onNext: () => {
+        carriedTracks = playerState?.tracks;
+        const following = itemData.next;
+        if (following !== null)
+          void goto(`/play/${following.id}`, {
+            replaceState: true,
+            keepFocus: true,
+            noScroll: true,
+          });
+      },
+      streams: carried,
       open: (request) =>
         play({
           video: media,
@@ -121,7 +173,7 @@ $effect(() => {
           onTracks: request.onTracks,
         }),
       prefs: playerPrefs,
-      amplify: nextBoost.amplify,
+      amplify,
     }),
   );
 });
@@ -268,6 +320,16 @@ function onKeydown(event: KeyboardEvent) {
   const onAction = target?.closest("button, a, [role='slider']") !== null;
   // event.key, not code: non-QWERTY layouts get the letters they press.
   switch (event.key.toLowerCase()) {
+    case "enter":
+      if (playerState?.upNext === undefined || onAction) return;
+      event.preventDefault();
+      player?.playNext();
+      return;
+    case "escape":
+      if (playerState?.upNext === undefined) return;
+      event.preventDefault();
+      player?.dismissUpNext();
+      return;
     case " ":
     case "k":
       if (onAction) return;
@@ -418,6 +480,16 @@ const VolumeIcon = $derived(
         />
         <span class="sr-only">Loading</span>
       </div>
+    {/if}
+
+    {#if item.data?.next !== null && item.data?.next !== undefined && playerState?.upNext !== undefined && player !== undefined}
+      <NextEpisodeCard
+        episode={item.data.next}
+        upNext={playerState.upNext}
+        controls={playerState.controls}
+        onplay={() => player?.playNext()}
+        ondismiss={() => player?.dismissUpNext()}
+      />
     {/if}
 
     {#if skipFlash !== undefined}

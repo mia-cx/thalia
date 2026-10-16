@@ -46,10 +46,18 @@ class FakeMedia extends EventTarget {
 }
 
 type RecordedRequest = SessionRequest & {
-  close: () => Promise<void>;
+  close: (options?: { completed?: boolean }) => Promise<void>;
   closed: boolean;
+  closeOptions: { completed?: boolean } | undefined;
   capCalls: (readonly string[] | null)[];
   capLevels: (variantIds: readonly string[] | null) => boolean;
+};
+
+type FakeTimer = {
+  run: () => void;
+  cancelled: boolean;
+  ran: boolean;
+  ms: number;
 };
 
 /** A createPlayer on FakeMedia whose sessions and clock the test drives. */
@@ -59,7 +67,7 @@ function setup(
 ) {
   const media = new FakeMedia();
   const requests: RecordedRequest[] = [];
-  const timers: { run: () => void; cancelled: boolean }[] = [];
+  const timers: FakeTimer[] = [];
   const player = createPlayer({
     media,
     versions: [
@@ -72,12 +80,14 @@ function setup(
       const entry: RecordedRequest = {
         ...request,
         closed: false,
+        closeOptions: undefined,
         capCalls: [],
         capLevels: (variantIds) => {
           entry.capCalls.push(variantIds);
           return fake.capOk ?? true;
         },
-        close: () => {
+        close: (options) => {
+          entry.closeOptions = options;
           if (fake.likeVideo) {
             // video.load(): pauses and rewinds without firing any event.
             media.paused = true;
@@ -91,8 +101,16 @@ function setup(
       if (fake.likeVideo && !request.paused) void media.play().catch(() => {});
       return entry;
     },
-    schedule: (run, _ms) => {
-      const timer = { run, cancelled: false };
+    schedule: (run, ms) => {
+      const timer: FakeTimer = {
+        run: () => {
+          timer.ran = true;
+          run();
+        },
+        cancelled: false,
+        ran: false,
+        ms,
+      };
       timers.push(timer);
       return () => {
         timer.cancelled = true;
@@ -112,6 +130,7 @@ function setup(
       ],
       audioStreamIndex: 0,
       subtitleStreamIndex: null,
+      creditsStartSeconds: null,
       quality: {
         original: null,
         rungs: [
@@ -147,7 +166,23 @@ function setup(
   };
   /** Runs the newest pending hide timer. */
   const tick = () => timers.at(-1)?.run();
-  return { media, requests, timers, player, tracks, state, play, tick };
+  /** Runs the newest pending one-second timer: the card's countdown tick. */
+  const tickSecond = () =>
+    timers
+      .filter((timer) => timer.ms === 1000 && !timer.cancelled && !timer.ran)
+      .at(-1)
+      ?.run();
+  return {
+    media,
+    requests,
+    timers,
+    player,
+    tracks,
+    state,
+    play,
+    tick,
+    tickSecond,
+  };
 }
 
 describe("player state", () => {
@@ -732,5 +767,233 @@ describe("player state", () => {
       { quality: "720p", speed: 0.75, boost: 0 },
       { quality: "auto", speed: 0.75, boost: 0 },
     ]);
+  });
+});
+
+describe("next episode card", () => {
+  const withCard = (
+    overrides: Partial<Parameters<typeof createPlayer>[0]> = {},
+    creditsStartSeconds: number | null = 90,
+  ) => {
+    let calls = 0;
+    const ctx = setup({
+      upNext: { autoplay: true },
+      onNext: () => {
+        calls += 1;
+      },
+      ...overrides,
+    });
+    return {
+      ...ctx,
+      calls: () => calls,
+      arrive(seconds = creditsStartSeconds) {
+        ctx.requests[0]?.onTracks(ctx.tracks({ creditsStartSeconds }));
+        if (seconds !== null) {
+          ctx.media.currentTime = seconds;
+          ctx.media.fire("timeupdate");
+        }
+      },
+    };
+  };
+
+  test("no card without a following Episode", () => {
+    const { media, requests, state, tracks, play } = setup();
+    play();
+    requests[0]?.onTracks(tracks({ creditsStartSeconds: 90 }));
+    media.currentTime = 95;
+    media.fire("timeupdate");
+    media.paused = true;
+    media.fire("ended");
+    expect(state().upNext).toBeUndefined();
+  });
+
+  test("the credits card counts down and moves on with the session completed", () => {
+    const { media, requests, state, play, tickSecond, calls, arrive } =
+      withCard();
+    play();
+    arrive(90);
+    expect(state().upNext).toEqual({ at: "credits", total: 10, remaining: 10 });
+    for (let i = 0; i < 9; i += 1) {
+      tickSecond();
+      expect(calls()).toBe(0);
+    }
+    expect(state().upNext?.remaining).toBe(1);
+    tickSecond();
+    expect(calls()).toBe(1);
+    expect(state().upNext).toBeUndefined();
+    expect(requests[0]?.closed).toBe(true);
+    expect(requests[0]?.closeOptions).toEqual({ completed: true });
+    expect(media.paused).toBe(false);
+  });
+
+  test("autoplay off shows the credits card without a countdown", () => {
+    const { state, play, tickSecond, calls, arrive } = withCard({
+      upNext: { autoplay: false },
+    });
+    play();
+    arrive(90);
+    expect(state().upNext).toEqual({
+      at: "credits",
+      total: 10,
+      remaining: null,
+    });
+    tickSecond();
+    expect(calls()).toBe(0);
+  });
+
+  test("without a chapter the card shows 30 seconds before the end with no countdown", () => {
+    const { media, requests, state, play, tracks } = withCard();
+    play();
+    requests[0]?.onTracks(tracks({ creditsStartSeconds: null }));
+    media.currentTime = 69;
+    media.fire("timeupdate");
+    expect(state().upNext).toBeUndefined();
+    media.currentTime = 70;
+    media.fire("timeupdate");
+    expect(state().upNext).toEqual({
+      at: "credits",
+      total: 10,
+      remaining: null,
+    });
+  });
+
+  test("a short Video never shows a credits card", () => {
+    const { media, requests, state, play, tracks } = setup({
+      upNext: { autoplay: true },
+      versions: [{ id: "v1", durationSeconds: 20 }],
+      versionId: "v1",
+    });
+    play();
+    requests[0]?.onTracks(tracks());
+    media.currentTime = 19;
+    media.fire("timeupdate");
+    expect(state().upNext).toBeUndefined();
+  });
+
+  test("seeking back hides the card and it reappears", () => {
+    const { media, state, play, arrive } = withCard();
+    play();
+    arrive(90);
+    expect(state().upNext?.at).toBe("credits");
+    media.currentTime = 30;
+    media.fire("seeked");
+    expect(state().upNext).toBeUndefined();
+    media.currentTime = 95;
+    media.fire("seeked");
+    expect(state().upNext?.at).toBe("credits");
+  });
+
+  test("pausing halts the countdown and playing resumes it", () => {
+    const { media, state, play, tickSecond, calls, arrive } = withCard();
+    play();
+    arrive(90);
+    tickSecond();
+    expect(state().upNext?.remaining).toBe(9);
+    media.pause();
+    for (let i = 0; i < 3; i += 1) tickSecond();
+    expect(state().upNext?.remaining).toBe(9);
+    play();
+    tickSecond();
+    expect(state().upNext?.remaining).toBe(8);
+    expect(calls()).toBe(0);
+  });
+
+  test("Watch credits then ended moves on at once with autoplay", () => {
+    const { media, player, state, play, calls, arrive } = withCard();
+    play();
+    arrive(90);
+    player.dismissUpNext();
+    expect(state().upNext).toBeUndefined();
+    media.paused = true;
+    media.ended = true;
+    media.fire("ended");
+    expect(calls()).toBe(1);
+  });
+
+  test("Watch credits then ended shows the end card without a countdown when autoplay is off", () => {
+    const { media, player, state, play, calls, arrive } = withCard({
+      upNext: { autoplay: false },
+    });
+    play();
+    arrive(90);
+    player.dismissUpNext();
+    media.paused = true;
+    media.ended = true;
+    media.fire("ended");
+    expect(state().upNext).toEqual({ at: "end", total: 5, remaining: null });
+    expect(calls()).toBe(0);
+  });
+
+  test("ended without a card counts down 5 seconds then moves on", () => {
+    const { media, requests, state, play, tracks, tickSecond, calls } =
+      withCard();
+    play();
+    requests[0]?.onTracks(tracks({ creditsStartSeconds: null }));
+    // Ended before the fallback trigger position matters: ended wins.
+    media.currentTime = 10;
+    media.paused = true;
+    media.fire("ended");
+    expect(state().upNext).toEqual({ at: "end", total: 5, remaining: 5 });
+    for (let i = 0; i < 4; i += 1) {
+      tickSecond();
+      expect(calls()).toBe(0);
+    }
+    tickSecond();
+    expect(calls()).toBe(1);
+    expect(state().ended).toBe(true);
+  });
+
+  test("Cancel on the end card leaves the player ended", () => {
+    const { media, player, state, play, requests, tracks, tickSecond, calls } =
+      withCard();
+    play();
+    requests[0]?.onTracks(tracks({ creditsStartSeconds: null }));
+    media.paused = true;
+    media.ended = true;
+    media.fire("ended");
+    player.dismissUpNext();
+    expect(state().upNext).toBeUndefined();
+    for (let i = 0; i < 6; i += 1) tickSecond();
+    expect(calls()).toBe(0);
+    expect(state().ended).toBe(true);
+  });
+
+  test("a running credits countdown moves on the moment the media ends", () => {
+    const { media, state, play, calls, arrive } = withCard();
+    play();
+    arrive(90);
+    media.paused = true;
+    media.ended = true;
+    media.fire("ended");
+    expect(calls()).toBe(1);
+    expect(state().upNext).toBeUndefined();
+  });
+
+  test("leaving ended hides the end card and clears its dismissal", () => {
+    const { media, player, state, play, requests, tracks } = withCard();
+    play();
+    requests[0]?.onTracks(tracks({ creditsStartSeconds: null }));
+    media.paused = true;
+    media.ended = true;
+    media.fire("ended");
+    player.dismissUpNext();
+    player.seek(0);
+    media.ended = false;
+    play();
+    expect(state().upNext).toBeUndefined();
+    media.paused = true;
+    media.ended = true;
+    media.fire("ended");
+    expect(state().upNext?.at).toBe("end");
+  });
+
+  test("the initial streams option reaches the first session request", () => {
+    const { requests } = setup({
+      streams: { audioStreamIndex: 1, subtitleStreamIndex: 3 },
+    });
+    expect(requests[0]?.streams).toEqual({
+      audioStreamIndex: 1,
+      subtitleStreamIndex: 3,
+    });
   });
 });

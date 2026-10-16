@@ -43,7 +43,8 @@ export type SessionRequest = {
 
 /** One opened playback session. */
 export type Session = {
-  close(): Promise<void>;
+  /** `completed: true` marks the Item watched in the stop report. */
+  close(options?: { completed?: boolean }): Promise<void>;
   /** Caps ABR within the session's stored variants without a replan; null clears. */
   capLevels?(variantIds: readonly string[] | null): boolean;
 };
@@ -81,6 +82,10 @@ export type PlayerState = {
   boost: number;
   /** Whether the controls show. */
   controls: boolean;
+  /** The Next episode card: where it showed up, and while counting down the whole seconds left of `total`. */
+  upNext:
+    | { at: "credits" | "end"; remaining: number | null; total: number }
+    | undefined;
 };
 
 const resumeToleranceSeconds = 2;
@@ -92,6 +97,12 @@ export function createPlayer(options: {
   versionId: string;
   startAt: number | null;
   open: OpenSession;
+  /** An Episode follows this one; `autoplay` counts the card down. Absent or null plays no card. */
+  upNext?: { autoplay: boolean } | null;
+  /** Runs once when the player moves on; the session close as completed has already started. */
+  onNext?: () => void;
+  /** The Streams the first session plays; the server picks what is absent. */
+  streams?: StreamChoice;
   /** Remembers quality, speed and boost on the device. */
   prefs?: PrefsStore;
   /** Applies a volume boost as a gain level over unity; 1 is Off. */
@@ -139,6 +150,7 @@ export function createPlayer(options: {
     speed,
     boost,
     controls: true,
+    upNext: undefined,
   });
   const state = { subscribe: store.subscribe } satisfies Readable<PlayerState>;
   const patch = (part: Partial<PlayerState>) =>
@@ -147,7 +159,7 @@ export function createPlayer(options: {
   store.subscribe((next) => (current = next));
 
   const holds = new Set<Hold>();
-  let streams: StreamChoice = {};
+  let streams: StreamChoice = options.streams ?? {};
   /** The subtitle Stream index C toggles back on. */
   let subtitlesOff: number | null = null;
   let session: Session | undefined;
@@ -163,6 +175,12 @@ export function createPlayer(options: {
   let positionHold: number | null = null;
   let hideCancel: (() => void) | undefined;
   let hideTimerOn = false;
+  /** Where the credits start, from the session's plan; a Version switch refreshes it. */
+  let creditsStart: number | null = null;
+  let creditsDismissed = false;
+  let endDismissed = false;
+  let tickCancel: (() => void) | undefined;
+  let movingOn = false;
 
   function versionDuration() {
     return (
@@ -220,6 +238,101 @@ export function createPlayer(options: {
     }, hideAfterMs);
   }
 
+  function cancelCountdown() {
+    tickCancel?.();
+    tickCancel = undefined;
+  }
+
+  function tickCountdown() {
+    tickCancel = undefined;
+    const upNext = current.upNext;
+    if (upNext?.remaining == null) return;
+    const remaining = upNext.remaining - 1;
+    if (remaining <= 0) {
+      advance();
+      return;
+    }
+    patch({ upNext: { ...upNext, remaining } });
+    tickCancel = schedule(tickCountdown, 1000);
+  }
+
+  function armCountdown() {
+    tickCancel ??= schedule(tickCountdown, 1000);
+  }
+
+  /** Closes the session as watched and hands over to the next Episode. */
+  function advance() {
+    if (movingOn || closed) return;
+    movingOn = true;
+    cancelCountdown();
+    patch({ upNext: undefined });
+    void session?.close({ completed: true });
+    options.onNext?.();
+  }
+
+  /** Re-evaluates the Next episode card against the position, ended and the viewer's dismissals. */
+  function evaluateUpNext() {
+    const choice = options.upNext;
+    if (closed || movingOn || choice === null || choice === undefined) {
+      cancelCountdown();
+      return;
+    }
+    const autoplay = choice.autoplay;
+    const card = current.upNext;
+    if (current.ended) {
+      // A running credits countdown or a chosen Watch credits moves on now.
+      if (
+        (card?.at === "credits" && card.remaining !== null) ||
+        (creditsDismissed && autoplay)
+      ) {
+        advance();
+        return;
+      }
+      if (endDismissed) {
+        if (card !== undefined) patch({ upNext: undefined });
+        cancelCountdown();
+        return;
+      }
+      if (card?.at !== "end") {
+        patch({
+          upNext: { at: "end", total: 5, remaining: autoplay ? 5 : null },
+        });
+      }
+      // The media is ended: the end countdown ticks regardless of paused.
+      if (current.upNext?.remaining !== null) armCountdown();
+      return;
+    }
+    // Leaving ended (a seek or replay) retires the end card and its dismissal.
+    if (card?.at === "end") patch({ upNext: undefined });
+    endDismissed = false;
+    const duration = readDuration();
+    const trigger = creditsStart ?? (duration > 30 ? duration - 30 : null);
+    const position = positionHold ?? current.position;
+    // Seeking back before the trigger retires the card and its dismissal.
+    if (trigger === null || position < trigger) {
+      if (current.upNext?.at === "credits") patch({ upNext: undefined });
+      creditsDismissed = false;
+      cancelCountdown();
+      return;
+    }
+    if (creditsDismissed) {
+      cancelCountdown();
+      return;
+    }
+    if (current.upNext === undefined) {
+      patch({
+        upNext: {
+          at: "credits",
+          total: 10,
+          remaining: creditsStart !== null && autoplay ? 10 : null,
+        },
+      });
+    }
+    // Credits count down only while the media plays; pausing halts it.
+    if (current.upNext?.remaining !== null && current.playing) armCountdown();
+    else cancelCountdown();
+  }
+
   function openSession(
     versionId: string,
     startAt: number | null,
@@ -247,7 +360,9 @@ export function createPlayer(options: {
       },
       onTracks: (tracks) => {
         if (mine !== generation) return;
+        creditsStart = tracks.creditsStartSeconds;
         patch({ tracks, switching: false });
+        evaluateUpNext();
       },
     });
   }
@@ -277,6 +392,7 @@ export function createPlayer(options: {
       () => {
         wantsPlaying = true;
         patch({ playing: true, ended: false });
+        evaluateUpNext();
       },
     ],
     [
@@ -284,6 +400,7 @@ export function createPlayer(options: {
       () => {
         wantsPlaying = false;
         patch({ playing: false, buffering: false });
+        evaluateUpNext();
         settleControls();
       },
     ],
@@ -299,6 +416,7 @@ export function createPlayer(options: {
           buffering: false,
           position: media.currentTime,
         });
+        evaluateUpNext();
         settleControls();
       },
     ],
@@ -317,9 +435,27 @@ export function createPlayer(options: {
         settleControls();
       },
     ],
-    ["timeupdate", () => updatePosition(media.currentTime)],
-    ["seeked", () => updatePosition(media.currentTime)],
-    ["durationchange", () => patch({ duration: readDuration() })],
+    [
+      "timeupdate",
+      () => {
+        updatePosition(media.currentTime);
+        evaluateUpNext();
+      },
+    ],
+    [
+      "seeked",
+      () => {
+        updatePosition(media.currentTime);
+        evaluateUpNext();
+      },
+    ],
+    [
+      "durationchange",
+      () => {
+        patch({ duration: readDuration() });
+        evaluateUpNext();
+      },
+    ],
     ["loadedmetadata", readSize],
     ["resize", readSize],
     ["progress", () => patch({ buffered: readBuffered() })],
@@ -351,6 +487,12 @@ export function createPlayer(options: {
       // A different Version brings different Streams; the old ones are invalid.
       tracks: changingVersion ? undefined : current.tracks,
     });
+    if (changingVersion) {
+      creditsStart = null;
+      creditsDismissed = false;
+      endDismissed = false;
+    }
+    evaluateUpNext();
     settleControls();
     await session?.close();
     if (closed) return;
@@ -529,6 +671,19 @@ export function createPlayer(options: {
       else holds.delete(reason);
       settleControls();
     },
+    /** Moves on to the next Episode now; the card's Play button and the countdown call it. */
+    playNext() {
+      advance();
+    },
+    /** Watch credits on the credits card; Cancel or Close on the end card. */
+    dismissUpNext() {
+      const upNext = current.upNext;
+      if (upNext === undefined) return;
+      cancelCountdown();
+      if (upNext.at === "credits") creditsDismissed = true;
+      else endDismissed = true;
+      patch({ upNext: undefined });
+    },
     /** pagehide: parks the position and stops the session. */
     async suspend() {
       if (suspended || closed) return;
@@ -558,6 +713,7 @@ export function createPlayer(options: {
       if (closed) return;
       closed = true;
       cancelHide();
+      cancelCountdown();
       for (const [type, listener] of listeners)
         media.removeEventListener(type, listener);
       const closing = session;
