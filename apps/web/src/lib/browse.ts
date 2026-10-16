@@ -19,11 +19,21 @@ export type BrowseCard = Shelf["entries"][number]["item"];
 /** A detail's child, with its overview, runtime and the caller's progress. */
 export type DetailChild = ItemDetail["children"][number];
 
-/** The page for a card, or null when a Season or Episode lacks its Show. */
-export function itemHref(card: ItemCard | BrowseCard): string | null {
+/** The page for a card or any structurally similar item, or null when a Season or Episode lacks its Show. */
+export function itemHref(card: {
+  id: string;
+  kind: string;
+  parentId?: string | null;
+  show?: { id: string } | null;
+}): string | null {
   if (card.kind === "movie") return `/movies/${card.id}`;
   if (card.kind === "show") return `/shows/${card.id}`;
-  if (!("show" in card) || card.show === null || card.parentId === null)
+  if (
+    card.show === null ||
+    card.show === undefined ||
+    card.parentId === null ||
+    card.parentId === undefined
+  )
     return null;
   if (card.kind === "season")
     return `/shows/${card.show.id}/seasons/${card.id}`;

@@ -136,6 +136,87 @@ export const Library = Schema.Struct({
   roots: Schema.Array(Schema.Struct({ id: Schema.UUID, path: Schema.String })),
 });
 
+/** One Library's dashboard numbers over its playable Items (movies, Episodes) and their imported Versions. */
+export const LibraryStats = Schema.Struct({
+  libraryId: Schema.UUID,
+  items: Schema.Int,
+  versions: Schema.Int,
+  files: Schema.Int,
+  bytes: Schema.Number,
+  runtimeSeconds: Schema.Number,
+  addedLast30Days: Schema.Int,
+  multiVersionItems: Schema.Int,
+  resolution: Schema.Struct({
+    uhd: Schema.Int,
+    fullHd: Schema.Int,
+    hd: Schema.Int,
+    lower: Schema.Int,
+    unknown: Schema.Int,
+  }),
+  dynamicRange: Schema.Struct({
+    sdr: Schema.Int,
+    hdr: Schema.Int,
+    dolbyVision: Schema.Int,
+  }),
+  codecs: Schema.Array(
+    Schema.Struct({ codec: Schema.String, versions: Schema.Int }),
+  ),
+});
+
+/** The metadata an Item can be missing, as the Overview counts it. */
+export const MetadataGap = Schema.Literal(
+  "poster",
+  "backdrop",
+  "overview",
+  "providerIds",
+  "still",
+);
+
+/** One Library's count of Items missing each piece of metadata. */
+export const LibraryMetadataGaps = Schema.Struct({
+  libraryId: Schema.UUID,
+  poster: Schema.Int,
+  backdrop: Schema.Int,
+  overview: Schema.Int,
+  providerIds: Schema.Int,
+  still: Schema.Int,
+});
+
+/** An Item missing a piece of metadata, with what the Overview needs to name and link it. */
+export const MetadataGapItem = Schema.Struct({
+  id: Schema.UUID,
+  kind: ItemKind,
+  title: Schema.String,
+  year: Schema.NullOr(Schema.Int),
+  parentId: Schema.NullOr(Schema.UUID),
+  show: Schema.NullOr(Schema.Struct({ id: Schema.UUID, title: Schema.String })),
+  seasonNumber: Schema.NullOr(Schema.Int),
+  episodeNumber: Schema.NullOr(Schema.Int),
+});
+
+/** One Library root as free-space reporting names it. */
+export const SpaceRoot = Schema.Struct({
+  id: Schema.UUID,
+  libraryId: Schema.UUID,
+  libraryName: Schema.String,
+  path: Schema.String,
+});
+
+/** One filesystem holding Library roots, or one root the server can't read. */
+export const FilesystemSpace = Schema.Union(
+  Schema.Struct({
+    state: Schema.Literal("available"),
+    totalBytes: Schema.Number,
+    availableBytes: Schema.Number,
+    usedBytes: Schema.Number,
+    roots: Schema.Array(SpaceRoot),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("unavailable"),
+    roots: Schema.Array(SpaceRoot),
+  }),
+);
+
 /** The fields accepted when a library is created. */
 export const LibraryInput = Schema.Struct({
   name: Schema.String,
