@@ -194,6 +194,7 @@ export const versions = pgTable(
     segmentTimelineId: uuid("segment_timeline_id"),
     timelineAligned: boolean("timeline_aligned").notNull().default(false),
     origin: versionOrigin("origin").notNull().default("imported"),
+    createdAt: instant("created_at").notNull().defaultNow(),
     sourceFileId: uuid("source_file_id"),
     storedFolder: text("stored_folder"),
     rung: text("rung"),
@@ -254,6 +255,7 @@ export const versions = pgTable(
       sql`(${table.origin} = 'imported' and ${table.sourceFileId} is null and ${table.storedFolder} is null and ${table.rung} is null and ${table.complete} is null) or (${table.origin} = 'stored' and ${table.format} = 'video' and ${table.sourceFileId} is not null and ${table.storedFolder} is not null and ${table.rung} is not null and ${table.complete} is not null and ${table.segmentTimelineId} is not null and ${table.timelineAligned})`,
     ),
     index("versions_item_idx").on(table.itemId),
+    index("versions_library_item_idx").on(table.libraryId, table.itemId),
     index("versions_source_file_idx").on(table.sourceFileId),
     uniqueIndex("versions_source_file_rung_unique")
       .on(table.sourceFileId, table.rung)
