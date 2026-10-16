@@ -6,7 +6,10 @@ import { join } from "node:path";
 export interface VideoFixtureOptions {
   width?: number;
   height?: number;
-  chapters?: boolean;
+  /** Chapter list, or true for today's single "Opening" chapter. */
+  chapters?:
+    | boolean
+    | readonly { title: string; startSeconds: number; endSeconds: number }[];
   durationSeconds?: number;
   frameRate?: number;
   gopSeconds?: number;
@@ -205,11 +208,20 @@ export async function createVideoFixture(
           : "1\n00:00:00,000 --> 00:00:00,800\nFixture\n",
     );
   }
+  const chapterList =
+    chapters === true
+      ? [{ title: "Opening", startSeconds: 0, endSeconds: 1 }]
+      : chapters || [];
   await writeFile(
     metadataPath,
-    chapters
-      ? ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=Opening\n"
-      : ";FFMETADATA1\n",
+    [
+      ";FFMETADATA1",
+      ...chapterList.map(
+        (chapter) =>
+          `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${Math.round(chapter.startSeconds * 1000)}\nEND=${Math.round(chapter.endSeconds * 1000)}\ntitle=${chapter.title}`,
+      ),
+      "",
+    ].join("\n"),
   );
   // Inputs: video, silence, the optional tone, the subtitles, the metadata.
   const firstSubtitle = toneAudio ? 3 : 2;

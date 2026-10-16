@@ -1,9 +1,18 @@
+import { eq } from "drizzle-orm";
 import { Schema } from "effect";
+import {
+  loadPermissionScope,
+  requirePermission,
+} from "../auth/permissions.ts";
+import { items } from "../db/schema/index.ts";
+import { nextEpisodeId } from "../mediums/shows.ts";
 import { planPlayback, refreshPlayback } from "../playback/planning.ts";
-import { authenticatedMutation } from "./context.ts";
+import { authenticated, authenticatedMutation } from "./context.ts";
 import { fromHost, runApi } from "./errors.ts";
+import { browseCards, detailChildren } from "./items.ts";
 import { playbackSessions } from "./playback-sessions.ts";
 import { progressProcedures } from "./progress.ts";
+import { DetailChild } from "./schema.ts";
 
 const shortString = Schema.String.pipe(
   Schema.minLength(1),
@@ -111,6 +120,8 @@ const PlanOutput = Schema.Struct({
   ),
   audioStreamIndex: Schema.NullOr(streamIndex),
   subtitleStreamIndex: Schema.NullOr(streamIndex),
+  /** Where the credits start in seconds, from the File's chapters, when known. */
+  creditsStartSeconds: Schema.NullOr(Schema.Number),
   audioStreams: Schema.Array(
     Schema.Struct({
       index: streamIndex,
@@ -167,10 +178,41 @@ const refresh = authenticatedMutation
     ),
   );
 
+const next = authenticated
+  .route({ method: "GET", path: "/playback/next" })
+  .input(
+    Schema.standardSchemaV1(Schema.Struct({ itemId: Schema.UUID })),
+  )
+  .output(Schema.standardSchemaV1(Schema.NullOr(DetailChild)))
+  .handler(async ({ context, input }) =>
+    runApi(
+      fromHost(async () => {
+        const userId = context.caller.user.id;
+        await requirePermission(context.db, userId, "view", {
+          type: "item",
+          id: input.itemId,
+        });
+        const permissions = await loadPermissionScope(context.db, userId);
+        const id = await nextEpisodeId(context.db, permissions, input.itemId);
+        if (id === null) return null;
+        const [card] = await browseCards(context.db, eq(items.id, id));
+        if (!card) return null;
+        const [child] = await detailChildren(
+          context.db,
+          userId,
+          permissions,
+          [card],
+        );
+        return child ?? null;
+      }),
+    ),
+  );
+
 /** The playback planning, lifecycle and dashboard procedures mounted under `playback`. */
 export const playbackProcedures = {
   plan,
   refresh,
+  next,
   sessions: playbackSessions,
   ...progressProcedures,
 };

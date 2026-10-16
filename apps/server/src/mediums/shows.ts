@@ -1,6 +1,9 @@
 import { posix } from "node:path";
 import { sql } from "drizzle-orm";
-import { viewableLibraryIds } from "../auth/permissions.ts";
+import {
+  type PermissionScope,
+  viewableLibraryIds,
+} from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import {
   episodes as episodeTable,
@@ -123,6 +126,77 @@ export async function nextUp(db: Database, userId: string): Promise<string[]> {
       candidate.id
   `);
   return rows.map((row): string => row.id);
+}
+
+type EpisodeKeys = {
+  id: string;
+  title: string;
+  seasonNumber: number | null;
+  episodeNumber: number | null;
+};
+
+/**
+ * The Episode following `itemId` in its Show's listing order, crossing into the
+ * next Season but never between Season 0 Specials and numbered Seasons, and
+ * skipping Episodes the caller may not view and play. Null when nothing follows.
+ */
+export async function nextEpisodeId(
+  db: Database,
+  permissions: PermissionScope,
+  itemId: string,
+): Promise<string | null> {
+  const [current] = await db.$client<(EpisodeKeys & { showId: string })[]>`
+    select
+      episode_item.id,
+      episode_item.title,
+      season.show_id as "showId",
+      season.season_number as "seasonNumber",
+      episode.episode_number as "episodeNumber"
+    from episodes as episode
+    inner join seasons as season on season.item_id = episode.season_id
+    inner join items as episode_item on episode_item.id = episode.item_id
+    where episode.item_id = ${itemId}
+  `;
+  if (!current) return null;
+  const specials = current.seasonNumber === 0;
+  const candidates = await db.$client<EpisodeKeys[]>`
+    select
+      episode_item.id,
+      episode_item.title,
+      season.season_number as "seasonNumber",
+      episode.episode_number as "episodeNumber"
+    from episodes as episode
+    inner join seasons as season on season.item_id = episode.season_id
+    inner join items as episode_item on episode_item.id = episode.item_id
+    where season.show_id = ${current.showId}::uuid
+      and (season.season_number = 0) = ${specials}
+      and (
+        coalesce(season.season_number, 2147483647),
+        coalesce(episode.episode_number, 2147483647),
+        episode_item.title,
+        episode_item.id
+      ) > (
+        coalesce(${current.seasonNumber}, 2147483647),
+        coalesce(${current.episodeNumber}, 2147483647),
+        ${current.title},
+        ${current.id}::uuid
+      )
+    order by
+      season.season_number nulls last,
+      episode.episode_number nulls last,
+      episode_item.title,
+      episode_item.id
+  `;
+  const ids = candidates.map((candidate) => candidate.id);
+  const [viewable, playable] = await Promise.all([
+    permissions.itemIds("view", ids),
+    permissions.itemIds("play", ids),
+  ]);
+  return (
+    candidates.find(
+      (candidate) => viewable.has(candidate.id) && playable.has(candidate.id),
+    )?.id ?? null
+  );
 }
 
 const seasonFolderPattern = /^(?:season|series)[\s._-]*(\d{1,4})$/i;

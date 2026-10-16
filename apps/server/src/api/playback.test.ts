@@ -332,6 +332,57 @@ describe.skipIf(!databaseUrl)("api playback", () => {
       }
     }));
 
+  test("a File's credits chapter reports its start on the plan", () =>
+    withDatabase(async (db, url) => {
+      await migrateDatabase(db);
+      const fx = await seedPlayback(db);
+      await db
+        .update(files)
+        .set({
+          chapters: [
+            { title: "Opening", startSeconds: 0, endSeconds: 30 },
+            { title: "Credits", startSeconds: 100, endSeconds: 120 },
+          ],
+        })
+        .where(eq(files.id, fx.file.id));
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const client = rpcClient(
+          `http://127.0.0.1:${server.apiServer?.port}`,
+          fx.keyToken,
+        );
+        const planned = await client.playback.plan({
+          itemId: fx.item.id,
+          versionId: fx.version.id,
+          profile,
+        });
+        expect(planned.creditsStartSeconds).toBe(100);
+      } finally {
+        await server.stop();
+      }
+    }));
+
+  test("a File without a credits chapter reports no start", () =>
+    withDatabase(async (db, url) => {
+      await migrateDatabase(db);
+      const fx = await seedPlayback(db);
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const client = rpcClient(
+          `http://127.0.0.1:${server.apiServer?.port}`,
+          fx.keyToken,
+        );
+        const planned = await client.playback.plan({
+          itemId: fx.item.id,
+          versionId: fx.version.id,
+          profile,
+        });
+        expect(planned.creditsStartSeconds).toBeNull();
+      } finally {
+        await server.stop();
+      }
+    }));
+
   test("a cookie caller receives a token-free direct URL", () =>
     withDatabase(async (db, url) => {
       await migrateDatabase(db);
