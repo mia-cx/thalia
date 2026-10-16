@@ -4,11 +4,15 @@ import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
 import { page } from "$app/state";
 import { client } from "$lib/api.ts";
+import { formatBytes } from "$lib/browse.ts";
 import AccessPanel from "$lib/components/admin/AccessPanel.svelte";
 import AdminPage from "$lib/components/admin/AdminPage.svelte";
+import FilesystemUsage from "$lib/components/admin/FilesystemUsage.svelte";
 import FolderFields from "$lib/components/admin/FolderFields.svelte";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
 import FormRow from "$lib/components/admin/FormRow.svelte";
+import LibraryStats from "$lib/components/admin/LibraryStats.svelte";
+import ListRow from "$lib/components/admin/ListRow.svelte";
 import ScanFailures from "$lib/components/admin/ScanFailures.svelte";
 import ScanState from "$lib/components/admin/ScanState.svelte";
 import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
@@ -16,6 +20,7 @@ import Failure from "$lib/components/Failure.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { followLibrary } from "$lib/events.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import { queuesScan, type RootDraft } from "$lib/roots.ts";
 import { type ScanStatus, waitForScan } from "$lib/scan.ts";
@@ -84,6 +89,7 @@ async function sendRoots(plan: (roots: LibraryData["roots"]) => RootDraft[]) {
     const answer = await client.libraries.update({ id, roots: sent });
     folderFailure = undefined;
     library.set(answer);
+    refreshMedia();
     return { answer, queued: queuesScan(saved, sent) };
   });
 }
@@ -137,6 +143,19 @@ async function removeFolder(index: number) {
   }
 }
 
+// Media breakdown: one stats/gaps fetch each, refreshed on library.changed,
+// after a scan settles and after every root edit (removals queue no scan).
+const stats = resource(() => client.libraries.stats({ id }));
+const gaps = resource(() => client.libraries.metadataGaps({ id }));
+const freeSpace = resource(() => client.libraries.freeSpace());
+// Bumps on each settled scan; open gap dialogs reconcile on it.
+let mediaRevision = $state(0);
+const libraryFilesystems = $derived(
+  (freeSpace.data ?? []).filter((filesystem) =>
+    filesystem.roots.some((root) => root.libraryId === id),
+  ),
+);
+
 let status = $state<ScanStatus | null | undefined>(undefined);
 let scanBusy = $state(false);
 let scanRun = $state<string | undefined>(undefined);
@@ -157,6 +176,22 @@ async function loadStatus() {
   }
 }
 
+function refreshMedia() {
+  mediaRevision += 1;
+  void stats.reload();
+  void gaps.reload();
+  void freeSpace.reload();
+}
+
+$effect(() => {
+  void followLibrary(
+    (signal) => client.events.stream(undefined, { signal }),
+    id,
+    refreshMedia,
+    controller.signal,
+  );
+});
+
 /** Starts a scan and follows it, or follows the run already in flight. */
 async function scanNow() {
   scanBusy = true;
@@ -171,6 +206,7 @@ async function scanNow() {
     });
     status = settled;
     scanRun = undefined;
+    refreshMedia();
   } catch (error) {
     if (!controller.signal.aborted) scanFailure = readFailure(error);
   } finally {
@@ -231,6 +267,58 @@ async function deleteLibrary() {
   </FormGroup>
 
   {#if library.data}
+    <LibraryStats
+      heading="Media"
+      library={library.data}
+      stats={stats.data?.[0]}
+      gaps={gaps.data?.[0]}
+      failure={stats.failure ?? gaps.failure ?? undefined}
+      onretry={() => {
+        void stats.reload();
+        void gaps.reload();
+      }}
+      revision={mediaRevision}
+    />
+
+    {#if libraryFilesystems.length > 0 || freeSpace.failure !== undefined}
+      <FormGroup
+        title="Free space"
+        loading={
+          freeSpace.data === undefined && freeSpace.failure === undefined
+            ? 1
+            : undefined
+        }
+        failure={freeSpace.failure ?? undefined}
+      >
+        {#each libraryFilesystems as filesystem (filesystem.roots[0]?.id)}
+          {#if filesystem.state === "available"}
+            <FormRow
+              label="{formatBytes(
+                filesystem.availableBytes,
+              )} free of {formatBytes(filesystem.totalBytes)}"
+            >
+              <FilesystemUsage {filesystem} libraryId={id} />
+            </FormRow>
+          {:else}
+            {@const root = filesystem.roots[0]}
+            <ListRow
+              title={root?.path ?? ""}
+              caption="Can't read this folder from the server"
+            />
+          {/if}
+        {/each}
+        {#snippet actions()}
+          {#if freeSpace.failure}
+            <Button
+              variant="secondary"
+              onclick={() => freeSpace.reload()}
+              disabled={freeSpace.loading}>Try again</Button
+            >
+          {/if}
+        {/snippet}
+      </FormGroup>
+    {/if}
+
     <FolderFields
       rows={library.data.roots}
       medium={library.data.medium}

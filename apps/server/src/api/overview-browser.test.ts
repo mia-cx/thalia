@@ -1,15 +1,24 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
+import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { setupAdmin } from "../auth/accounts.ts";
 import { login } from "../auth/sessions.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { artwork, items, providerIds } from "../db/schema/index.ts";
+import {
+  artwork,
+  files,
+  items,
+  providerIds,
+  versions,
+} from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { listJobs } from "../jobs/queue.ts";
-import { insertLibraries } from "../libraries/testing.ts";
+import { addRoot, insertLibraries } from "../libraries/testing.ts";
 import { withFolder } from "../plugins/testing.ts";
 import { browser, openPage, signIn, webBuild } from "./browser-testing.ts";
 import { publishEvent } from "./events.ts";
@@ -675,5 +684,265 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           }
         }),
       ));
+
+    test(
+      "deleting a Library drops its counts from the Media totals",
+      () =>
+        withFolder((folder) =>
+          withDatabase(async (db, url) => {
+            if (browser === undefined) throw new Error("Expected a browser.");
+            await migrateDatabase(db);
+            const token = await seedAdmin(db, "overview-browser-delete");
+            const movieDir = join(folder, "movies");
+            const showDir = join(folder, "shows");
+            await mkdir(movieDir);
+            await mkdir(showDir);
+            const [movies, shows] = await insertLibraries(db, [
+              { name: "Films", medium: "movies", rootPath: movieDir },
+              { name: "TV", medium: "shows", rootPath: showDir },
+            ]);
+            if (!movies || !shows) throw new Error("Fixture missing.");
+            await insertItem(db, {
+              libraryId: movies.id,
+              kind: "movie",
+              title: "Dune",
+              canonicalFolder: "dune",
+              extension: {},
+            });
+            const server = await startThalia("api", {
+              databaseUrl: url,
+              port: 0,
+            });
+            const page = await openPage();
+            try {
+              const base = `http://127.0.0.1:${server.apiServer?.port}`;
+              const api = createThaliaClient({
+                origin: base,
+                headers: { authorization: `Bearer ${token}` },
+              });
+              const mediaText = `(() => {
+              const section = [...document.querySelectorAll('h2')]
+                .find(e => e.textContent.trim() === 'Media')
+                ?.closest('section');
+              return section?.innerText ?? '';
+            })()`;
+              await signIn(page, base, token, "/admin");
+              await page.waitFor(`(${mediaText}).includes('Movies')`);
+              await api.libraries.delete({ id: movies.id });
+              // The library-list poll notices the id change and refetches all.
+              await page.waitFor(
+                `!document.body.innerText.includes('Films')`,
+                30_000,
+              );
+              expect(
+                await page.eval<boolean>(`(${mediaText}).includes('Movies')`),
+              ).toBe(false);
+              // The Shows row stays: a shows Library still exists with 0 shows.
+              expect(
+                await page.eval<boolean>(`(${mediaText}).includes('Shows')`),
+              ).toBe(true);
+            } finally {
+              await page.close();
+              await server.stop();
+            }
+          }),
+        ),
+      60_000,
+    );
+
+    test(
+      "a library.changed event refreshes the library page's gap counts",
+      () =>
+        withFolder((folder) =>
+          withDatabase(async (db, url) => {
+            if (browser === undefined) throw new Error("Expected a browser.");
+            await migrateDatabase(db);
+            const token = await seedAdmin(db, "overview-browser-libgaps");
+            await mkdir(join(folder, "root"));
+            const [library] = await insertLibraries(db, {
+              name: "TV",
+              medium: "shows",
+              rootPath: join(folder, "root"),
+            });
+            if (library === undefined) throw new Error("Fixture missing.");
+            const show = await insertItem(db, {
+              libraryId: library.id,
+              kind: "show",
+              title: "Series",
+              canonicalFolder: "series",
+              extension: {},
+            });
+            await insertItem(db, {
+              libraryId: library.id,
+              kind: "season",
+              parentId: show.id,
+              title: "Season 1",
+              canonicalFolder: "series/s1",
+              extension: { seasonNumber: 1 },
+            });
+            const server = await startThalia("api", {
+              databaseUrl: url,
+              port: 0,
+            });
+            const page = await openPage();
+            try {
+              const base = `http://127.0.0.1:${server.apiServer?.port}`;
+              await signIn(page, base, token, `/admin/libraries/${library.id}`);
+              // The show misses everything; only the overview row matters here.
+              await page.waitFor(
+                "[...document.querySelectorAll('button')].some(b => b.textContent.includes('No overview'))",
+              );
+              await db
+                .update(items)
+                .set({ overview: "Found later." })
+                .where(eq(items.id, show.id));
+              await publishEvent(db, {
+                kind: "library.changed",
+                libraryId: library.id,
+              });
+              await page.waitFor(
+                "[...document.querySelectorAll('button')].every(b => !b.textContent.includes('No overview'))",
+              );
+            } finally {
+              await page.close();
+              await server.stop();
+            }
+          }),
+        ),
+      60_000,
+    );
+
+    test(
+      "removing a folder updates the library page's free space",
+      () =>
+        withFolder((folder) =>
+          withDatabase(async (db, url) => {
+            if (browser === undefined) throw new Error("Expected a browser.");
+            await migrateDatabase(db);
+            const token = await seedAdmin(db, "overview-browser-roots");
+            const dirA = join(folder, "a");
+            const dirB = join(folder, "b");
+            await mkdir(dirA);
+            await mkdir(dirB);
+            const [library] = await insertLibraries(db, {
+              name: "Movies",
+              medium: "movies",
+              rootPath: dirA,
+            });
+            if (library === undefined) throw new Error("Fixture missing.");
+            const rootB = await addRoot(db, library.id, dirB);
+            const movie = await insertItem(db, {
+              libraryId: library.id,
+              kind: "movie",
+              title: "Dune",
+              canonicalFolder: "dune",
+              extension: {},
+            });
+            for (const [rootId, bytes] of [
+              [library.rootId, 1_500_000_000n],
+              [rootB, 900_000_000n],
+            ] as const) {
+              const [version] = await db
+                .insert(versions)
+                .values({
+                  itemId: movie.id,
+                  itemKind: "movie",
+                  libraryId: library.id,
+                  label: "Original",
+                  format: "video",
+                  bytes,
+                  durationSeconds: 7000,
+                })
+                .returning();
+              if (!version) throw new Error("Version insert returned no row.");
+              await db.insert(files).values({
+                versionId: version.id,
+                itemId: movie.id,
+                libraryId: library.id,
+                rootId,
+                path: `/${version.id}.mkv`,
+                order: 0,
+                bytes,
+                modifiedAt: new Date(),
+              });
+            }
+            const server = await startThalia("api", {
+              databaseUrl: url,
+              port: 0,
+            });
+            const page = await openPage();
+            try {
+              const base = `http://127.0.0.1:${server.apiServer?.port}`;
+              await signIn(page, base, token, `/admin/libraries/${library.id}`);
+              await page.waitFor("document.body.innerText.includes('2.4 GB')");
+              await page.eval(
+                `document.querySelector(${JSON.stringify(`button[aria-label="Remove ${dirB}"]`)}).click()`,
+              );
+              await page.waitFor(
+                "[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Remove folder')",
+              );
+              await page.eval(clickButton("Remove folder"));
+              await page.waitFor(
+                "document.body.innerText.includes('1.5 GB') && !document.body.innerText.includes('2.4 GB')",
+              );
+            } finally {
+              await page.close();
+              await server.stop();
+            }
+          }),
+        ),
+      60_000,
+    );
+
+    test(
+      "a failing free-space load shows Try again and recovers",
+      () =>
+        withFolder((folder) =>
+          withDatabase(async (db, url) => {
+            if (browser === undefined) throw new Error("Expected a browser.");
+            await migrateDatabase(db);
+            const token = await seedAdmin(db, "overview-browser-spacefail");
+            await mkdir(join(folder, "root"));
+            const [library] = await insertLibraries(db, {
+              name: "Movies",
+              medium: "movies",
+              rootPath: join(folder, "root"),
+            });
+            if (library === undefined) throw new Error("Fixture missing.");
+            const server = await startThalia("api", {
+              databaseUrl: url,
+              port: 0,
+            });
+            const page = await openPage();
+            try {
+              const base = `http://127.0.0.1:${server.apiServer?.port}`;
+              await page.send("Fetch.enable", {
+                patterns: [
+                  { urlPattern: "*freeSpace*", requestStage: "Request" },
+                ],
+              });
+              page.on(
+                "Fetch.requestPaused",
+                (p: { requestId: string }) =>
+                  void page.send("Fetch.failRequest", {
+                    requestId: p.requestId,
+                    errorReason: "ConnectionFailed",
+                  }),
+              );
+              await signIn(page, base, token, `/admin/libraries/${library.id}`);
+              await page.waitFor(
+                "[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Try again')",
+              );
+              await page.send("Fetch.disable");
+              await page.eval(clickButton("Try again"));
+              await page.waitFor("document.body.innerText.includes('free of')");
+            } finally {
+              await page.close();
+              await server.stop();
+            }
+          }),
+        ),
+      60_000,
+    );
   },
 );

@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   codecName,
+  filesystemSegments,
   formatCodecs,
   formatDynamicRange,
   formatResolution,
+  libraryCaption,
+  libraryCounts,
   replaceLibraryEntry,
 } from "./stats.ts";
 
@@ -62,5 +65,103 @@ describe("stats formatting", () => {
       ...list,
       { libraryId: "c", items: 3 },
     ]);
+  });
+});
+
+describe("library captions", () => {
+  const kinds = { movies: 0, shows: 0, seasons: 0, episodes: 0 };
+  const stats = (over: Partial<typeof kinds> = {}, bytes = 0) => ({
+    kinds: { ...kinds, ...over },
+    bytes,
+  });
+
+  test("the first line carries medium and folders only", () => {
+    expect(libraryCaption({ medium: "movies", roots: [{}, {}] })).toBe(
+      "Movies · 2 folders",
+    );
+    expect(libraryCaption({ medium: "shows", roots: [{}] })).toBe(
+      "Shows · 1 folder",
+    );
+  });
+
+  test("movies counts lead with the size", () => {
+    expect(
+      libraryCounts(
+        { medium: "movies" },
+        stats({ movies: 30 }, 266_000_000_000),
+      ),
+    ).toBe("266 GB · 30 movies");
+    expect(libraryCounts({ medium: "movies" }, stats({ movies: 1 }))).toBe(
+      "0 B · 1 movie",
+    );
+  });
+
+  test("shows counts lead with the size and pluralise", () => {
+    expect(
+      libraryCounts(
+        { medium: "shows" },
+        stats({ shows: 1, episodes: 340 }, 1_200_000_000_000),
+      ),
+    ).toBe("1.2 TB · 1 show · 340 episodes");
+    expect(
+      libraryCounts({ medium: "shows" }, stats({ shows: 2, episodes: 1 })),
+    ).toBe("0 B · 2 shows · 1 episode");
+  });
+});
+
+describe("filesystemSegments", () => {
+  const fs = {
+    state: "available" as const,
+    totalBytes: 1000,
+    availableBytes: 300,
+    usedBytes: 700,
+    roots: [
+      {
+        id: "r1",
+        libraryId: "a",
+        libraryName: "Films",
+        path: "/a",
+        mediaBytes: 100,
+      },
+      {
+        id: "r2",
+        libraryId: "a",
+        libraryName: "Films",
+        path: "/b",
+        mediaBytes: 50,
+      },
+      {
+        id: "r3",
+        libraryId: "b",
+        libraryName: "TV",
+        path: "/c",
+        mediaBytes: 200,
+      },
+    ],
+  };
+
+  test("groups a library's roots into one segment and clamps Other at zero", () => {
+    const { segments, otherBytes } = filesystemSegments(fs);
+    expect(segments.map((s) => [s.label, s.bytes])).toEqual([
+      ["Films", 150],
+      ["TV", 200],
+    ]);
+    expect(otherBytes).toBe(350);
+    expect(segments[0].tone).not.toBe(segments[1].tone);
+  });
+
+  test("Other clamps at zero when media exceeds used", () => {
+    const { otherBytes } = filesystemSegments({
+      ...fs,
+      usedBytes: 100,
+      availableBytes: 900,
+    });
+    expect(otherBytes).toBe(0);
+  });
+
+  test("a library filter keeps only its own segment", () => {
+    const { segments, otherBytes } = filesystemSegments(fs, "b");
+    expect(segments.map((s) => s.label)).toEqual(["TV"]);
+    expect(otherBytes).toBe(500);
   });
 });

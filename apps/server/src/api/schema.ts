@@ -161,6 +161,25 @@ export const LibraryStats = Schema.Struct({
   codecs: Schema.Array(
     Schema.Struct({ codec: Schema.String, versions: Schema.Int }),
   ),
+  /** Items of each kind in the library. */
+  kinds: Schema.Struct({
+    movies: Schema.Int,
+    shows: Schema.Int,
+    seasons: Schema.Int,
+    episodes: Schema.Int,
+  }),
+});
+
+/** Server-wide media totals for the Overview's media breakdown. */
+export const LibrarySummary = Schema.Struct({
+  movies: Schema.Int,
+  shows: Schema.Int,
+  seasons: Schema.Int,
+  episodes: Schema.Int,
+  versions: Schema.Int,
+  files: Schema.Int,
+  bytes: Schema.Number,
+  runtimeSeconds: Schema.Number,
 });
 
 /** The metadata an Item can be missing, as the Overview counts it. */
@@ -200,6 +219,8 @@ export const SpaceRoot = Schema.Struct({
   libraryId: Schema.UUID,
   libraryName: Schema.String,
   path: Schema.String,
+  /** Bytes of media files stored on this root. */
+  mediaBytes: Schema.Number,
 });
 
 /** One filesystem holding Library roots, or one root the server can't read. */

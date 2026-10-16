@@ -24,8 +24,11 @@ const {
   failure,
   onretry,
   revision,
+  heading,
 }: {
   library: { id: string; name: string; medium: "movies" | "shows" };
+  /** Group heading; defaults to the library name. */
+  heading?: string;
   stats: LibraryStats | undefined;
   gaps: LibraryGaps | undefined;
   failure?: { code: FailureCode; message: string } | undefined;
@@ -60,7 +63,7 @@ function openGap(row: { key: MetadataGap; label: string }) {
 </script>
 
 <FormGroup
-  title={library.name}
+  title={heading ?? library.name}
   loading={
     failure === undefined && (stats === undefined || gaps === undefined)
       ? 3
@@ -69,11 +72,29 @@ function openGap(row: { key: MetadataGap; label: string }) {
   {failure}
 >
   {#if stats !== undefined && gaps !== undefined}
-    <FormRow label={library.medium === "movies" ? "Movies" : "Episodes"} inline>
-      <span class="text-subheadline text-label-secondary"
-        >{formatCount(stats.items)}</span
-      >
-    </FormRow>
+    {#if library.medium === "movies"}
+      <FormRow label="Movies" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatCount(stats.kinds.movies)}</span
+        >
+      </FormRow>
+    {:else}
+      <FormRow label="Shows" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatCount(stats.kinds.shows)}</span
+        >
+      </FormRow>
+      <FormRow label="Seasons" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatCount(stats.kinds.seasons)}</span
+        >
+      </FormRow>
+      <FormRow label="Episodes" inline>
+        <span class="text-subheadline text-label-secondary"
+          >{formatCount(stats.kinds.episodes)}</span
+        >
+      </FormRow>
+    {/if}
     <FormRow label="Size" inline>
       <span class="text-subheadline text-label-secondary"
         >{formatBytes(stats.bytes)}</span

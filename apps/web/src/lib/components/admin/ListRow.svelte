@@ -7,24 +7,24 @@ import { cn } from "$lib/utils.ts";
 const {
   title,
   caption,
+  detail,
   tone = "secondary",
   href,
   onclick,
   current = false,
   leading,
-  detail,
   children,
 }: {
   title: string;
   caption?: string;
+  /** A second caption line, or extra content under the caption such as a progress bar. */
+  detail?: string | Snippet;
   /** The caption's colour; destructive marks a failure such as an unreachable registry. */
   tone?: "secondary" | "destructive";
   href?: string;
   onclick?: (event: MouseEvent) => void;
   current?: boolean;
   leading?: Snippet;
-  /** Extra content rendered under the caption, such as a progress bar. */
-  detail?: Snippet;
   children?: Snippet;
 } = $props();
 
@@ -47,7 +47,11 @@ const rowClass =
           : 'truncate text-label-secondary'}">{caption}</span
       >
     {/if}
-    {#if detail}
+    {#if typeof detail === "string"}
+      <span class="block truncate text-footnote text-label-secondary"
+        >{detail}</span
+      >
+    {:else if detail}
       {@render detail()}
     {/if}
   </span>
