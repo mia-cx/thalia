@@ -2,7 +2,9 @@
 import { onDestroy } from "svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
+import { page } from "$app/state";
 import { client } from "$lib/api.ts";
+import AccessPanel from "$lib/components/admin/AccessPanel.svelte";
 import AdminPage from "$lib/components/admin/AdminPage.svelte";
 import FolderFields from "$lib/components/admin/FolderFields.svelte";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
@@ -262,6 +264,10 @@ async function deleteLibrary() {
     </FormGroup>
 
     <PolicyEditor {id} />
+
+    {#if page.data.me.admin}
+      <AccessPanel object={{ type: "library", id }} noun="library" />
+    {/if}
 
     <div class="flex flex-col items-start gap-2">
       <Button variant="destructive" onclick={() => (deleteOpen = true)}

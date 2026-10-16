@@ -1,6 +1,7 @@
 <script lang="ts">
 import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
 import PlayIcon from "@lucide/svelte/icons/play";
+import { page } from "$app/state";
 import { client } from "$lib/api.ts";
 import {
   episodeCode,
@@ -12,6 +13,7 @@ import {
   upNextEpisode,
 } from "$lib/browse.ts";
 import AmbientBackdrop from "$lib/components/AmbientBackdrop.svelte";
+import AccessPanel from "$lib/components/admin/AccessPanel.svelte";
 import CreditRow from "$lib/components/CreditRow.svelte";
 import DetailBar from "$lib/components/DetailBar.svelte";
 import EpisodeCard from "$lib/components/EpisodeCard.svelte";
@@ -373,5 +375,14 @@ function creditsAside(detail: ItemDetail) {
     {/if}
 
     <CreditRow credits={detail.credits} />
+
+    {#if page.data.me?.admin}
+      <div class="flex max-w-3xl flex-col gap-8">
+        <AccessPanel
+          object={{ type: "item", id: detail.id }}
+          noun={detail.kind}
+        />
+      </div>
+    {/if}
   </div>
 {/if}
