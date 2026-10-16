@@ -51,7 +51,7 @@ const ringOffset = $derived(
 );
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events: the stopPropagation keeps card clicks off the stage's play toggle -->
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events, a11y_interactive_supports_focus, a11y_no_noninteractive_element_interactions: the stopPropagation keeps card clicks off the stage's play toggle -->
 <div
   role="region"
   aria-label="Next episode"
