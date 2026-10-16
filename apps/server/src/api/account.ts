@@ -4,7 +4,9 @@ import { AuthError } from "../auth/errors.ts";
 import {
   changePassword,
   readAccount,
+  readPlaybackPreferences,
   setDisplayName,
+  writePlaybackPreferences,
 } from "../auth/profile.ts";
 import type { Database } from "../db/client.ts";
 import { users } from "../db/schema/index.ts";
@@ -17,6 +19,8 @@ const Account = Schema.Struct({
   email: Schema.NullOr(Schema.String),
   /** set: local password; empty: passwordless local account; external: SSO-only. */
   password: Schema.Literal("set", "empty", "external"),
+  preferDirectStream: Schema.Boolean,
+  autoplayNextEpisode: Schema.Boolean,
 });
 const accountOutput = Schema.standardSchemaV1(Account);
 const emptyOutput = Schema.standardSchemaV1(Schema.Struct({}));
@@ -29,6 +33,7 @@ async function accountOf(context: {
   const account = await runApi(
     fromHost(async () => {
       const account = await readAccount(context.db, me, me);
+      const preferences = await readPlaybackPreferences(context.db, me, me);
       const [identity] = await context.db
         .select({ email: users.email, passwordHash: users.passwordHash })
         .from(users)
@@ -41,6 +46,7 @@ async function accountOf(context: {
             : "set";
       return {
         ...account,
+        ...preferences,
         email: identity?.email ?? null,
         passwordState,
       };
@@ -51,6 +57,8 @@ async function accountOf(context: {
     displayName: account.displayName,
     email: account.email,
     password: account.passwordState,
+    preferDirectStream: account.preferDirectStream,
+    autoplayNextEpisode: account.autoplayNextEpisode,
   };
 }
 
@@ -64,13 +72,26 @@ export const accountProcedures = {
   update: authenticatedMutation
     .route({ method: "PATCH", path: "/account" })
     .input(
-      Schema.standardSchemaV1(Schema.Struct({ displayName: Schema.String })),
+      Schema.standardSchemaV1(
+        Schema.Struct({
+          displayName: Schema.optional(Schema.String),
+          preferDirectStream: Schema.optional(Schema.Boolean),
+          autoplayNextEpisode: Schema.optional(Schema.Boolean),
+        }),
+      ),
     )
     .output(accountOutput)
     .handler(async ({ context, input }) => {
       const me = context.caller.user.id;
       await runApi(
-        fromHost(() => setDisplayName(context.db, me, me, input.displayName)),
+        fromHost(async () => {
+          if (input.displayName !== undefined)
+            await setDisplayName(context.db, me, me, input.displayName);
+          await writePlaybackPreferences(context.db, me, me, {
+            preferDirectStream: input.preferDirectStream,
+            autoplayNextEpisode: input.autoplayNextEpisode,
+          });
+        }),
       );
       return accountOf(context);
     }),
