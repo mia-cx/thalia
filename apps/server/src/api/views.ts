@@ -12,7 +12,11 @@ import {
   sql,
 } from "drizzle-orm";
 import { alias, type PgSelect } from "drizzle-orm/pg-core";
-import { checkPermission, viewableLibraryIds } from "../auth/permissions.ts";
+import {
+  checkPermission,
+  permittedVersionIds,
+  viewableLibraryIds,
+} from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import {
   artwork,
@@ -433,7 +437,7 @@ export async function listVersionViews(
   itemId: string,
 ) {
   if (!(await getItemView(db, userId, itemId))) return [];
-  return (await loadVersionViews(db, [itemId], true)).get(itemId) ?? [];
+  return (await loadVersionViews(db, userId, [itemId], true)).get(itemId) ?? [];
 }
 
 /**
@@ -448,19 +452,34 @@ export async function listVersionViewsForItems(
   itemIds: string[],
   { externalSubtitles = false } = {},
 ): Promise<Map<string, VersionView[]>> {
-  const viewable = await viewableLibraryIds(db, userId);
-  if (viewable.length === 0 || itemIds.length === 0) return new Map();
-  return loadVersionViews(db, itemIds, externalSubtitles, viewable);
+  if (itemIds.length === 0) return new Map();
+  return loadVersionViews(db, userId, itemIds, externalSubtitles);
 }
 
 async function loadVersionViews(
   db: Database,
+  userId: string,
   itemIds: string[],
   externalSubtitles: boolean,
-  viewable?: string[],
 ): Promise<Map<string, VersionView[]>> {
   const byItem = new Map<string, VersionView[]>();
-  const rows = await versionRows(db, itemIds, viewable);
+  const candidates = await db
+    .select({
+      id: versions.id,
+      itemId: versions.itemId,
+      libraryId: versions.libraryId,
+    })
+    .from(versions)
+    .where(
+      and(
+        inArray(versions.itemId, itemIds),
+        eq(versions.origin, "imported"),
+        eq(versions.format, "video"),
+      ),
+    );
+  const allowed = await permittedVersionIds(db, userId, "view", candidates);
+  if (allowed.size === 0) return byItem;
+  const rows = await versionRows(db, itemIds, [...allowed]);
   const filesPerVersion = new Map<string, number>();
   for (const row of rows)
     filesPerVersion.set(row.id, (filesPerVersion.get(row.id) ?? 0) + 1);
@@ -514,6 +533,7 @@ async function loadVersionViews(
       ...(byItem.get(row.itemId) ?? []),
       {
         id: row.id,
+        libraryId: row.libraryId,
         label: row.label,
         durationSeconds: row.durationSeconds,
         file: {
@@ -532,10 +552,11 @@ async function loadVersionViews(
 }
 
 // Versions joined to their Files and the root path each File's path is relative to.
-function versionRows(db: Database, itemIds: string[], viewable?: string[]) {
+function versionRows(db: Database, itemIds: string[], permitted: string[]) {
   return db
     .select({
       itemId: versions.itemId,
+      libraryId: versions.libraryId,
       id: versions.id,
       label: versions.label,
       durationSeconds: versions.durationSeconds,
@@ -554,9 +575,7 @@ function versionRows(db: Database, itemIds: string[], viewable?: string[]) {
         inArray(versions.itemId, itemIds),
         eq(versions.origin, "imported"),
         eq(versions.format, "video"),
-        viewable === undefined
-          ? undefined
-          : inArray(versions.libraryId, viewable),
+        inArray(versions.id, permitted),
       ),
     )
     .orderBy(
@@ -570,6 +589,7 @@ function versionRows(db: Database, itemIds: string[], viewable?: string[]) {
 /** One playable Version of an Item with its File and Streams, as a translation layer lists it. */
 export type VersionView = {
   id: string;
+  libraryId: string;
   label: string;
   durationSeconds: number | null;
   /** The File holding the Version: `path` is absolute, root plus root-relative. */

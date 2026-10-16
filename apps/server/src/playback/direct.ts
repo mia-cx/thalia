@@ -3,7 +3,10 @@ import { and, eq } from "drizzle-orm";
 import { Schema } from "effect";
 import { AuthError } from "../auth/errors.ts";
 import { checkOrigin, readSessionToken } from "../auth/http.ts";
-import { requirePermission } from "../auth/permissions.ts";
+import {
+  requirePermission,
+  requireVersionPermission,
+} from "../auth/permissions.ts";
 import { verifyPlaybackToken } from "../auth/playback-tokens.ts";
 import { authenticate } from "../auth/sessions.ts";
 import { readAuthSettings } from "../auth/settings.ts";
@@ -94,7 +97,7 @@ export async function sessionUserId(
 }
 
 /**
- * Resolves a Version's File on disk after the view and play checks, with its
+ * Resolves a Version's File after its delivery Action and view checks, with its
  * playback source. The path is undefined when the File left the library.
  */
 export async function locateVersionFile(
@@ -102,8 +105,15 @@ export async function locateVersionFile(
   userId: string,
   itemId: string,
   versionId: string,
+  action: "play" | "download" = "play",
 ) {
-  const loaded = await loadPlaybackSource(db, userId, itemId, versionId);
+  const loaded = await loadPlaybackSource(
+    db,
+    userId,
+    itemId,
+    versionId,
+    action,
+  );
   try {
     return { ...loaded, path: (await locateFile(db, loaded.file)).absolute };
   } catch {
@@ -119,7 +129,13 @@ export async function serveVersionFile(
   versionId: string,
   options?: { attachment?: boolean; ifRange?: string | null },
 ) {
-  const { path } = await locateVersionFile(db, userId, itemId, versionId);
+  const { path } = await locateVersionFile(
+    db,
+    userId,
+    itemId,
+    versionId,
+    options?.attachment === true ? "download" : "play",
+  );
   if (path === undefined)
     return respond(
       { error: { code: "NOT_FOUND", message: "Playback file not found." } },
@@ -253,6 +269,7 @@ export function createDownloadHandler(db: Database) {
         type: "item",
         id: itemId,
       });
+      await requireVersionPermission(db, userId, "download", versionId, itemId);
       return await serveVersionFile(db, userId, itemId, versionId, {
         attachment: true,
         ifRange: request.headers.get("if-range"),

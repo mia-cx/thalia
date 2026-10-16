@@ -2,12 +2,16 @@ import { and, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
 import {
   isBuiltInAdmin,
-  requirePermission,
-  viewableLibraryIds,
+  permittedVersionIds,
+  requireVersionPermission,
 } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
-import { items, progress, sessionRegistry } from "../db/schema/index.ts";
-import { inLibraries } from "../libraries/membership.ts";
+import {
+  items,
+  progress,
+  sessionRegistry,
+  versions,
+} from "../db/schema/index.ts";
 
 /** Live playback expires from activity listings after five minutes without a player heartbeat. */
 export const playbackActivitySeconds = 300;
@@ -19,12 +23,8 @@ export async function listPlaybackActivity(
   credentialIds: string[],
 ) {
   if (credentialIds.length === 0) return [];
-  const [admin, libraries] = await Promise.all([
-    isBuiltInAdmin(db, actorId),
-    viewableLibraryIds(db, actorId),
-  ]);
-  if (libraries.length === 0) return [];
-  return db
+  const admin = await isBuiltInAdmin(db, actorId);
+  const rows = await db
     .select({
       id: sessionRegistry.id,
       credentialId: sessionRegistry.credentialId,
@@ -50,7 +50,6 @@ export async function listPlaybackActivity(
       and(
         inArray(sessionRegistry.credentialId, credentialIds),
         admin ? undefined : eq(sessionRegistry.userId, actorId),
-        inLibraries(libraries),
         ne(sessionRegistry.state, "stopped"),
         gt(
           sessionRegistry.lastSeenAt,
@@ -59,25 +58,44 @@ export async function listPlaybackActivity(
       ),
     )
     .orderBy(desc(sessionRegistry.createdAt), desc(sessionRegistry.id));
+  if (rows.length === 0) return [];
+  const candidates = await db
+    .select({
+      id: versions.id,
+      itemId: versions.itemId,
+      libraryId: versions.libraryId,
+    })
+    .from(versions)
+    .where(
+      inArray(
+        versions.id,
+        rows.map((row) => row.versionId),
+      ),
+    );
+  const allowed = await permittedVersionIds(db, actorId, "play", candidates);
+  return rows.filter((row) => allowed.has(row.versionId));
 }
 
 /** Renews one owned playback session without changing its state, position, or play count. */
 export async function pingPlayback(db: Database, actorId: string, id: string) {
   const [session] = await db
-    .select({ userId: sessionRegistry.userId, itemId: sessionRegistry.itemId })
+    .select({
+      userId: sessionRegistry.userId,
+      itemId: sessionRegistry.itemId,
+      versionId: sessionRegistry.versionId,
+    })
     .from(sessionRegistry)
     .innerJoin(items, eq(items.id, sessionRegistry.itemId))
     .where(eq(sessionRegistry.id, id));
   if (session === undefined) throw new AuthError("NOT_FOUND");
   if (session.userId !== actorId) throw new AuthError("FORBIDDEN");
-  await requirePermission(db, actorId, "view", {
-    type: "item",
-    id: session.itemId,
-  });
-  await requirePermission(db, actorId, "play", {
-    type: "item",
-    id: session.itemId,
-  });
+  await requireVersionPermission(
+    db,
+    actorId,
+    "play",
+    session.versionId,
+    session.itemId,
+  );
   await db
     .update(sessionRegistry)
     .set({ lastSeenAt: new Date() })

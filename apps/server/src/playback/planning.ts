@@ -2,7 +2,10 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { Schema } from "effect";
 import { publishEvent } from "../api/events.ts";
 import { AuthError } from "../auth/errors.ts";
-import { requirePermission } from "../auth/permissions.ts";
+import {
+  requirePermission,
+  requireVersionPermission,
+} from "../auth/permissions.ts";
 import { issuePlaybackToken } from "../auth/playback-tokens.ts";
 import type { authenticate } from "../auth/sessions.ts";
 import { readAuthSettings } from "../auth/settings.ts";
@@ -146,6 +149,7 @@ export async function loadPlaybackSource(
   userId: string,
   itemId: string,
   versionId: string,
+  action: "play" | "download" = "play",
 ) {
   const [item] = await db
     .select()
@@ -157,7 +161,7 @@ export async function loadPlaybackSource(
     type: "item",
     id: item.id,
   });
-  await requirePermission(db, userId, "play", {
+  await requirePermission(db, userId, action, {
     type: "item",
     id: item.id,
   });
@@ -167,6 +171,7 @@ export async function loadPlaybackSource(
     .where(and(eq(versions.id, versionId), eq(versions.itemId, item.id)))
     .limit(1);
   if (!version) throw new AuthError("NOT_FOUND");
+  await requireVersionPermission(db, userId, action, version.id, itemId);
   if (version.origin !== "imported" || version.format !== "video")
     throw new AuthError("INVALID_INPUT");
 
@@ -474,7 +479,11 @@ export async function planPlayback(
     ? version.segmentTimelineId
     : null;
   const storedCandidates = storedEligible
-    ? await loadStoredCandidates(db, { itemId: item.id, fileId: file.id })
+    ? await loadStoredCandidates(db, {
+        itemId: item.id,
+        fileId: file.id,
+        userId: caller.user.id,
+      })
     : [];
   const pickStored = (
     storedProfile: ClientProfile,

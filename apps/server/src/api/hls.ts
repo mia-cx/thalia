@@ -276,6 +276,7 @@ export function createHlsHandler(db: Database, local?: Transcoder) {
       if (variantIds.length > 0 && (variant !== null || !subtitleRequest))
         return await serveStoredHls(
           db,
+          userId,
           { itemId: hls.itemId, variantIds },
           variant?.variantId ?? null,
           hls.name,

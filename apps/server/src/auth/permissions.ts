@@ -1,16 +1,17 @@
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import {
   type Action,
   accessRules,
   actions,
   groups,
+  itemAncestors,
   libraries,
   serverOnlyActions,
   userGroups,
   users,
+  versions,
 } from "../db/schema/index.ts";
-import { homeLibraryId } from "../libraries/membership.ts";
 import { type AccessObject, resolveAccess, server } from "./access.ts";
 import { AuthError, postgresCode } from "./errors.ts";
 
@@ -40,58 +41,25 @@ async function memberships(db: Queryable, userId: string) {
     .where(eq(userGroups.userId, userId));
 }
 
-// Load an Item's parent chain and the caller's rules in one recursive query.
-async function itemAccess(
-  db: Queryable,
-  itemId: string,
-  userId: string,
-  groupIds: string[],
-) {
-  const rows = await db
-    .select({
-      id: sql<string>`chain.id`,
-      libraryId: sql<string>`chain.library_id`,
-      rule: accessRules,
-    })
-    .from(sql`(
-      with recursive ancestors as (
-        select id, parent_id, ${homeLibraryId()} as library_id, 0 as depth from items where id = ${itemId}
-        union all
-        select parent.id, parent.parent_id, child.library_id, child.depth + 1
-        from items parent inner join ancestors child on parent.id = child.parent_id
-      )
-      select * from ancestors
-    ) chain`)
-    .leftJoin(
-      accessRules,
-      and(
-        or(
-          eq(accessRules.userId, userId),
-          groupIds.length ? inArray(accessRules.groupId, groupIds) : undefined,
-        ),
-        or(
-          sql`${accessRules.itemId} = chain.id`,
-          sql`${accessRules.libraryId} = chain.library_id`,
-          and(isNull(accessRules.itemId), isNull(accessRules.libraryId)),
-        ),
-      ),
-    )
-    .orderBy(sql`chain.depth`);
-  if (!rows[0]) throw new AuthError("NOT_FOUND");
-  const chain: AccessObject[] = [
-    ...[...new Set(rows.map((row) => row.id))].map((id) => ({
-      type: "item" as const,
-      id,
-    })),
-    { type: "library", id: rows[0].libraryId },
-    server,
-  ];
-  const rules = [
-    ...new Map(
-      rows.flatMap(({ rule }) => (rule ? [[rule.id, rule] as const] : [])),
-    ).values(),
-  ];
-  return { chain, rules };
+/** Loads the nearest-first Item chain and every descendant Version Library, without ordering unrelated branches. */
+export async function itemAccessChain(db: Queryable, itemId: string) {
+  const [ancestors, branches] = await Promise.all([
+    db
+      .select({ id: itemAncestors.ancestorId })
+      .from(itemAncestors)
+      .where(eq(itemAncestors.descendantId, itemId))
+      .orderBy(itemAncestors.depth),
+    db
+      .select({ id: versions.libraryId })
+      .from(itemAncestors)
+      .innerJoin(versions, eq(versions.itemId, itemAncestors.descendantId))
+      .where(eq(itemAncestors.ancestorId, itemId)),
+  ]);
+  if (ancestors.length === 0) throw new AuthError("NOT_FOUND");
+  return {
+    chain: ancestors.map(({ id }): AccessObject => ({ type: "item", id })),
+    libraryIds: [...new Set(branches.map(({ id }) => id))],
+  };
 }
 
 async function callerRules(
@@ -127,6 +95,143 @@ async function callerRules(
     );
 }
 
+type VersionCandidate = Pick<
+  typeof versions.$inferSelect,
+  "id" | "itemId" | "libraryId"
+>;
+
+/** Preloads caller facts once; batch filters read ancestry in sets before any copy's paths or streams are loaded. */
+export async function loadPermissionScope(db: Queryable, userId: string) {
+  const enabled = (await enabledUser(db, userId)) !== undefined;
+  const memberGroups = enabled ? await memberships(db, userId) : [];
+  const admin = memberGroups.some(
+    (group) => group.builtIn && group.name === "admins",
+  );
+  const groupIds = memberGroups.map((group) => group.id);
+  const rules =
+    enabled && !admin ? await callerRules(db, userId, groupIds) : [];
+
+  const chains = async (itemIds: readonly string[]) => {
+    const rows =
+      itemIds.length === 0
+        ? []
+        : await db
+            .select({
+              itemId: itemAncestors.descendantId,
+              id: itemAncestors.ancestorId,
+            })
+            .from(itemAncestors)
+            .where(inArray(itemAncestors.descendantId, [...itemIds]))
+            .orderBy(itemAncestors.depth);
+    const byItem = new Map<string, AccessObject[]>();
+    for (const row of rows) {
+      const chain = byItem.get(row.itemId) ?? [];
+      chain.push({ type: "item", id: row.id });
+      byItem.set(row.itemId, chain);
+    }
+    return byItem;
+  };
+  const versionIds = async (
+    action: Action,
+    candidates: readonly VersionCandidate[],
+  ) => {
+    if (!enabled) return new Set<string>();
+    if (admin) return new Set(candidates.map((version) => version.id));
+    const ancestry = await chains([
+      ...new Set(candidates.map((version) => version.itemId)),
+    ]);
+    return new Set(
+      candidates
+        .filter(
+          (version) =>
+            resolveAccess({
+              rules,
+              userId,
+              groupIds,
+              action,
+              chain: ancestry.get(version.itemId) ?? [],
+              libraryIds: [version.libraryId],
+            }).allowed,
+        )
+        .map((version) => version.id),
+    );
+  };
+  const itemIds = async (action: Action, ids: readonly string[]) => {
+    if (!enabled || ids.length === 0) return new Set<string>();
+    if (admin) return new Set(ids);
+    const [ancestry, branches] = await Promise.all([
+      chains(ids),
+      db
+        .select({
+          itemId: itemAncestors.ancestorId,
+          libraryId: versions.libraryId,
+        })
+        .from(itemAncestors)
+        .innerJoin(versions, eq(versions.itemId, itemAncestors.descendantId))
+        .where(inArray(itemAncestors.ancestorId, [...ids])),
+    ]);
+    const libraries = new Map<string, string[]>();
+    for (const branch of branches) {
+      const values = libraries.get(branch.itemId) ?? [];
+      values.push(branch.libraryId);
+      libraries.set(branch.itemId, values);
+    }
+    return new Set(
+      ids.filter(
+        (id) =>
+          resolveAccess({
+            rules,
+            userId,
+            groupIds,
+            action,
+            chain: ancestry.get(id) ?? [],
+            libraryIds: libraries.get(id) ?? [],
+          }).allowed,
+      ),
+    );
+  };
+  return { versionIds, itemIds };
+}
+
+/** Returns the candidate copies permitted by their own Library branch and Item rules. */
+export async function permittedVersionIds(
+  db: Queryable,
+  userId: string,
+  action: Action,
+  candidates: readonly VersionCandidate[],
+) {
+  return (await loadPermissionScope(db, userId)).versionIds(action, candidates);
+}
+
+/** Authorizes the explicitly selected copy; an allowed sibling copy never grants this permission. */
+export async function requireVersionPermission(
+  db: Queryable,
+  userId: string,
+  action: Action,
+  versionId: string,
+  itemId?: string,
+) {
+  const [version] = await db
+    .select({
+      id: versions.id,
+      itemId: versions.itemId,
+      libraryId: versions.libraryId,
+    })
+    .from(versions)
+    .where(
+      and(
+        eq(versions.id, versionId),
+        itemId === undefined ? undefined : eq(versions.itemId, itemId),
+      ),
+    )
+    .limit(1);
+  if (version === undefined) throw new AuthError("NOT_FOUND");
+  if (
+    !(await permittedVersionIds(db, userId, action, [version])).has(version.id)
+  )
+    throw new AuthError("FORBIDDEN");
+}
+
 /** Checks an enabled user's Action on the given object through Access rules. */
 export async function checkPermission(
   db: Queryable,
@@ -147,7 +252,10 @@ export async function checkPermission(
     object.type === "server" ? [server] : [object, server];
   const loaded =
     object.type === "item"
-      ? await itemAccess(db, object.id, userId, groupIds)
+      ? {
+          ...(await itemAccessChain(db, object.id)),
+          rules: await callerRules(db, userId, groupIds),
+        }
       : { chain, rules: await callerRules(db, userId, groupIds, chain) };
   return resolveAccess({ ...loaded, action, userId, groupIds }).allowed;
 }

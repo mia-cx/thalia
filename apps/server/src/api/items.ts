@@ -14,6 +14,7 @@ import { Effect } from "effect";
 import { AuthError } from "../auth/errors.ts";
 import {
   checkPermission,
+  loadPermissionScope,
   requirePermission,
   viewableLibraryIds,
 } from "../auth/permissions.ts";
@@ -253,7 +254,7 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
         id,
       }),
     );
-    const [[detail], itemCredits, itemVersions, children, canDownload] =
+    const [[detail], itemCredits, candidates, childCards, canDownload] =
       yield* fromHost(() =>
         Promise.all([
           db.select(detailFields).from(items).where(eq(items.id, id)),
@@ -276,6 +277,7 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
           db
             .select({
               id: versions.id,
+              itemId: versions.itemId,
               libraryId: versions.libraryId,
               label: versions.label,
               format: versions.format,
@@ -300,6 +302,24 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
         ]),
       );
     if (!detail) return yield* new ApiError({ code: "NOT_FOUND" });
+    const permissions = yield* fromHost(() =>
+      loadPermissionScope(db, caller.user.id),
+    );
+    const [visibleVersions, visibleChildren] = yield* fromHost(() =>
+      Promise.all([
+        permissions.versionIds("view", candidates),
+        permissions.itemIds(
+          "view",
+          childCards.map((child) => child.id),
+        ),
+      ]),
+    );
+    const itemVersions = candidates.filter((version) =>
+      visibleVersions.has(version.id),
+    );
+    const children = childCards.filter((child) =>
+      visibleChildren.has(child.id),
+    );
     const versionIds = itemVersions.map((version) => version.id);
     const [versionFiles, versionStreams] = yield* fromHost(() =>
       versionIds.length === 0
@@ -353,8 +373,10 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
           .where(inArray(items.id, ids)),
         // The detail orders Versions the same way; the first row per item wins.
         db
-          .selectDistinctOn([versions.itemId], {
+          .select({
+            id: versions.id,
             itemId: versions.itemId,
+            libraryId: versions.libraryId,
             durationSeconds: versions.durationSeconds,
           })
           .from(versions)
@@ -378,7 +400,11 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
           ),
       ]);
       const overviewOf = new Map(overviews.map((row) => [row.id, row]));
-      const runtimeOf = new Map(runtimes.map((row) => [row.itemId, row]));
+      const permitted = await permissions.versionIds("view", runtimes);
+      const runtimeOf = new Map<string, (typeof runtimes)[number]>();
+      for (const runtime of runtimes)
+        if (permitted.has(runtime.id) && !runtimeOf.has(runtime.itemId))
+          runtimeOf.set(runtime.itemId, runtime);
       const markOf = new Map(marks.map((row) => [row.itemId, row]));
       return children.map((child) => {
         const mark = markOf.get(child.id);
@@ -403,7 +429,7 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
       credits: itemCredits,
       canDownload,
       // JSON has no bigint; a byte count stays exact below 2^53.
-      versions: itemVersions.map((version) => ({
+      versions: itemVersions.map(({ itemId: _itemId, ...version }) => ({
         ...version,
         bytes: Number(version.bytes),
         container: containerOf.get(version.id) ?? null,
