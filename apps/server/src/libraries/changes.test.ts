@@ -1429,10 +1429,10 @@ describe.skipIf(!databaseUrl)("scan changes", () => {
           metadataDerived: true,
         });
         expect(
-          await findItemByProviderIds(db, library.id, { imdb: "tt0078748" }),
+          await findItemByProviderIds(db, "movie", { imdb: "tt0078748" }),
         ).toBeUndefined();
         expect(
-          (await findItemByProviderIds(db, library.id, { tmdb: "348" }))?.id,
+          (await findItemByProviderIds(db, "movie", { tmdb: "348" }))?.id,
         ).toBe(itemId);
       });
     }));

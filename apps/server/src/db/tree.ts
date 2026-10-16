@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { emitPluginEvents } from "../plugins/events.ts";
 import { lockCatalogue } from "./catalogue-lock.ts";
 import type { Database } from "./client.ts";
@@ -271,5 +271,41 @@ export async function deleteItemSubtree(
       tx,
       removed.map((payload) => ({ event: "item.removed", payload })),
     );
+  });
+}
+
+/** Removes only Items with no Versions anywhere below them, preserving shared catalogue state. */
+export async function pruneEmptiedItems(
+  db: Connection,
+  itemIds: readonly string[],
+  deletedArtwork: DeletedArtworkFile[],
+) {
+  if (itemIds.length === 0) return;
+  return db.transaction(async (tx) => {
+    await lockCatalogue(tx);
+    const candidates = await tx
+      .selectDistinct({
+        id: itemAncestors.ancestorId,
+        depth: itemAncestors.depth,
+      })
+      .from(itemAncestors)
+      .where(inArray(itemAncestors.descendantId, [...itemIds]));
+    // Snapshot ancestors before any cascade; visit leaves before their containers.
+    for (const candidate of candidates.sort((a, b) => a.depth - b.depth)) {
+      const [empty] = await tx
+        .select({ id: items.id })
+        .from(items)
+        .where(
+          and(
+            eq(items.id, candidate.id),
+            sql`not exists (
+        select 1 from item_ancestors a join versions v on v.item_id = a.descendant_id
+        where a.ancestor_id = "items"."id"
+      )`,
+          ),
+        );
+      if (empty !== undefined)
+        await deleteItemSubtree(tx, empty.id, deletedArtwork);
+    }
   });
 }

@@ -30,8 +30,8 @@ import {
 } from "../db/schema/index.ts";
 import {
   type DeletedArtworkFile,
-  deleteItemSubtree,
   insertItem,
+  pruneEmptiedItems,
 } from "../db/tree.ts";
 import type { ScanRules } from "../mediums/medium.ts";
 import { groupMoviePaths, moviesMedium } from "../mediums/movies.ts";
@@ -378,6 +378,7 @@ async function findShowOwningFiles(
     .where(
       and(
         eq(itemAncestors.ancestorId, owner.item.id),
+        eq(files.libraryId, libraryId),
         sql`not (${rootedPairs(paths)})`,
       ),
     );
@@ -495,7 +496,10 @@ function fallbackCandidate(
         shares(candidate))
     );
   });
-  return matches.length === 1 ? matches[0] : undefined;
+  const unique = [
+    ...new Map(matches.map((candidate) => [candidate.id, candidate])).values(),
+  ];
+  return unique.length === 1 ? unique[0] : undefined;
 }
 
 /**
@@ -591,57 +595,7 @@ function mergeProviderIds(
   return merged;
 }
 
-/** Deletes leaf Items still holding no Versions after queued file deletes. */
-async function deleteEmptiedItems(
-  tx: Transaction,
-  itemIds: readonly string[],
-  deletedArtwork: DeletedArtworkFile[],
-) {
-  for (const itemId of new Set(itemIds)) {
-    const [item] = await tx.select().from(items).where(eq(items.id, itemId));
-    if (!item || item.kind === "show" || item.kind === "season") continue;
-    const [version] = await tx
-      .select({ id: versions.id })
-      .from(versions)
-      .where(eq(versions.itemId, itemId))
-      .limit(1);
-    if (version === undefined)
-      await deleteItemSubtree(tx, item.id, deletedArtwork);
-  }
-}
-
-/** Deletes leaf Items left without Versions, then the Seasons and Shows above them left without children. */
-export async function pruneEmptiedItems(
-  tx: Transaction,
-  itemIds: readonly string[],
-  deletedArtwork: DeletedArtworkFile[],
-) {
-  if (itemIds.length === 0) return;
-  const candidates = await tx
-    .selectDistinct({
-      id: itemAncestors.ancestorId,
-      depth: itemAncestors.depth,
-    })
-    .from(itemAncestors)
-    .where(inArray(itemAncestors.descendantId, [...itemIds]));
-  // Snapshot ancestors before any cascade; visit leaves before their containers.
-  for (const candidate of candidates.sort((a, b) => a.depth - b.depth)) {
-    const [empty] = await tx
-      .select({ id: items.id })
-      .from(items)
-      .where(
-        and(
-          eq(items.id, candidate.id),
-          sql`not exists (
-        select 1 from item_ancestors a join versions v on v.item_id = a.descendant_id
-        where a.ancestor_id = "items"."id"
-      )`,
-        ),
-      );
-    if (empty !== undefined)
-      await deleteItemSubtree(tx, empty.id, deletedArtwork);
-  }
-}
+export { pruneEmptiedItems } from "../db/tree.ts";
 
 /**
  * Removes the imported Files a walk missed from these root Items'
@@ -678,7 +632,12 @@ async function reconcileStaleFiles(
       and(eq(versions.id, files.versionId), eq(versions.origin, "imported")),
     )
     .innerJoin(itemAncestors, eq(itemAncestors.descendantId, files.itemId))
-    .where(inArray(itemAncestors.ancestorId, [...itemIds]));
+    .where(
+      and(
+        inArray(itemAncestors.ancestorId, [...itemIds]),
+        eq(files.libraryId, libraryId),
+      ),
+    );
   // A File is stale only when its own root lacks it.
   const stale = held.filter((file) => !walkedKeys.has(rootedKey(file)));
   // Only a path inside the scope can have come back since the walk.
@@ -711,7 +670,7 @@ async function reconcileStaleFiles(
 
 /**
  * Finds the root Item one group writes to: exact folder and title key
- * first, then the group's webhook provider ids, which check the ids
+ * first, then its tags and authoritative webhook ids, which check the ids
  * earlier groups of this scan asserted before stored ids, then the Item
  * owning the group's Files, then the title-key fallback, else a new
  * Item. A found Item moves to the group's folder and key only when the
@@ -733,7 +692,7 @@ async function findGroupItem(
       files: readonly RootedPath[];
     };
     changeProviderIds: Record<string, string>;
-    /** Webhook ids earlier groups of this scan asserted, as `provider:value` to Item id. */
+    /** Explicit ids earlier groups asserted, as `provider:value` to Item id. */
     sameScan?: ReadonlyMap<string, string>;
     candidates: () => Promise<Awaited<ReturnType<typeof rootItemCandidates>>>;
     claimed: Set<string>;
@@ -755,20 +714,45 @@ async function findGroupItem(
     )
     .limit(1);
   const exact = exactRow?.item;
-  const found = await findItemByProviderIds(
+  let found = await findItemByProviderIds(
     tx,
-    libraryId,
-    context.changeProviderIds,
+    kind,
+    exact === undefined
+      ? { ...group.providerIds, ...context.changeProviderIds }
+      : context.changeProviderIds,
   );
-  const earlier = new Set(
-    Object.entries(context.changeProviderIds).flatMap(([provider, value]) => {
-      const itemId =
-        value === ""
-          ? undefined
-          : context.sameScan?.get(`${provider}:${value}`);
-      return itemId === undefined ? [] : [itemId];
-    }),
+  const authoritative = Object.values(context.changeProviderIds).some(
+    (value) => value !== "",
   );
+  const tagReuseAllowed = async (id: string) => {
+    if (exact !== undefined && exact.id !== id) return false;
+    const locations = await tx
+      .select()
+      .from(itemFolders)
+      .where(eq(itemFolders.itemId, id));
+    return !locations.some(
+      (location) =>
+        group.files.some((file) => file.rootId === location.rootId) &&
+        (location.canonicalFolder !== group.canonicalFolder ||
+          location.titleKey !== group.titleKey),
+    );
+  };
+  if (
+    found !== undefined &&
+    !authoritative &&
+    !(await tagReuseAllowed(found.id))
+  )
+    found = undefined;
+  const earlier = new Set<string>();
+  for (const [provider, value] of Object.entries({
+    ...group.providerIds,
+    ...context.changeProviderIds,
+  })) {
+    const id =
+      value === "" ? undefined : context.sameScan?.get(`${provider}:${value}`);
+    if (id !== undefined && (authoritative || (await tagReuseAllowed(id))))
+      earlier.add(id);
+  }
   if (earlier.size > 1) throw new AuthError("CONFLICT");
   const [earlierId] = earlier;
   if (exact && found && exact.id !== found.id) throw new AuthError("CONFLICT");
@@ -1060,8 +1044,7 @@ export async function scanDirectory(
     const asserted = new Map<string, string>();
     const resolved = [];
     for (const group of groups) {
-      // Only webhook ids may find an Item elsewhere in the Library. Folder
-      // tags are stored but never relocate: two folders can carry the same tag.
+      // Webhooks override tags; both can reuse a server Item in a different root.
       const webhookProviderIds = groupChangeProviderIds(
         providerChanges,
         group.files,
@@ -1090,7 +1073,10 @@ export async function scanDirectory(
       }
       itemIds.push(item.id);
       resolved.push({ group, itemId: item.id, webhookProviderIds });
-      for (const [provider, value] of Object.entries(webhookProviderIds)) {
+      for (const [provider, value] of Object.entries({
+        ...group.providerIds,
+        ...webhookProviderIds,
+      })) {
         if (value !== "") asserted.set(`${provider}:${value}`, item.id);
       }
     }
@@ -1228,7 +1214,7 @@ export async function scanDirectory(
     }
     for (const owner of timelineOwners) await persistScanTimelines(tx, owner);
 
-    await deleteEmptiedItems(tx, emptiedItemIds, deletedArtwork);
+    await pruneEmptiedItems(tx, emptiedItemIds, deletedArtwork);
 
     if (options.reconcileMissing === true) {
       if (walked.length === 0) await source.confirmEmpty(path, false);
@@ -1391,6 +1377,7 @@ export async function scanShowDirectory(
     const claimed = new Set<string>();
     let candidates: Awaited<ReturnType<typeof rootItemCandidates>> | undefined;
     const singleGroup = discovered.length === 1;
+    const asserted = new Map<string, string>();
 
     for (const group of groups) {
       const groupFiles = group.seasons.flatMap((season) =>
@@ -1413,11 +1400,17 @@ export async function scanShowDirectory(
         kind: "show",
         group: { ...group, files: groupFiles },
         changeProviderIds: webhookProviderIds,
+        sameScan: asserted,
         candidates: async () =>
           (candidates ??= await rootItemCandidates(tx, libraryId, "show")),
         claimed,
       });
       const showId = show.id;
+      for (const [provider, value] of Object.entries({
+        ...group.providerIds,
+        ...webhookProviderIds,
+      }))
+        if (value !== "") asserted.set(`${provider}:${value}`, showId);
       for (const rootId of new Set(groupFiles.map((file) => file.rootId))) {
         if ((await itemLocation(tx, showId, rootId)) === undefined)
           await setItemLocation(
@@ -1812,7 +1805,7 @@ export async function scanShowDirectory(
       }
     }
 
-    await deleteEmptiedItems(tx, emptiedItemIds, deletedArtwork);
+    await pruneEmptiedItems(tx, emptiedItemIds, deletedArtwork);
 
     if (options.reconcileMissing === true) {
       if (walked.length === 0) await source.confirmEmpty(path, false);

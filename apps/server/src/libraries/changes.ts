@@ -9,13 +9,17 @@ import {
   itemAncestors,
   itemFolders,
   items,
+  libraries,
   providerIds as providerIdRows,
   type ScanChange,
   versions,
 } from "../db/schema/index.ts";
-import { type DeletedArtworkFile, deleteItemSubtree } from "../db/tree.ts";
+import {
+  type DeletedArtworkFile,
+  deleteItemSubtree,
+  pruneEmptiedItems,
+} from "../db/tree.ts";
 import { itemLocation, setItemLocation } from "./locations.ts";
-import { inLibraries } from "./membership.ts";
 import { absolutePath, assetRoots, rootedKey } from "./roots.ts";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -84,7 +88,9 @@ const isEarlyDuplicate = async (
     })
     .from(files)
     .innerJoin(itemAncestors, eq(itemAncestors.descendantId, files.itemId))
-    .where(eq(itemAncestors.ancestorId, rootId));
+    .where(
+      and(eq(itemAncestors.ancestorId, rootId), eq(files.libraryId, libraryId)),
+    );
   const pairs: [string, string][] = [];
   for (const file of held) {
     const from = movedFrom.get(rootedKey(file));
@@ -148,10 +154,10 @@ const providerIdPairs = (providerIds: Record<string, string>) =>
     ([provider, value]) => provider !== "" && value !== "",
   );
 
-/** Finds one Item from a consistent set of explicit provider ids; ids a metadata provider derived never identify an Item. */
+/** Finds one server Item of the requested kind from explicit provider ids; derived metadata ids never identify a scan. */
 export async function findItemByProviderIds(
   db: Connection,
-  libraryId: string,
+  kind: "movie" | "show",
   providerIds: Record<string, string>,
 ): Promise<typeof items.$inferSelect | undefined> {
   const pairs = providerIdPairs(providerIds);
@@ -162,7 +168,7 @@ export async function findItemByProviderIds(
     .innerJoin(items, eq(providerIdRows.itemId, items.id))
     .where(
       and(
-        inLibraries([libraryId]),
+        eq(items.kind, kind),
         eq(providerIdRows.metadataDerived, false),
         or(
           ...pairs.map(([provider, value]) =>
@@ -289,6 +295,12 @@ export async function applyScanChanges(
   changes: readonly ScanChange[],
   deletedArtwork: DeletedArtworkFile[] = [],
 ): Promise<string[]> {
+  const [library] = await db
+    .select({ medium: libraries.medium })
+    .from(libraries)
+    .where(eq(libraries.id, libraryId));
+  if (!library) throw new AuthError("NOT_FOUND");
+  const kind = library.medium === "movies" ? "movie" : "show";
   const normalized = changes.map((change) => ({
     change,
     path: requireRelativePath(
@@ -346,11 +358,43 @@ export async function applyScanChanges(
               destinationRootId,
               movedFrom,
             ));
-          await deleteItemSubtree(
-            db,
-            duplicate ? destinationRootId : destination.itemId,
-            deletedArtwork,
-          );
+          const targetId = duplicate ? destinationRootId : destination.itemId;
+          const held = await db
+            .select({ file: files })
+            .from(files)
+            .innerJoin(
+              itemAncestors,
+              eq(itemAncestors.descendantId, files.itemId),
+            )
+            .where(
+              and(
+                eq(itemAncestors.ancestorId, targetId),
+                eq(files.rootId, change.rootId),
+              ),
+            );
+          const emptied = [];
+          for (const { file } of held) {
+            const id = await removeFile(db, file);
+            if (id !== undefined) emptied.push(id);
+          }
+          if (duplicate)
+            await pruneEmptiedItems(db, [...emptied, targetId], deletedArtwork);
+          else
+            for (const id of emptied) {
+              const ancestors = await db
+                .select({ id: itemAncestors.ancestorId })
+                .from(itemAncestors)
+                .where(eq(itemAncestors.descendantId, id));
+              emptiedItemIds.push(...ancestors.map((ancestor) => ancestor.id));
+              const [survivor] = await db
+                .select({ id: versions.id })
+                .from(versions)
+                .where(eq(versions.itemId, id))
+                .limit(1);
+              // Keep the destination Show until this scan has inserted its replacement Episode.
+              if (survivor === undefined)
+                await deleteItemSubtree(db, id, deletedArtwork);
+            }
         }
       }
       if (file) {
@@ -377,11 +421,7 @@ export async function applyScanChanges(
         }
         continue;
       }
-      const item = await findItemByProviderIds(
-        db,
-        libraryId,
-        change.providerIds,
-      );
+      const item = await findItemByProviderIds(db, kind, change.providerIds);
       if (
         item &&
         (await itemLocation(db, item.id, change.rootId))?.canonicalFolder ===
@@ -400,11 +440,7 @@ export async function applyScanChanges(
       if (emptied !== undefined) emptiedItemIds.push(emptied);
       continue;
     }
-    const found = await findItemByProviderIds(
-      db,
-      libraryId,
-      change.providerIds,
-    );
+    const found = await findItemByProviderIds(db, kind, change.providerIds);
     const candidates =
       found !== undefined
         ? [found]
