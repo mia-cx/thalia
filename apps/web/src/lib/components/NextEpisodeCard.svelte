@@ -72,7 +72,7 @@ const ringOffset = $derived(
   </p>
   <div class="flex items-center gap-3">
     <div
-      class="aspect-video w-28 shrink-0 overflow-hidden rounded-md bg-white/10"
+      class="aspect-video w-28 shrink-0 overflow-hidden rounded-md bg-white/10 [@media(max-height:30rem)]:hidden"
     >
       {#if episode.thumbArtworkId !== null}
         <img
