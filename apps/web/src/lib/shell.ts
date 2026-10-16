@@ -9,7 +9,7 @@ export type ShellLibrary = {
 export type NavEntry = {
   href: string;
   label: string;
-  icon: "search" | "home" | "movies" | "shows" | "settings";
+  icon: "search" | "home" | "movies" | "shows" | "downloads" | "settings";
   children: readonly { href: string; label: string }[];
 };
 
@@ -40,6 +40,7 @@ export function navigation(
       icon: "shows",
       children: children("shows", "/shows"),
     },
+    { href: "/downloads", label: "Downloads", icon: "downloads", children: [] },
   ];
   if (admin)
     entries.push({

@@ -12,6 +12,7 @@ const {
   onclick,
   current = false,
   leading,
+  detail,
   children,
 }: {
   title: string;
@@ -22,6 +23,8 @@ const {
   onclick?: (event: MouseEvent) => void;
   current?: boolean;
   leading?: Snippet;
+  /** Extra content rendered under the caption, such as a progress bar. */
+  detail?: Snippet;
   children?: Snippet;
 } = $props();
 
@@ -43,6 +46,9 @@ const rowClass =
           ? 'break-words text-destructive'
           : 'truncate text-label-secondary'}">{caption}</span
       >
+    {/if}
+    {#if detail}
+      {@render detail()}
     {/if}
   </span>
   {#if children}

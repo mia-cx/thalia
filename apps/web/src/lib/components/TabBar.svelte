@@ -7,7 +7,7 @@ import { isCurrentSection, type NavEntry, navigation } from "$lib/shell.ts";
 const { admin }: { admin: boolean } = $props();
 
 const tabs = $derived(
-  ["home", "movies", "shows", "search", "settings"]
+  ["home", "movies", "shows", "downloads", "search", "settings"]
     .map((icon) => navigation(admin, []).find((e) => e.icon === icon))
     .filter((e): e is NavEntry => e !== undefined),
 );

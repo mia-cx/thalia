@@ -1,7 +1,9 @@
+import { basename } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { Schema } from "effect";
 import { AuthError } from "../auth/errors.ts";
 import { checkOrigin, readSessionToken } from "../auth/http.ts";
+import { requirePermission } from "../auth/permissions.ts";
 import { verifyPlaybackToken } from "../auth/playback-tokens.ts";
 import { authenticate } from "../auth/sessions.ts";
 import { readAuthSettings } from "../auth/settings.ts";
@@ -12,6 +14,7 @@ import { locateFile } from "../libraries/roots.ts";
 import { loadPlaybackSource } from "./planning.ts";
 
 const directPath = /^\/api\/playback\/([^/]+)\/([^/]+)\/direct$/;
+const downloadPath = /^\/api\/items\/([^/]+)\/versions\/([^/]+)\/download$/;
 
 /** Headers every playback and HLS response carries. */
 export const standardHeaders: Record<string, string> = {
@@ -68,6 +71,15 @@ async function requestUserId(
   }
   if (request.headers.get("authorization") !== null)
     throw new AuthError("UNAUTHENTICATED");
+  return sessionUserId(db, request, peerAddress);
+}
+
+/** Authenticates a first-party request by its session cookie, enforcing the origin rules cookie callers live under. */
+export async function sessionUserId(
+  db: Database,
+  request: Request,
+  peerAddress: string,
+): Promise<string> {
   const caller = await authenticate(db, readSessionToken(request));
   if (caller.credential.kind !== "session")
     throw new AuthError("UNAUTHENTICATED");
@@ -105,6 +117,7 @@ export async function serveVersionFile(
   userId: string,
   itemId: string,
   versionId: string,
+  options?: { attachment?: boolean; ifRange?: string | null },
 ) {
   const { path } = await locateVersionFile(db, userId, itemId, versionId);
   if (path === undefined)
@@ -114,8 +127,33 @@ export async function serveVersionFile(
     );
   const headers = new Headers(standardHeaders);
   headers.set("accept-ranges", "bytes");
+  if (options?.attachment === true) {
+    const name = basename(path);
+    const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+    const encoded = encodeURIComponent(name).replace(
+      /['()*]/g,
+      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+    );
+    headers.set(
+      "content-disposition",
+      `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`,
+    );
+  }
   const file = Bun.file(path);
+  // ETag covers the bytes' identity: size plus mtime. A rescan can replace a
+  // file in place under the same ids, and a resume must not splice tails.
+  const etag = `"${file.size}-${Math.trunc(file.lastModified)}"`;
+  headers.set("etag", etag);
+  headers.set("last-modified", new Date(file.lastModified).toUTCString());
   headers.set("content-length", String(file.size));
+  // A stale If-Range makes the whole file the answer. Bun ranges file, blob
+  // and stream bodies alike, so the stream goes through a TransformStream to
+  // escape that; every streamed body also loses our content-length to
+  // chunked encoding, which the store reads as "size unknown".
+  if (options?.ifRange != null && options.ifRange !== etag)
+    return new Response(file.stream().pipeThrough(new TransformStream()), {
+      headers,
+    });
   return new Response(file, { headers });
 }
 
@@ -177,6 +215,48 @@ export function createDirectPlayHandler(db: Database) {
       )
         throw new AuthError("UNAUTHENTICATED");
       return await serveVersionFile(db, userId, itemId, session.versionId);
+    } catch (error) {
+      return errorResponse(error);
+    }
+  };
+}
+
+/** Creates the download handler: a Version's original File as an attachment for session-cookie callers with `download`. */
+export function createDownloadHandler(db: Database) {
+  return async (
+    request: Request,
+    peerAddress: string,
+  ): Promise<Response | undefined> => {
+    const url = new URL(request.url);
+    const match = downloadPath.exec(url.pathname);
+    if (match === null) return undefined;
+    try {
+      if (request.method !== "GET" && request.method !== "HEAD")
+        return respond(
+          {
+            error: {
+              code: "METHOD_NOT_ALLOWED",
+              message: "Method not allowed.",
+            },
+          },
+          405,
+          { allow: "GET, HEAD" },
+        );
+      const itemId = match[1] ?? "";
+      const versionId = match[2] ?? "";
+      if (!Schema.is(Schema.UUID)(itemId) || !Schema.is(Schema.UUID)(versionId))
+        throw new AuthError("NOT_FOUND");
+      if (request.headers.get("authorization") !== null)
+        throw new AuthError("UNAUTHENTICATED");
+      const userId = await sessionUserId(db, request, peerAddress);
+      await requirePermission(db, userId, "download", {
+        type: "item",
+        id: itemId,
+      });
+      return await serveVersionFile(db, userId, itemId, versionId, {
+        attachment: true,
+        ifRange: request.headers.get("if-range"),
+      });
     } catch (error) {
       return errorResponse(error);
     }
