@@ -70,9 +70,13 @@ async function seed(db: Database) {
         })
         .returning();
       if (!version) throw new Error("Missing Version.");
-      (seasonNumber === 0 ? specials : (numbered[seasonNumber] ??= [])).push(
-        episode.id,
-      );
+      if (seasonNumber === 0) {
+        specials.push(episode.id);
+      } else {
+        const bucket = numbered[seasonNumber] ?? [];
+        numbered[seasonNumber] = bucket;
+        bucket.push(episode.id);
+      }
     }
   }
   const [movie] = await db
@@ -87,6 +91,12 @@ async function seed(db: Database) {
   if (!movie) throw new Error("Missing Movie.");
   const { token } = await createApiKey(db, viewer.id, "viewer");
   return { admin, viewer, library, show, numbered, specials, movie, token };
+}
+
+function at(ids: string[], index: number): string {
+  const id = ids[index];
+  if (id === undefined) throw new Error("Missing Episode.");
+  return id;
 }
 
 async function withShow(
@@ -114,8 +124,10 @@ async function withShow(
 describe.skipIf(!databaseUrl)("playback.next", () => {
   test("the Season finale crosses into the next Season", () =>
     withShow(async (_db, fx, client) => {
-      const next = await client.playback.next({ itemId: fx.numbered[1]![1]! });
-      expect(next?.id).toBe(fx.numbered[2]![0]);
+      const next = await client.playback.next({
+        itemId: at(fx.numbered[1] ?? [], 1),
+      });
+      expect(next?.id).toBe(at(fx.numbered[2] ?? [], 0));
       expect(next).toMatchObject({
         seasonNumber: 2,
         episodeNumber: 1,
@@ -127,10 +139,10 @@ describe.skipIf(!databaseUrl)("playback.next", () => {
   test("Specials follow only Specials", () =>
     withShow(async (_db, fx, client) => {
       expect(
-        (await client.playback.next({ itemId: fx.specials[0]! }))?.id,
-      ).toBe(fx.specials[1]);
+        (await client.playback.next({ itemId: at(fx.specials, 0) }))?.id,
+      ).toBe(at(fx.specials, 1));
       expect(
-        await client.playback.next({ itemId: fx.specials[1]! }),
+        await client.playback.next({ itemId: at(fx.specials, 1) }),
       ).toBeNull();
     }));
 
@@ -138,48 +150,48 @@ describe.skipIf(!databaseUrl)("playback.next", () => {
     withShow(async (db, fx, client) => {
       await setRule(db, fx.admin.id, {
         subject: { type: "user", id: fx.viewer.id },
-        object: { type: "item", id: fx.numbered[2]![0]! },
+        object: { type: "item", id: at(fx.numbered[2] ?? [], 0) },
         action: "view",
         allowed: false,
       });
       expect(
-        (await client.playback.next({ itemId: fx.numbered[1]![1]! }))?.id,
-      ).toBe(fx.numbered[2]![1]);
+        (await client.playback.next({ itemId: at(fx.numbered[1] ?? [], 1) }))
+          ?.id,
+      ).toBe(at(fx.numbered[2] ?? [], 1));
     }));
 
   test("an Episode denied for play is skipped", () =>
     withShow(async (db, fx, client) => {
       await setRule(db, fx.admin.id, {
         subject: { type: "user", id: fx.viewer.id },
-        object: { type: "item", id: fx.numbered[2]![0]! },
+        object: { type: "item", id: at(fx.numbered[2] ?? [], 0) },
         action: "play",
         allowed: false,
       });
       expect(
-        (await client.playback.next({ itemId: fx.numbered[1]![1]! }))?.id,
-      ).toBe(fx.numbered[2]![1]);
+        (await client.playback.next({ itemId: at(fx.numbered[1] ?? [], 1) }))
+          ?.id,
+      ).toBe(at(fx.numbered[2] ?? [], 1));
     }));
 
   test("the series finale has no next Episode", () =>
     withShow(async (_db, fx, client) => {
       expect(
-        await client.playback.next({ itemId: fx.numbered[2]![2]! }),
+        await client.playback.next({ itemId: at(fx.numbered[2] ?? [], 2) }),
       ).toBeNull();
     }));
 
   test("a Movie has no next Episode and a denied Item is forbidden", () =>
     withShow(async (db, fx, client) => {
-      expect(
-        await client.playback.next({ itemId: fx.movie.id }),
-      ).toBeNull();
+      expect(await client.playback.next({ itemId: fx.movie.id })).toBeNull();
       await setRule(db, fx.admin.id, {
         subject: { type: "user", id: fx.viewer.id },
-        object: { type: "item", id: fx.numbered[1]![0]! },
+        object: { type: "item", id: at(fx.numbered[1] ?? [], 0) },
         action: "view",
         allowed: false,
       });
       await expect(
-        client.playback.next({ itemId: fx.numbered[1]![0]! }),
+        client.playback.next({ itemId: at(fx.numbered[1] ?? [], 0) }),
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
       await expect(
         client.playback.next({ itemId: crypto.randomUUID() }),

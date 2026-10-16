@@ -267,7 +267,9 @@ export async function detailChildren(
         durationSeconds: versions.durationSeconds,
       })
       .from(versions)
-      .where(and(inArray(versions.itemId, ids), eq(versions.origin, "imported")))
+      .where(
+        and(inArray(versions.itemId, ids), eq(versions.origin, "imported")),
+      )
       .orderBy(versions.itemId, asc(versions.label), asc(versions.id)),
     db
       .select({

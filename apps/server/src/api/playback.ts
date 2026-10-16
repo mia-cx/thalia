@@ -180,9 +180,7 @@ const refresh = authenticatedMutation
 
 const next = authenticated
   .route({ method: "GET", path: "/playback/next" })
-  .input(
-    Schema.standardSchemaV1(Schema.Struct({ itemId: Schema.UUID })),
-  )
+  .input(Schema.standardSchemaV1(Schema.Struct({ itemId: Schema.UUID })))
   .output(Schema.standardSchemaV1(Schema.NullOr(DetailChild)))
   .handler(async ({ context, input }) =>
     runApi(

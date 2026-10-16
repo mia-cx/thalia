@@ -23,14 +23,12 @@ describe("creditsStartSeconds", () => {
     expect(creditsStartSeconds([chapter(title, 100)], 120)).toBe(100);
   });
 
-  test.each([
-    "Edward",
-    "Ended",
-    "Opening",
-    "Credit",
-  ])("does not match %j", (title) => {
-    expect(creditsStartSeconds([chapter(title, 100)], 120)).toBeNull();
-  });
+  test.each(["Edward", "Ended", "Opening", "Credit"])(
+    "does not match %j",
+    (title) => {
+      expect(creditsStartSeconds([chapter(title, 100)], 120)).toBeNull();
+    },
+  );
 
   test("a null title never matches", () => {
     expect(creditsStartSeconds([chapter(null, 100)], 120)).toBeNull();
