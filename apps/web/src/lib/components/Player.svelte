@@ -56,11 +56,8 @@ function loadItem() {
       detail.kind === "episode"
         ? await client.playback.next({ itemId: detail.id }).catch(() => null)
         : null;
-    // #210 adds the typed field; read it defensively until it lands.
     const account = await client.account.get().catch(() => null);
-    const autoplay =
-      (account as { autoplayNextEpisode?: boolean } | null)
-        ?.autoplayNextEpisode ?? true;
+    const autoplay = account?.autoplayNextEpisode ?? true;
     return {
       detail,
       progressVersionId: progress?.versionId ?? null,
