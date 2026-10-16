@@ -34,6 +34,7 @@ import {
   streams,
   versions,
 } from "../db/schema/index.ts";
+import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
 import { listSubtitles, type StoredSubtitle } from "../subtitles/store.ts";
 
 type ItemKind = (typeof items.kind.enumValues)[number];
@@ -123,7 +124,7 @@ function streamLanguages(
 const viewFields = {
   id: items.id,
   kind: items.kind,
-  libraryId: items.libraryId,
+  libraryId: sql<string>`${homeLibraryId()}`,
   parentId: items.parentId,
   title: items.title,
   year: items.year,
@@ -203,7 +204,7 @@ function filtersOf(viewable: string[], query: ItemViewQuery) {
       : viewable.filter((id) => requested.includes(id));
   const { parentId, ancestorId, kinds, ids, search } = query;
   return and(
-    inArray(items.libraryId, scope),
+    inLibraries(scope),
     parentId === undefined
       ? undefined
       : parentId === null

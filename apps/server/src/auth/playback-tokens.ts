@@ -88,7 +88,7 @@ async function liveSession(db: TokenDb, scope: PlaybackScope) {
       userId: sessionRegistry.userId,
       itemId: sessionRegistry.itemId,
       state: sessionRegistry.state,
-      libraryId: items.libraryId,
+      id: items.id,
     })
     .from(sessionRegistry)
     .innerJoin(items, eq(items.id, sessionRegistry.itemId))

@@ -6,8 +6,8 @@ import {
 import { setupAdmin } from "../auth/accounts.ts";
 import { login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { items } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -26,7 +26,7 @@ type MeOutput = Awaited<ReturnType<ThaliaClient["me"]>>;
 type PlainCard = {
   id: string;
   kind: "movie" | "show" | "season" | "episode";
-  libraryId: string;
+  homeLibraryId: string | null;
   title: string;
   year: number | null;
   addedAt: string;
@@ -59,16 +59,14 @@ async function seed(db: Database) {
   if (!library) throw new Error("Library insert returned no row.");
   const rows = [];
   for (const index of [0, 1, 2]) {
-    const [row] = await db
-      .insert(items)
-      .values({
-        libraryId: library.id,
-        kind: "movie",
-        title: `Movie ${index}`,
-        canonicalFolder: `/srv/movies/movie-${index}`,
-        addedAt: new Date(Date.UTC(2026, 0, 10, 0, 0, index)),
-      })
-      .returning();
+    const [row] = await insertItems(db, {
+      withVersion: true,
+      libraryId: library.id,
+      kind: "movie",
+      title: `Movie ${index}`,
+      canonicalFolder: `/srv/movies/movie-${index}`,
+      addedAt: new Date(Date.UTC(2026, 0, 10, 0, 0, index)),
+    });
     if (!row) throw new Error("Item insert returned no row.");
     rows.push(row);
   }

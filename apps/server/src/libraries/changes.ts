@@ -7,12 +7,15 @@ import {
   artwork,
   files,
   itemAncestors,
+  itemFolders,
   items,
   providerIds as providerIdRows,
   type ScanChange,
   versions,
 } from "../db/schema/index.ts";
 import { type DeletedArtworkFile, deleteItemSubtree } from "../db/tree.ts";
+import { itemLocation, setItemLocation } from "./locations.ts";
+import { inLibraries } from "./membership.ts";
 import { absolutePath, assetRoots, rootedKey } from "./roots.ts";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -31,7 +34,7 @@ const rootItemId = async (db: Connection, itemId: string): Promise<string> => {
 /** Reports whether a library-relative path lies in another Show or Movie than the given Item. */
 export async function leavesRoot(
   db: Connection,
-  libraryId: string,
+  rootId: string,
   itemId: string,
   path: string,
 ): Promise<boolean> {
@@ -46,14 +49,15 @@ export async function leavesRoot(
   const [root] = await db
     .select({ id: items.id })
     .from(items)
+    .innerJoin(itemFolders, eq(itemFolders.itemId, items.id))
     .where(
       and(
-        eq(items.libraryId, libraryId),
+        eq(itemFolders.rootId, rootId),
         isNull(items.parentId),
-        inArray(items.canonicalFolder, folders),
+        inArray(itemFolders.canonicalFolder, folders),
       ),
     )
-    .orderBy(desc(sql`length(${items.canonicalFolder})`))
+    .orderBy(desc(sql`length(${itemFolders.canonicalFolder})`))
     .limit(1);
   return root !== undefined && root.id !== (await rootItemId(db, itemId));
 }
@@ -158,7 +162,7 @@ export async function findItemByProviderIds(
     .innerJoin(items, eq(providerIdRows.itemId, items.id))
     .where(
       and(
-        eq(items.libraryId, libraryId),
+        inLibraries([libraryId]),
         eq(providerIdRows.metadataDerived, false),
         or(
           ...pairs.map(([provider, value]) =>
@@ -235,12 +239,13 @@ export async function updateItemCanonicalFolder(
   db: Connection,
   item: typeof items.$inferSelect,
   canonicalFolder: string,
-  titleKey: string = item.titleKey,
+  titleKey: string = "",
+  rootIds?: readonly string[],
 ): Promise<void> {
-  if (item.canonicalFolder === canonicalFolder && item.titleKey === titleKey)
-    return;
   const tailPattern = /(?:^|\/)(\.thalia\/artwork\/.+)$/;
-  const roots = await assetRoots(db, item.id);
+  const roots = (await assetRoots(db, item.id)).filter(
+    (root) => rootIds === undefined || rootIds.includes(root.id),
+  );
   const inRoot = (rootId: string, storageKey: string) =>
     absolutePath(db, { rootId, path: storageKey });
   const rows = await db
@@ -269,9 +274,11 @@ export async function updateItemCanonicalFolder(
         .where(eq(artwork.id, row.id));
     }
   }
+  for (const root of roots)
+    await setItemLocation(db, item.id, root.id, canonicalFolder, titleKey);
   await db
     .update(items)
-    .set({ canonicalFolder, titleKey, updatedAt: new Date() })
+    .set({ updatedAt: new Date() })
     .where(eq(items.id, item.id));
 }
 
@@ -349,7 +356,7 @@ export async function applyScanChanges(
       if (file) {
         // A move into another Show or Movie leaves its source, and the
         // destination folder's scan adds it there. Progress stays behind.
-        if (await leavesRoot(db, libraryId, file.itemId, path)) {
+        if (await leavesRoot(db, change.rootId, file.itemId, path)) {
           const emptied = await removeFile(db, file);
           if (emptied !== undefined) emptiedItemIds.push(emptied);
           continue;
@@ -359,8 +366,14 @@ export async function applyScanChanges(
           .select()
           .from(items)
           .where(eq(items.id, file.itemId));
-        if (item && item.canonicalFolder === posix.dirname(previousPath)) {
-          await updateItemCanonicalFolder(db, item, posix.dirname(path));
+        if (
+          item &&
+          (await itemLocation(db, item.id, change.rootId))?.canonicalFolder ===
+            posix.dirname(previousPath)
+        ) {
+          await updateItemCanonicalFolder(db, item, posix.dirname(path), "", [
+            change.rootId,
+          ]);
         }
         continue;
       }
@@ -369,8 +382,14 @@ export async function applyScanChanges(
         libraryId,
         change.providerIds,
       );
-      if (item && item.canonicalFolder === posix.dirname(previousPath)) {
-        await updateItemCanonicalFolder(db, item, posix.dirname(path));
+      if (
+        item &&
+        (await itemLocation(db, item.id, change.rootId))?.canonicalFolder ===
+          posix.dirname(previousPath)
+      ) {
+        await updateItemCanonicalFolder(db, item, posix.dirname(path), "", [
+          change.rootId,
+        ]);
       }
       continue;
     }
@@ -390,15 +409,17 @@ export async function applyScanChanges(
       found !== undefined
         ? [found]
         : await db
-            .select()
+            .select({ item: items })
             .from(items)
+            .innerJoin(itemFolders, eq(itemFolders.itemId, items.id))
             .where(
               and(
-                eq(items.libraryId, libraryId),
+                eq(itemFolders.rootId, change.rootId),
                 isNull(items.parentId),
-                eq(items.canonicalFolder, path),
+                eq(itemFolders.canonicalFolder, path),
               ),
-            );
+            )
+            .then((rows) => rows.map((row) => row.item));
     for (const item of candidates) {
       // An Item another root still holds loses only this root's Files.
       const held = await db

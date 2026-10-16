@@ -1,6 +1,15 @@
 import type { MetadataProvider, MetadataResult } from "@thalia/plugin-api";
-import { and, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  getTableColumns,
+  inArray,
+  ne,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
+import { lockCatalogue } from "../db/catalogue-lock.ts";
 import type { Database } from "../db/client.ts";
 import {
   contributors,
@@ -12,6 +21,7 @@ import {
   seasons,
   shows,
 } from "../db/schema/index.ts";
+import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
 import { providersForLibrary, readMetadataSettings } from "./settings.ts";
 
 const contributorsLockKey = 0x70656e646374n;
@@ -69,6 +79,7 @@ async function persistMatch(
     idEntries.set(trimmedName, trimmedValue);
   }
   return db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     const [lockedLibrary] = await tx
       .select({ id: libraries.id })
       .from(libraries)
@@ -80,7 +91,15 @@ async function persistMatch(
       .from(items)
       .where(eq(items.id, itemId))
       .for("update");
-    if (!locked || locked.libraryId !== lockedLibrary.id)
+    if (
+      !locked ||
+      (
+        await tx
+          .select({ home: homeLibraryId() })
+          .from(items)
+          .where(eq(items.id, itemId))
+      )[0]?.home !== lockedLibrary.id
+    )
       throw new AuthError("NOT_FOUND");
     await assertProviderIdsUnchanged(tx, itemId, expectedIds);
     if (searched) {
@@ -94,7 +113,7 @@ async function persistMatch(
           .innerJoin(items, eq(items.id, providerIds.itemId))
           .where(
             and(
-              eq(items.libraryId, libraryId),
+              inLibraries([libraryId]),
               eq(items.kind, locked.kind),
               eq(providerIds.provider, name),
               eq(providerIds.value, value),
@@ -354,6 +373,7 @@ async function persistUnmatched(
   expectedIds: readonly OwnedProviderId[],
 ): Promise<MetadataApplication> {
   return db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     const [lockedLibrary] = await tx
       .select({ id: libraries.id })
       .from(libraries)
@@ -365,7 +385,15 @@ async function persistUnmatched(
       .from(items)
       .where(eq(items.id, itemId))
       .for("update");
-    if (!locked || locked.libraryId !== lockedLibrary.id)
+    if (
+      !locked ||
+      (
+        await tx
+          .select({ home: homeLibraryId() })
+          .from(items)
+          .where(eq(items.id, itemId))
+      )[0]?.home !== lockedLibrary.id
+    )
       throw new AuthError("NOT_FOUND");
     await assertProviderIdsUnchanged(tx, itemId, expectedIds);
     await tx
@@ -384,11 +412,11 @@ export async function applyMetadata(
   { provider: selectedProvider }: { provider?: string } = {},
 ): Promise<MetadataApplication> {
   const [item] = await db
-    .select()
+    .select({ ...getTableColumns(items), homeLibraryId: homeLibraryId() })
     .from(items)
     .where(eq(items.id, itemId))
     .limit(1);
-  if (!item) throw new AuthError("NOT_FOUND");
+  if (!item || item.homeLibraryId === null) throw new AuthError("NOT_FOUND");
   const config = await readMetadataSettings(db);
   const idSnapshot = await itemProviderIdSnapshot(db, item.id);
   const snapshotByProvider = new Map(
@@ -406,7 +434,7 @@ export async function applyMetadata(
   let consulted = false;
   const enabled =
     selectedProvider === undefined
-      ? providersForLibrary(config, item.libraryId)
+      ? providersForLibrary(config, item.homeLibraryId)
       : [
           // A Show's manual choice must not override a child's explicit identity.
           ...providers
@@ -426,11 +454,11 @@ export async function applyMetadata(
       });
       // The provider no longer knows the stored id: an admin has to fix it.
       if (result === null)
-        return persistUnmatched(db, item.id, item.libraryId, idSnapshot);
+        return persistUnmatched(db, item.id, item.homeLibraryId, idSnapshot);
       return persistMatch(
         db,
         item.id,
-        item.libraryId,
+        item.homeLibraryId,
         provider.id,
         existingValue,
         1,
@@ -457,7 +485,7 @@ export async function applyMetadata(
     return persistMatch(
       db,
       item.id,
-      item.libraryId,
+      item.homeLibraryId,
       provider.id,
       best.providerId,
       best.confidence,
@@ -469,5 +497,5 @@ export async function applyMetadata(
   // Unmatched means a provider looked and found no confident match. Without
   // one, the Item stays pending so a later key or settings change can fetch it.
   if (!consulted) return { state: "pending", artwork: [] };
-  return persistUnmatched(db, item.id, item.libraryId, idSnapshot);
+  return persistUnmatched(db, item.id, item.homeLibraryId, idSnapshot);
 }

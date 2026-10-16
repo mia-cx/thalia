@@ -5,8 +5,9 @@ import { AuthError } from "../auth/errors.ts";
 import { issuePlaybackToken } from "../auth/playback-tokens.ts";
 import { authenticate, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { items, sessionRegistry, versions } from "../db/schema/index.ts";
+import { sessionRegistry, versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { authorizeHlsRequest, type HlsPrefix, parseHlsPath } from "./hls.ts";
@@ -75,15 +76,12 @@ async function seed(db: Database) {
     rootPath: "/srv/movies",
   });
   if (!library) throw new Error("Library insert returned no row.");
-  const [item] = await db
-    .insert(items)
-    .values({
-      libraryId: library.id,
-      kind: "movie",
-      title: "Movie",
-      canonicalFolder: "/srv/movies/movie",
-    })
-    .returning();
+  const [item] = await insertItems(db, {
+    libraryId: library.id,
+    kind: "movie",
+    title: "Movie",
+    canonicalFolder: "/srv/movies/movie",
+  });
   if (!item) throw new Error("Item insert returned no row.");
   const [version] = await db
     .insert(versions)

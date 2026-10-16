@@ -4,20 +4,26 @@ import { publishEvent } from "../api/events.ts";
 import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
+import { lockCatalogue } from "../db/catalogue-lock.ts";
 import type { Database } from "../db/client.ts";
 import {
   contributors,
   credits,
   episodes,
+  itemAncestors,
   items,
-  libraries,
   movies,
   providerIds,
   seasons,
   shows,
+  versions,
 } from "../db/schema/index.ts";
 import { type DeletedArtworkFile, deleteItemSubtree } from "../db/tree.ts";
 import { setItemProviderIds } from "../libraries/changes.ts";
+import {
+  memberLibraryIds,
+  publishItemChange,
+} from "../libraries/membership.ts";
 import { emitPluginEvents } from "../plugins/events.ts";
 import { removeArtworkFiles } from "./artwork-store.ts";
 import { replaceItemCredits } from "./service.ts";
@@ -52,7 +58,7 @@ export async function editItemMetadata(
   input: ItemMetadataEdit,
 ) {
   const [subject] = await db
-    .select({ libraryId: items.libraryId })
+    .select({ id: items.id })
     .from(items)
     .where(eq(items.id, id));
   if (subject === undefined) throw new AuthError("NOT_FOUND");
@@ -61,12 +67,7 @@ export async function editItemMetadata(
     id,
   });
   await db.transaction(async (tx) => {
-    const [library] = await tx
-      .select({ id: libraries.id })
-      .from(libraries)
-      .where(eq(libraries.id, subject.libraryId))
-      .for("update");
-    if (library === undefined) throw new AuthError("NOT_FOUND");
+    await lockCatalogue(tx);
     const [item] = await tx
       .select()
       .from(items)
@@ -135,10 +136,7 @@ export async function editItemMetadata(
     await emitPluginEvents(tx, [
       { event: "item.updated", payload: { itemId: id, kind: item.kind } },
     ]);
-    await publishEvent(tx, {
-      kind: "library.changed",
-      libraryId: item.libraryId,
-    });
+    await publishItemChange(tx, item.id);
   });
 }
 
@@ -179,6 +177,7 @@ export async function editContributorMetadata(
 ) {
   await requirePermission(db, actorId, "metadata:edit", server);
   await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     const [person] = await tx
       .select({ id: contributors.id })
       .from(contributors)
@@ -204,8 +203,10 @@ export async function editContributorMetadata(
         );
     }
     const affected = await tx
-      .selectDistinct({ libraryId: items.libraryId })
+      .selectDistinct({ libraryId: versions.libraryId })
       .from(items)
+      .innerJoin(itemAncestors, eq(itemAncestors.ancestorId, items.id))
+      .innerJoin(versions, eq(versions.itemId, itemAncestors.descendantId))
       .innerJoin(credits, eq(credits.itemId, items.id))
       .where(eq(credits.contributorId, id));
     for (const library of affected)
@@ -226,28 +227,23 @@ export async function removeCatalogueItems(
   if (ids.length === 0) return;
   const removedArtwork: DeletedArtworkFile[] = [];
   await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     // Library/id order matches scan locking and makes overlapping subtree requests harmless.
     const subjects = await tx
-      .select({ id: items.id, libraryId: items.libraryId })
+      .select({ id: items.id })
       .from(items)
       .where(inArray(items.id, [...ids]))
-      .orderBy(asc(items.libraryId), asc(items.id));
+      .orderBy(asc(items.id));
     for (const item of subjects) {
-      await tx
-        .select({ id: libraries.id })
-        .from(libraries)
-        .where(eq(libraries.id, item.libraryId))
-        .for("update");
       const [current] = await tx
         .select({ id: items.id })
         .from(items)
         .where(eq(items.id, item.id));
       if (current === undefined) continue;
+      const affected = await memberLibraryIds(tx, item.id);
       await deleteItemSubtree(tx, item.id, removedArtwork);
-      await publishEvent(tx, {
-        kind: "library.changed",
-        libraryId: item.libraryId,
-      });
+      for (const libraryId of affected)
+        await publishEvent(tx, { kind: "library.changed", libraryId });
     }
   });
   await removeArtworkFiles(removedArtwork);

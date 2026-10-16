@@ -1,14 +1,9 @@
 import { resolve } from "node:path";
-import { and, asc, eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
 import type { Database } from "../db/client.ts";
-import {
-  files,
-  itemAncestors,
-  items,
-  libraryRoots,
-  versions,
-} from "../db/schema/index.ts";
+import { itemFolders, libraryRoots } from "../db/schema/index.ts";
+import { homeLocation } from "./membership.ts";
 import { type LibraryFile, readLibraryFile } from "./walker.ts";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -73,55 +68,29 @@ export async function locateFile(
   return locateIn(await rootPath(db, file.rootId), file.path);
 }
 
-/**
- * The root an Item's own writes go to, such as artwork and fetched
- * subtitles: the first root holding one of its imported Files or its
- * descendants', else its Library's first root.
- */
-export async function homeRoot(
-  db: Connection,
-  itemId: string,
-): Promise<LibraryRoot> {
-  const [holding] = await db
-    .select(rootFields)
-    .from(itemAncestors)
-    .innerJoin(files, eq(files.itemId, itemAncestors.descendantId))
-    .innerJoin(
-      versions,
-      and(eq(versions.id, files.versionId), eq(versions.origin, "imported")),
-    )
-    .innerJoin(libraryRoots, eq(libraryRoots.id, files.rootId))
-    .where(eq(itemAncestors.ancestorId, itemId))
-    .orderBy(asc(libraryRoots.position), asc(libraryRoots.id))
-    .limit(1);
-  if (holding !== undefined) return holding;
-  const [first] = await db
-    .select(rootFields)
-    .from(items)
-    .innerJoin(libraryRoots, eq(libraryRoots.libraryId, items.libraryId))
-    .where(eq(items.id, itemId))
-    .orderBy(asc(libraryRoots.position), asc(libraryRoots.id))
-    .limit(1);
-  if (first === undefined) throw new AuthError("NOT_FOUND");
-  return first;
+/** Current write location, selected by import age and then root order. */
+export async function homeRoot(db: Connection, itemId: string) {
+  const home = await homeLocation(db, itemId);
+  if (home === undefined) throw new AuthError("NOT_FOUND");
+  return { ...home, id: home.rootId };
 }
 
-/**
- * Where an Item's existing colocated assets may sit: its home root first,
- * then the rest of its Library's roots by position.
- */
-export async function assetRoots(
-  db: Connection,
-  itemId: string,
-): Promise<LibraryRoot[]> {
-  const home = await homeRoot(db, itemId);
-  const [item] = await db
-    .select({ libraryId: items.libraryId })
-    .from(items)
-    .where(eq(items.id, itemId));
-  if (item === undefined) throw new AuthError("NOT_FOUND");
-  const roots = await rootsOf(db, item.libraryId);
-  return [home, ...roots.filter((root) => root.id !== home.id)];
+/** Asset locations retain their own folders so home changes do not strand existing originals. */
+export async function assetRoots(db: Connection, itemId: string) {
+  const locations = await db
+    .select({
+      id: libraryRoots.id,
+      path: libraryRoots.path,
+      canonicalFolder: itemFolders.canonicalFolder,
+    })
+    .from(itemFolders)
+    .innerJoin(libraryRoots, eq(libraryRoots.id, itemFolders.rootId))
+    .where(eq(itemFolders.itemId, itemId))
+    .orderBy(asc(libraryRoots.position), asc(libraryRoots.id));
+  const home = await homeLocation(db, itemId);
+  return locations.sort(
+    (a, b) => Number(b.id === home?.rootId) - Number(a.id === home?.rootId),
+  );
 }
 
 /**

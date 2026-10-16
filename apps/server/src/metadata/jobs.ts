@@ -4,10 +4,10 @@ import type {
   MetadataResult,
 } from "@thalia/plugin-api";
 import { and, eq, lte, sql } from "drizzle-orm";
-import { publishEvent } from "../api/events.ts";
 import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
+import { lockCatalogue } from "../db/catalogue-lock.ts";
 import type { Database } from "../db/client.ts";
 import {
   episodes,
@@ -19,6 +19,7 @@ import {
 } from "../db/schema/index.ts";
 import { createJobQueue } from "../jobs/queue.ts";
 import type { createJobRegistry } from "../jobs/registry.ts";
+import { homeLibraryId, publishItemChange } from "../libraries/membership.ts";
 import { emitPluginEvents } from "../plugins/events.ts";
 import type { PluginRuntime } from "../plugins/runtime.ts";
 import { queueSubtitleFetch } from "../subtitles/jobs.ts";
@@ -97,6 +98,7 @@ const weekMs = 7 * 24 * 60 * 60 * 1000;
 export async function scheduleWeeklyRefresh(db: Database, showId: string) {
   const concurrencyKey = `provider:${showId}`;
   await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     // The Show row lock serializes two fetches of one Show finishing at once.
     const [show] = await tx
       .select({ status: shows.status })
@@ -123,6 +125,7 @@ export async function scheduleWeeklyRefresh(db: Database, showId: string) {
 
 async function emitItemUpdated(db: Database, itemId: string) {
   await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     const [item] = await tx
       .select({ kind: items.kind })
       .from(items)
@@ -152,13 +155,23 @@ async function showChildren(
   const seasonRows = await db
     .select({ id: seasons.itemId })
     .from(seasons)
-    .where(eq(seasons.showId, showId))
+    .where(
+      and(
+        eq(seasons.showId, showId),
+        sql`${homeLibraryId(sql.raw('"seasons"."item_id"'))} is not null`,
+      ),
+    )
     .orderBy(seasons.seasonNumber);
   const episodeRows = await db
     .select({ id: episodes.itemId })
     .from(episodes)
     .innerJoin(seasons, eq(seasons.itemId, episodes.seasonId))
-    .where(eq(seasons.showId, showId))
+    .where(
+      and(
+        eq(seasons.showId, showId),
+        sql`${homeLibraryId(sql.raw('"seasons"."item_id"'))} is not null`,
+      ),
+    )
     .orderBy(seasons.seasonNumber, episodes.episodeNumber);
   return [
     ...seasonRows.map(({ id }) => ({ id, kind: "season" as const })),
@@ -222,8 +235,7 @@ export function registerMetadataJobs(
     // A deleted Show's weekly refresh has nothing left to do.
     if (!item && payload.weekly) return;
     if (!item) throw new AuthError("NOT_FOUND");
-    const publish = () =>
-      publishEvent(db, { kind: "library.changed", libraryId: item.libraryId });
+    const publish = () => publishItemChange(db, item.id);
     try {
       const providers = await metadataProviders(db, { request, plugins });
       const matched = await fetchItem(item, providers, publish, payload);

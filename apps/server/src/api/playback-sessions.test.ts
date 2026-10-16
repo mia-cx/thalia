@@ -6,10 +6,10 @@ import { eq } from "drizzle-orm";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   files,
-  items,
   progress,
   segmentTimelines,
   sessionRegistry,
@@ -36,15 +36,12 @@ async function seed(db: Database) {
     rootPath: "/srv/movies",
   });
   if (!library) throw new Error("Library insert returned no row.");
-  const [item] = await db
-    .insert(items)
-    .values({
-      libraryId: library.id,
-      kind: "movie",
-      title: "Alien",
-      canonicalFolder: "/srv/movies/alien",
-    })
-    .returning();
+  const [item] = await insertItems(db, {
+    libraryId: library.id,
+    kind: "movie",
+    title: "Alien",
+    canonicalFolder: "/srv/movies/alien",
+  });
   if (!item) throw new Error("Item insert returned no row.");
   const [timeline] = await db
     .insert(segmentTimelines)

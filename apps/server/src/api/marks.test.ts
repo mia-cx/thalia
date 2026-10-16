@@ -8,16 +8,15 @@ import { sessionCookieName } from "../auth/http.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
 import { createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem, insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
-  items,
   progress,
   sessionRegistry,
   versions,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { encodeCursor } from "./pagination.ts";
@@ -81,15 +80,12 @@ async function addLibrary(db: Database, name: string) {
 }
 
 async function addItem(db: Database, libraryId: string, title: string) {
-  const [item] = await db
-    .insert(items)
-    .values({
-      libraryId,
-      kind: "movie",
-      title,
-      canonicalFolder: title.toLowerCase(),
-    })
-    .returning();
+  const [item] = await insertItems(db, {
+    libraryId,
+    kind: "movie",
+    title,
+    canonicalFolder: title.toLowerCase(),
+  });
   if (!item) throw new Error("Item insert returned no row.");
   return item;
 }
@@ -205,6 +201,7 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
       const fx = await seed(db);
       const library = await addLibrary(db, "movies");
       const item = await addItem(db, library.id, "Movie");
+      await addVersion(db, library.id, item.id);
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
       try {
         const base = `http://127.0.0.1:${server.apiServer?.port}`;
@@ -249,6 +246,7 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
       const fx = await seed(db);
       const library = await addLibrary(db, "movies");
       const item = await addItem(db, library.id, "Movie");
+      await addVersion(db, library.id, item.id);
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
       try {
         const base = `http://127.0.0.1:${server.apiServer?.port}`;
@@ -445,7 +443,7 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
           itemA.id,
         ]);
         expect(shelf.items[0]).toMatchObject({
-          item: { id: itemE.id, libraryId: library.id },
+          item: { id: itemE.id, homeLibraryId: library.id },
           progress: {
             userId: fx.owner.id,
             versionId: versionE.id,
@@ -614,7 +612,7 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
       }
     }));
 
-  test("deleted versions stay on the shelf with null duration", () =>
+  test("an Item without any surviving Version leaves the shelf", () =>
     withDatabase(async (db, url) => {
       await migrateDatabase(db);
       const fx = await seed(db);
@@ -633,12 +631,7 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
         const base = `http://127.0.0.1:${server.apiServer?.port}`;
         const client = rpcClient(base, fx.keyToken);
         const shelf = await client.shelves.continueWatching({});
-        expect(shelf.items).toHaveLength(1);
-        expect(shelf.items[0]).toMatchObject({
-          item: { id: item.id },
-          progress: { versionId: null, positionSeconds: 10 },
-          durationSeconds: null,
-        });
+        expect(shelf.items).toHaveLength(0);
         const rest = await fetch(`${base}/api/shelves/continue-watching`, {
           headers: { authorization: `Bearer ${fx.keyToken}` },
         });
@@ -675,6 +668,7 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
         extension: { seasonNumber: 1 },
       });
       const e1 = await insertItem(db, {
+        withVersion: true,
         libraryId: library.id,
         kind: "episode",
         parentId: season.id,
@@ -683,6 +677,7 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
         extension: { episodeNumber: 1, episodeEndNumber: null },
       });
       const e2 = await insertItem(db, {
+        withVersion: true,
         libraryId: library.id,
         kind: "episode",
         parentId: season.id,

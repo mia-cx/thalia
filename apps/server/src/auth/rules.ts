@@ -11,6 +11,7 @@ import {
   serverOnlyActions,
   users,
 } from "../db/schema/index.ts";
+import { homeLibraryId } from "../libraries/membership.ts";
 import type { AccessObject } from "./access.ts";
 import { server } from "./access.ts";
 import { AuthError, postgresCode } from "./errors.ts";
@@ -207,9 +208,9 @@ async function itemChain(db: Database, itemId: string) {
     .from(
       sql`(
         with recursive ancestors as (
-          select id, parent_id, library_id, 0 as depth from items where id = ${itemId}
+          select id, parent_id, ${homeLibraryId()} as library_id, 0 as depth from items where id = ${itemId}
           union all
-          select parent.id, parent.parent_id, parent.library_id, child.depth + 1
+          select parent.id, parent.parent_id, child.library_id, child.depth + 1
           from items parent inner join ancestors child on parent.id = child.parent_id
         )
         select * from ancestors

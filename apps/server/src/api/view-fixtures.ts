@@ -1,16 +1,17 @@
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
   artwork,
   favourites,
+  files,
   progress,
   providerIds,
   ratings,
   versions,
 } from "../db/schema/index.ts";
-import { insertItem } from "../db/tree.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 
 async function library(db: Database, name: string, medium: "movies" | "shows") {
@@ -109,6 +110,25 @@ export async function seedBrowse(db: Database) {
     extension: { episodeNumber: 1, airDate: "2022-02-18" },
   });
 
+  await db.insert(versions).values([
+    ...[arrival, heat, secret].map((item) => ({
+      itemId: item.id,
+      itemKind: "movie" as const,
+      libraryId: item.id === secret.id ? hidden.id : films.id,
+      label: "Original",
+      format: "video" as const,
+      bytes: 1n,
+    })),
+    ...[episodeOne, episodeTwo].map((item) => ({
+      itemId: item.id,
+      itemKind: "episode" as const,
+      libraryId: tv.id,
+      label: "Original",
+      format: "video" as const,
+      bytes: 1n,
+    })),
+  ]);
+
   const [poster, showPoster] = await db
     .insert(artwork)
     .values([
@@ -141,6 +161,25 @@ export async function seedBrowse(db: Database) {
     bytes: 1n,
     durationSeconds: 8160,
   });
+  for (const version of await db.select().from(versions)) {
+    const owner = [matrix, arrival, heat, secret, episodeOne, episodeTwo].find(
+      (item) => item.id === version.itemId,
+    );
+    const library = [films, tv, hidden].find(
+      (library) => library.id === version.libraryId,
+    );
+    if (!owner || !library) throw new Error("Missing copy context.");
+    await db.insert(files).values({
+      versionId: version.id,
+      itemId: owner.id,
+      libraryId: library.id,
+      rootId: library.rootId,
+      path: `${owner.canonicalFolder}/${version.id}.mkv`,
+      order: 0,
+      bytes: version.bytes,
+      modifiedAt: new Date(),
+    });
+  }
   await db.insert(progress).values([
     {
       userId: viewer.id,

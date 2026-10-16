@@ -526,7 +526,7 @@ export async function planPlayback(
   ) {
     if (version.lazyIndexPending) {
       await requestKeyframeIndex(db, {
-        libraryId: item.libraryId,
+        libraryId: version.libraryId,
         rootId: file.rootId,
         path: file.path,
       });

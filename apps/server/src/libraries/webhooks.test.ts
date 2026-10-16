@@ -5,6 +5,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { createApiKey, login } from "../auth/sessions.ts";
 import { createDatabase, type Database } from "../db/client.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   files,
@@ -142,7 +143,7 @@ describe.skipIf(!databaseUrl)("servarr webhooks", () => {
           // A move flushed after the write cannot inform that earlier scan.
           if (flush === "before") {
             const [item] = await db
-              .select()
+              .select(itemFixtureFields)
               .from(items)
               .where(sql`${items.parentId} is null`);
             if (!item) throw new Error("Scanned root Item missing.");
@@ -1507,7 +1508,7 @@ describe.skipIf(!databaseUrl)("servarr webhooks", () => {
         }
         expect(ranDebounced).toBe(true);
 
-        const itemRows = await db.select().from(items);
+        const itemRows = await db.select(itemFixtureFields).from(items);
         const show = itemRows.find((row) => row.kind === "show");
         const season = itemRows.find((row) => row.kind === "season");
         const episode = itemRows.find((row) => row.kind === "episode");
@@ -1570,7 +1571,7 @@ describe.skipIf(!databaseUrl)("servarr webhooks", () => {
         const claimed = await queue.claim(["scan"]);
         if (!claimed) throw new Error("Root scan was not claimed.");
         await registry.run(claimed);
-        const show = (await db.select().from(items)).find(
+        const show = (await db.select(itemFixtureFields).from(items)).find(
           (row) => row.kind === "show",
         );
         expect(show).toMatchObject({

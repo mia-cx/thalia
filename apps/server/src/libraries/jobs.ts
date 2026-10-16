@@ -2,6 +2,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { publishEvent } from "../api/events.ts";
 import { AuthError } from "../auth/errors.ts";
 import type { Database } from "../db/client.ts";
+import { itemFolders as locations } from "../db/schema/core.ts";
 import {
   itemAncestors,
   items,
@@ -72,6 +73,8 @@ export async function runScanJob(
       const [pending] = await db
         .select({ id: items.id })
         .from(items)
+        .innerJoin(locations, eq(locations.itemId, items.id))
+        .innerJoin(libraryRoots, eq(libraryRoots.id, locations.rootId))
         .innerJoin(itemAncestors, eq(itemAncestors.descendantId, items.id))
         .where(
           and(
@@ -97,11 +100,13 @@ export async function runScanJob(
     if (folder !== undefined) paths.add(folder);
   }
   const existing = await db
-    .select({ canonicalFolder: items.canonicalFolder })
+    .select({ canonicalFolder: locations.canonicalFolder })
     .from(items)
+    .innerJoin(locations, eq(locations.itemId, items.id))
+    .innerJoin(libraryRoots, eq(libraryRoots.id, locations.rootId))
     .where(
       and(
-        eq(items.libraryId, library.id),
+        eq(libraryRoots.libraryId, library.id),
         eq(items.kind, library.medium === "movies" ? "movie" : "show"),
         isNull(items.parentId),
       ),

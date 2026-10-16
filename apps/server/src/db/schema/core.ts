@@ -74,9 +74,6 @@ export const items = pgTable(
   "items",
   {
     id: id(),
-    libraryId: uuid("library_id")
-      .notNull()
-      .references(() => libraries.id, owned),
     kind: itemKind("kind").notNull(),
     parentId: uuid("parent_id"),
     title: text("title").notNull(),
@@ -86,29 +83,20 @@ export const items = pgTable(
     genres: text("genres").array().notNull().default(sql`'{}'::text[]`),
     tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
     metadataState: metadataState("metadata_state").notNull().default("pending"),
-    canonicalFolder: text("canonical_folder").notNull(),
-    // Empty when the Item folder below the root names one title; otherwise the normalised title and year.
-    titleKey: text("title_key").notNull().default(""),
     addedAt: instant("added_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    unique("items_id_library_unique").on(table.id, table.libraryId),
     unique("items_id_kind_unique").on(table.id, table.kind),
     foreignKey({
       name: "items_parent_fk",
-      columns: [table.parentId, table.libraryId],
-      foreignColumns: [table.id, table.libraryId],
+      columns: [table.parentId],
+      foreignColumns: [table.id],
     })
       .onDelete("cascade")
       .onUpdate("no action"),
     check("items_not_self_parent", sql`${table.parentId} <> ${table.id}`),
     index("items_added_idx").on(table.addedAt.desc(), table.id.desc()),
-    index("items_library_added_idx").on(
-      table.libraryId,
-      table.addedAt.desc(),
-      table.id.desc(),
-    ),
     index("items_kind_added_idx").on(
       table.kind,
       table.addedAt.desc(),
@@ -119,9 +107,32 @@ export const items = pgTable(
       table.addedAt.desc(),
       table.id.desc(),
     ),
-    index("items_folder_idx").on(table.libraryId, table.canonicalFolder),
     index("items_kind_title_idx").on(table.kind, table.title, table.id),
     index("items_title_trgm_idx").using("gin", table.title.op("gin_trgm_ops")),
+  ],
+);
+
+/** Root-specific scan identities and asset locations; only Movies/Shows have a title key. */
+export const itemFolders = pgTable(
+  "item_folders",
+  {
+    id: id(),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => items.id, owned),
+    rootId: uuid("root_id")
+      .notNull()
+      .references(() => libraryRoots.id, owned),
+    canonicalFolder: text("canonical_folder").notNull(),
+    titleKey: text("title_key"),
+  },
+  (table) => [
+    unique("item_folders_identity_unique").on(
+      table.rootId,
+      table.canonicalFolder,
+      table.titleKey,
+    ),
+    unique("item_folders_item_root_unique").on(table.itemId, table.rootId),
   ],
 );
 
@@ -183,7 +194,9 @@ export const versions = pgTable(
     id: id(),
     itemId: uuid("item_id").notNull(),
     itemKind: itemKind("item_kind").notNull(),
-    libraryId: uuid("library_id").notNull(),
+    libraryId: uuid("library_id")
+      .notNull()
+      .references(() => libraries.id, owned),
     label: text("label").notNull(),
     format: format("format").notNull(),
     bytes: bigint("bytes", { mode: "bigint" }).notNull(),
@@ -212,13 +225,6 @@ export const versions = pgTable(
       name: "versions_item_kind_fk",
       columns: [table.itemId, table.itemKind],
       foreignColumns: [items.id, items.kind],
-    })
-      .onDelete("cascade")
-      .onUpdate("no action"),
-    foreignKey({
-      name: "versions_item_library_fk",
-      columns: [table.itemId, table.libraryId],
-      foreignColumns: [items.id, items.libraryId],
     })
       .onDelete("cascade")
       .onUpdate("no action"),

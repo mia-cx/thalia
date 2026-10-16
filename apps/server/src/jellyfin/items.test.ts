@@ -7,6 +7,7 @@ import { createHlsHandler } from "../api/hls.ts";
 import { seedBrowse } from "../api/view-fixtures.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { episodes, items, progress } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { scanShowDirectory } from "../libraries/scan.ts";
@@ -137,8 +138,8 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
       const seasons = await get(
         `/Shows/${guid(s.show.id)}/Seasons?userId=${userId}`,
       );
-      expect(conforms(seasons)).toEqual(["Season 1", "Season 2"]);
-      expect(seasons.Items.map((item) => item.IndexNumber)).toEqual([1, 2]);
+      expect(conforms(seasons)).toEqual(["Season 1"]);
+      expect(seasons.Items.map((item) => item.IndexNumber)).toEqual([1]);
       const episodes = await get(
         `/Shows/${guid(s.show.id)}/Episodes?seasonId=${guid(s.seasonOne.id)}&userId=${userId}`,
       );
@@ -309,7 +310,7 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
         });
         await scanShowDirectory(db, tv.id, "Example");
         const [show] = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "show"));
         const [first, second] = await db

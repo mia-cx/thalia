@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
+import { insertItem } from "../db/item-fixtures.ts";
 import { files, items, versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { homeLibraryId, homeLocation, inLibraries } from "./membership.ts";
 import { addRoot, insertLibraries } from "./testing.ts";
 

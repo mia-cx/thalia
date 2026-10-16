@@ -13,6 +13,7 @@ import {
 import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
+import { lockCatalogue } from "../db/catalogue-lock.ts";
 import type { Database } from "../db/client.ts";
 import type { JsonValue } from "../db/schema/common.ts";
 import {
@@ -37,6 +38,7 @@ import { removeArtworkFiles } from "../metadata/artwork-store.ts";
 import { queueProviderFetch } from "../metadata/jobs.ts";
 import { removeFile } from "./changes.ts";
 import { libraryConcurrencyKey } from "./jobs.ts";
+import { inLibraries } from "./membership.ts";
 import { rootsOf } from "./roots.ts";
 import { pruneEmptiedItems } from "./scan.ts";
 import { enqueueScan } from "./scan-payload.ts";
@@ -204,6 +206,7 @@ export async function createLibrary(
   const name = normalizeName(input.name);
   const paths = normalizeRoots(input.roots);
   return db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     await checkRoots(tx, paths);
     const [library] = await tx
       .insert(libraries)
@@ -275,6 +278,7 @@ export async function updateLibrary(
         );
   const deletedArtwork: DeletedArtworkFile[] = [];
   const library = await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     const [locked] = await tx
       .select({ id: libraries.id })
       .from(libraries)
@@ -355,6 +359,7 @@ export async function deleteLibrary(
 ) {
   await requirePermission(db, actorId, "libraries:manage", server);
   const orphaned = await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     // The row lock serializes this snapshot against concurrent artwork stores.
     const [library] = await tx
       .select({ id: libraries.id })
@@ -362,22 +367,28 @@ export async function deleteLibrary(
       .where(eq(libraries.id, id))
       .for("update");
     if (!library) throw new AuthError("NOT_FOUND");
-    // Colocated artwork sits in the media folder, so only other backends lose it.
+    const affected = await tx
+      .select({ id: items.id })
+      .from(items)
+      .where(inLibraries([id]));
+    const removed: DeletedArtworkFile[] = [];
+    const rootPaths = (await rootsOf(tx, id)).map((root) => root.path);
     const stored = await tx
       .select({ backend: artwork.backend, storageKey: artwork.storageKey })
       .from(artwork)
-      .leftJoin(items, eq(artwork.itemId, items.id))
-      .leftJoin(versions, eq(artwork.versionId, versions.id))
-      .where(
-        and(
-          ne(artwork.backend, "colocated"),
-          or(eq(items.libraryId, id), eq(versions.libraryId, id)),
-        ),
-      );
+      .innerJoin(versions, eq(artwork.versionId, versions.id))
+      .where(and(ne(artwork.backend, "colocated"), eq(versions.libraryId, id)));
+    removed.push(...stored.map((row) => ({ ...row, rootPaths })));
+    await tx.delete(versions).where(eq(versions.libraryId, id));
+    await pruneEmptiedItems(
+      tx,
+      affected.map((item) => item.id),
+      removed,
+    );
     await tx.delete(libraries).where(eq(libraries.id, id));
     await tx.delete(settings).where(eq(settings.key, preferenceKey(id)));
     // Only colocated keys resolve in a root, and those are not removed here.
-    return stored.map((row) => ({ ...row, rootPaths: [""] }));
+    return removed;
   });
   await removeArtworkFiles(orphaned, store);
   return { ok: true };
@@ -422,6 +433,7 @@ export async function writeLibraryPreference(
 ) {
   await requirePermission(db, actorId, "libraries:manage", server);
   await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     const [library] = await tx
       .select({ id: libraries.id })
       .from(libraries)
@@ -466,10 +478,7 @@ export async function rescanLibraries(
       .innerJoin(providerIds, eq(providerIds.itemId, items.id))
       .where(
         and(
-          inArray(
-            items.libraryId,
-            selected.map((library) => library.id),
-          ),
+          inLibraries(selected.map((library) => library.id)),
           or(
             ...ids.map(([provider, value]) =>
               and(

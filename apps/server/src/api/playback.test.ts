@@ -11,12 +11,12 @@ import {
 } from "../auth/playback-tokens.ts";
 import { authenticate, createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
   events,
   files,
-  items,
   jobs,
   segmentTimelines,
   sessionRegistry,
@@ -89,15 +89,12 @@ type MediaOptions = {
 };
 
 async function addItem(db: Database, libraryId: string, title: string) {
-  const [item] = await db
-    .insert(items)
-    .values({
-      libraryId,
-      kind: "movie",
-      title,
-      canonicalFolder: `/srv/movies/${title.toLowerCase()}`,
-    })
-    .returning();
+  const [item] = await insertItems(db, {
+    libraryId,
+    kind: "movie",
+    title,
+    canonicalFolder: `/srv/movies/${title.toLowerCase()}`,
+  });
   if (!item) throw new Error("Item insert returned no row.");
   return item;
 }

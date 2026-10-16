@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { setupAdmin } from "../auth/accounts.ts";
 import { login } from "../auth/sessions.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   artwork,
@@ -15,7 +16,6 @@ import {
   versions,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { listJobs } from "../jobs/queue.ts";
 import { addRoot, insertLibraries } from "../libraries/testing.ts";

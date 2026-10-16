@@ -28,6 +28,7 @@ import {
   ratings,
   versions,
 } from "../db/schema/index.ts";
+import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
 
 const cursorPrefix = "cw1.";
 type MarksDb = Pick<
@@ -46,7 +47,7 @@ const instantText = (column: SQLWrapper) =>
 
 async function viewableItem(db: MarksDb, userId: string, itemId: string) {
   const [item] = await db
-    .select({ libraryId: items.libraryId })
+    .select({ homeLibraryId: homeLibraryId() })
     .from(items)
     .where(eq(items.id, itemId))
     .limit(1);
@@ -398,7 +399,7 @@ export async function continueWatching(
       item: {
         id: items.id,
         kind: items.kind,
-        libraryId: items.libraryId,
+        homeLibraryId: homeLibraryId(),
         title: items.title,
         year: items.year,
         addedAt: instantText(items.addedAt),
@@ -433,7 +434,7 @@ export async function continueWatching(
         eq(progress.completed, false),
         gt(progress.positionSeconds, 0),
         isNotNull(progress.playedAt),
-        inArray(items.libraryId, viewable),
+        inLibraries(viewable),
         key === undefined
           ? undefined
           : sql`(${progress.playedAt}, ${items.id}) < (${key.addedAt}::timestamptz, ${key.id}::uuid)`,

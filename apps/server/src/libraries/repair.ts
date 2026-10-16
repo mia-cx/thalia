@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
+import { libraryRoots, itemFolders as locations } from "../db/schema/core.ts";
 import { files, items, jobs, libraries, versions } from "../db/schema/index.ts";
 import { createJobQueue } from "../jobs/queue.ts";
 import type { ScanRules } from "../mediums/medium.ts";
@@ -186,10 +187,15 @@ export function createLibraryRepair(db: Database, options: RepairOptions = {}) {
         }
       }
       const existing = await db
-        .select({ canonicalFolder: items.canonicalFolder })
+        .select({ canonicalFolder: locations.canonicalFolder })
         .from(items)
+        .innerJoin(locations, eq(locations.itemId, items.id))
+        .innerJoin(libraryRoots, eq(libraryRoots.id, locations.rootId))
         .where(
-          and(eq(items.libraryId, library.id), eq(items.kind, medium.itemKind)),
+          and(
+            eq(libraryRoots.libraryId, library.id),
+            eq(items.kind, medium.itemKind),
+          ),
         );
       const itemFolders = new Set(existing.map((item) => item.canonicalFolder));
       const next = new Map<string, bigint>();

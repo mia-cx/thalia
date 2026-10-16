@@ -7,8 +7,9 @@ import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
 import { createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem, insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { accessRules, artwork, items } from "../db/schema/index.ts";
+import { accessRules, artwork } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -56,16 +57,14 @@ async function seed(db: Database) {
   if (!library) throw new Error("Library insert returned no row.");
   const rows = [];
   for (const index of [0, 1, 2, 3, 4]) {
-    const [row] = await db
-      .insert(items)
-      .values({
-        libraryId: library.id,
-        kind: "movie",
-        title: `Movie ${index}`,
-        canonicalFolder: `/srv/movies/movie-${index}`,
-        addedAt: new Date(Date.UTC(2026, 0, 10, 0, 0, index)),
-      })
-      .returning();
+    const [row] = await insertItems(db, {
+      withVersion: true,
+      libraryId: library.id,
+      kind: "movie",
+      title: `Movie ${index}`,
+      canonicalFolder: `/srv/movies/movie-${index}`,
+      addedAt: new Date(Date.UTC(2026, 0, 10, 0, 0, index)),
+    });
     if (!row) throw new Error("Item insert returned no row.");
     rows.push(row);
   }
@@ -123,26 +122,22 @@ describe.skipIf(!databaseUrl)("api router", () => {
     withDatabase(async (db, url) => {
       await migrateDatabase(db);
       const { token, library, rows } = await seed(db);
-      const [early] = await db
-        .insert(items)
-        .values({
-          libraryId: library.id,
-          kind: "movie",
-          title: "Microsecond Early",
-          canonicalFolder: "/srv/movies/us-early",
-          addedAt: sql`${"2027-01-01T00:00:00.123456Z"}::timestamptz`,
-        })
-        .returning();
-      const [late] = await db
-        .insert(items)
-        .values({
-          libraryId: library.id,
-          kind: "movie",
-          title: "Microsecond Late",
-          canonicalFolder: "/srv/movies/us-late",
-          addedAt: sql`${"2027-01-01T00:00:00.123789Z"}::timestamptz`,
-        })
-        .returning();
+      const [early] = await insertItems(db, {
+        withVersion: true,
+        libraryId: library.id,
+        kind: "movie",
+        title: "Microsecond Early",
+        canonicalFolder: "/srv/movies/us-early",
+        addedAt: sql`${"2027-01-01T00:00:00.123456Z"}::timestamptz`,
+      });
+      const [late] = await insertItems(db, {
+        withVersion: true,
+        libraryId: library.id,
+        kind: "movie",
+        title: "Microsecond Late",
+        canonicalFolder: "/srv/movies/us-late",
+        addedAt: sql`${"2027-01-01T00:00:00.123789Z"}::timestamptz`,
+      });
       if (!early || !late) throw new Error("Item insert returned no row.");
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
       try {
@@ -275,17 +270,32 @@ describe.skipIf(!databaseUrl)("api router", () => {
       if (!other) throw new Error("Library insert returned no row.");
       const otherRows = [];
       for (const index of [0, 1]) {
-        const [row] = await db
-          .insert(items)
-          .values({
-            libraryId: other.id,
-            kind: "show",
-            title: `Show ${index}`,
-            canonicalFolder: `/srv/shows/show-${index}`,
-            addedAt: new Date(Date.UTC(2026, 1, 10, 0, 0, index)),
-          })
-          .returning();
+        const [row] = await insertItems(db, {
+          withVersion: true,
+          libraryId: other.id,
+          kind: "show",
+          title: `Show ${index}`,
+          canonicalFolder: `/srv/shows/show-${index}`,
+          addedAt: new Date(Date.UTC(2026, 1, 10, 0, 0, index)),
+        });
         if (!row) throw new Error("Item insert returned no row.");
+        const season = await insertItem(db, {
+          libraryId: other.id,
+          kind: "season",
+          parentId: row.id,
+          title: "Season",
+          canonicalFolder: `show-${index}`,
+          extension: { seasonNumber: 1 },
+        });
+        await insertItem(db, {
+          withVersion: true,
+          libraryId: other.id,
+          kind: "episode",
+          parentId: season.id,
+          title: "Episode",
+          canonicalFolder: `show-${index}`,
+          extension: { episodeNumber: 1 },
+        });
         otherRows.push(row);
       }
       const viewer = await createLocalUser(db, admin.id, {
@@ -302,7 +312,7 @@ describe.skipIf(!databaseUrl)("api router", () => {
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
       try {
         const base = `http://127.0.0.1:${server.apiServer?.port}`;
-        const page = await rpcClient(base, token).items.list({});
+        const page = await rpcClient(base, token).items.list({ kind: "show" });
         expect(page.items.map((item) => item.id)).toEqual(
           otherRows.map((row) => row.id).reverse(),
         );

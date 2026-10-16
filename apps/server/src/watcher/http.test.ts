@@ -5,6 +5,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import { setupAdmin } from "../auth/accounts.ts";
 import { createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem, itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   files,
@@ -18,7 +19,6 @@ import {
   versions,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { createJobQueue, listJobs, watcherHeartbeatMs } from "../jobs/queue.ts";
 import { scanShowDirectory } from "../libraries/scan.ts";
 import { updateLibrary } from "../libraries/service.ts";
@@ -378,7 +378,7 @@ describe.skipIf(!databaseUrl)("watcher scans", () => {
         );
         expect(await response?.json()).toEqual({ state: "completed" });
 
-        const [item] = await db.select().from(items);
+        const [item] = await db.select(itemFixtureFields).from(items);
         expect(item).toMatchObject({
           kind: "movie",
           canonicalFolder: "Alien (1979)",
@@ -461,7 +461,10 @@ describe.skipIf(!databaseUrl)("watcher scans", () => {
             path: oldShow,
           });
           await finishScan(oldPath, oldShow);
-          const before = await db.select().from(items).orderBy(asc(items.id));
+          const before = await db
+            .select(itemFixtureFields)
+            .from(items)
+            .orderBy(asc(items.id));
           expect(before.map((item) => item.kind).sort()).toEqual([
             "episode",
             "season",
@@ -514,7 +517,10 @@ describe.skipIf(!databaseUrl)("watcher scans", () => {
           });
           await finishScan(newPath, newShow);
 
-          const after = await db.select().from(items).orderBy(asc(items.id));
+          const after = await db
+            .select(itemFixtureFields)
+            .from(items)
+            .orderBy(asc(items.id));
           expect(
             after.map(({ id, kind, parentId, canonicalFolder }) => ({
               id,
@@ -785,7 +791,7 @@ describe.skipIf(!databaseUrl)("watcher scans", () => {
         state: "queued",
         error: "Library roots changed before scan write.",
       });
-      expect(await db.select().from(items)).toMatchObject([
+      expect(await db.select(itemFixtureFields).from(items)).toMatchObject([
         { id: item.id, canonicalFolder: "Alien (1979)" },
       ]);
       expect(await db.select().from(progress)).toEqual(before);

@@ -307,7 +307,7 @@ export function createChangeDebouncer(
           );
         if (
           file !== undefined &&
-          (await leavesRoot(db, libraryId, file.itemId, scan.path))
+          (await leavesRoot(db, rootId, file.itemId, scan.path))
         )
           resolved.push({
             libraryId,

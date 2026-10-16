@@ -1,11 +1,11 @@
 import type { MetadataResult } from "@thalia/plugin-api";
 import { and, eq } from "drizzle-orm";
-import { publishEvent } from "../api/events.ts";
 import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { artwork, items } from "../db/schema/index.ts";
+import { publishItemChange } from "../libraries/membership.ts";
 import {
   ArtworkInputError,
   readArtworkOriginal,
@@ -22,7 +22,7 @@ async function owner(
   permission: "view" | "metadata:edit",
 ) {
   const [item] = await db
-    .select({ libraryId: items.libraryId })
+    .select({ id: items.id })
     .from(items)
     .where(eq(items.id, itemId));
   await requirePermission(
@@ -75,10 +75,7 @@ export async function uploadItemImage(
       throw new AuthError("INVALID_INPUT");
     throw error;
   }
-  await publishEvent(db, {
-    kind: "library.changed",
-    libraryId: item.libraryId,
-  });
+  await publishItemChange(db, itemId);
 }
 
 /** Deletes one selected original and its stored file after checking metadata-management permission. */
@@ -91,8 +88,5 @@ export async function deleteItemImage(
   const item = await owner(db, actorId, itemId, "metadata:edit");
   if (item === undefined) return;
   if (await removeSelectedArtwork(db, itemId, type))
-    await publishEvent(db, {
-      kind: "library.changed",
-      libraryId: item.libraryId,
-    });
+    await publishItemChange(db, itemId);
 }

@@ -12,8 +12,10 @@ const { detail }: { detail: ItemDetail } = $props();
 
 // Only a caller holding transcoding:manage can read the policy; for anyone
 // else the control stays away.
-const policy = resource(() =>
-  client.libraries.storedVersions({ id: detail.libraryId }),
+const policy = resource(async () =>
+  detail.homeLibraryId === null
+    ? null
+    : client.libraries.storedVersions({ id: detail.homeLibraryId }),
 );
 const hidden = $derived(
   policy.failure?.code === "FORBIDDEN" ||
@@ -66,7 +68,7 @@ async function request() {
     <p class="text-subheadline text-label-secondary">
       This library stores no Versions.
       <a
-        href="/admin/libraries/{detail.libraryId}"
+        href="/admin/libraries/{detail.homeLibraryId}"
         class="text-label underline underline-offset-2"
         >Choose its stored Versions</a
       >

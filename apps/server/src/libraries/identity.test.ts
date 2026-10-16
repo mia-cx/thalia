@@ -6,7 +6,11 @@ import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/bun-sql/migrator";
 import type { Database } from "../db/client.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import { databaseUrl, withDatabase } from "../db/testing.ts";
+import {
+  databaseUrl,
+  migrateBeforeCatalogueReset,
+  withDatabase,
+} from "../db/testing.ts";
 import { createJobQueue } from "../jobs/queue.ts";
 import { createJobRegistry } from "../jobs/registry.ts";
 import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
@@ -71,7 +75,7 @@ const rowKey = (table: string, row: Record<string, unknown>) =>
 
 describe.skipIf(!databaseUrl)("pre-117 scan identity", () => {
   test(
-    "the captured scan migrates to title keys and rescans unchanged",
+    "historical identities survive title keys, then reset and rescan into server Items",
     () =>
       withDatabase(
         async (db) => {
@@ -165,7 +169,7 @@ describe.skipIf(!databaseUrl)("pre-117 scan identity", () => {
             for (const table of tables)
               before.set(table, await snapshot(db, table));
 
-            await migrateDatabase(db);
+            await migrateBeforeCatalogueReset(db);
 
             // The migration only adds title_key, defaulting to ''.
             for (const table of tables) {
@@ -187,6 +191,21 @@ describe.skipIf(!databaseUrl)("pre-117 scan identity", () => {
               new Set([""]),
             );
 
+            const catalogueIds = new Set(
+              (before.get("items") ?? []).map((row) => row.id),
+            );
+            const libraryCount = (await snapshot(db, "libraries")).length;
+            const rootCount = (await snapshot(db, "library_roots")).length;
+            await migrateDatabase(db);
+            for (const table of [
+              ...tables,
+              "artwork",
+              "credits",
+              "session_registry",
+            ])
+              expect(await snapshot(db, table)).toHaveLength(0);
+            expect(await snapshot(db, "libraries")).toHaveLength(libraryCount);
+            expect(await snapshot(db, "library_roots")).toHaveLength(rootCount);
             // Rescan both Libraries through the job queue.
             const queue = createJobQueue(db);
             const registry = createJobRegistry();
@@ -205,95 +224,19 @@ describe.skipIf(!databaseUrl)("pre-117 scan identity", () => {
               }
             }
 
-            const afterItems = await snapshot(db, "items");
-            expect(afterItems).toHaveLength(before.get("items")?.length ?? -1);
-            for (const row of afterItems) {
-              const seeded = before
-                .get("items")
-                ?.find((old) => old.id === row.id);
-              expect(seeded).toBeDefined();
-              expect(row).toMatchObject({
-                kind: seeded?.kind,
-                parent_id: seeded?.parent_id,
-                canonical_folder: seeded?.canonical_folder,
-                title_key: "",
-                title: seeded?.title,
-                overview: seeded?.overview,
-                year: seeded?.year,
-                metadata_state: seeded?.metadata_state,
-              });
-            }
-
-            for (const table of [
-              "item_ancestors",
-              "movies",
-              "shows",
-              "seasons",
-              "episodes",
-              "segment_timelines",
-              "versions",
-              "files",
-              "streams",
-              "provider_ids",
-              "progress",
-              "favourites",
-              "ratings",
-            ]) {
-              expect(await snapshot(db, table)).toHaveLength(
-                before.get(table)?.length ?? -1,
-              );
-            }
-
-            const afterVersions = await snapshot(db, "versions");
-            const versionsByItem = (rows: Record<string, unknown>[]) =>
-              new Map(
-                rowsOf("items").map((item) => [
-                  String(item.id),
-                  rows
-                    .filter((row) => row.item_id === item.id)
-                    .map((row) => row.id)
-                    .sort(),
-                ]),
-              );
-            expect(versionsByItem(afterVersions)).toEqual(
-              versionsByItem(before.get("versions") ?? []),
+            const rescanned = await snapshot(db, "items");
+            expect(rescanned.length).toBeGreaterThan(0);
+            expect(rescanned.some((row) => catalogueIds.has(row.id))).toBe(
+              false,
             );
-
-            const afterFiles = await snapshot(db, "files");
-            const fileShape = (row: Record<string, unknown>) => ({
-              version_id: row.version_id,
-              item_id: row.item_id,
-              root_id: row.root_id,
-              path: row.path,
-              order: row.order,
-            });
-            expect(
-              new Map(afterFiles.map((row) => [row.id, fileShape(row)])),
-            ).toEqual(
-              new Map(
-                (before.get("files") ?? []).map((row) => [
-                  row.id,
-                  fileShape(row),
-                ]),
-              ),
+            expect(await snapshot(db, "files")).toHaveLength(
+              before.get("files")?.length ?? -1,
             );
-
-            expect(
-              new Set((await snapshot(db, "streams")).map((row) => row.id)),
-            ).toEqual(
-              new Set((before.get("streams") ?? []).map((row) => row.id)),
-            );
-            expect(await snapshot(db, "provider_ids")).toEqual(
-              before.get("provider_ids") ?? [],
-            );
-            for (const table of ["progress", "favourites", "ratings"]) {
-              expect(await snapshot(db, table)).toEqual(
-                (before.get(table) ?? []).map((row) =>
-                  // Existing numeric ratings gain no binary opinion during migration.
-                  table === "ratings" ? { ...row, liked: null } : row,
-                ),
-              );
-            }
+            const empty =
+              await db.execute(sql`select id from items i where not exists (
+              select 1 from item_ancestors a join versions v on v.item_id = a.descendant_id where a.ancestor_id = i.id
+            )`);
+            expect(empty).toHaveLength(0);
           } finally {
             await rm(dir, { recursive: true, force: true });
           }

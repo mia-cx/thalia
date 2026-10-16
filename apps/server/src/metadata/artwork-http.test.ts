@@ -7,10 +7,10 @@ import { startApiServer } from "../api.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { accessRules, artwork, settings } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import type { ArtworkStoreConfig } from "./artwork-backends.ts";
 import { type ArtworkResize, createArtworkHandler } from "./artwork-http.ts";
@@ -56,6 +56,7 @@ async function seed(
   });
   if (!library) throw new Error("Fixture library missing.");
   const item = await insertItem(db, {
+    withVersion: true,
     libraryId: library.id,
     kind: "movie",
     title: "Alien",

@@ -7,6 +7,7 @@ import {
 } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { items, progress, sessionRegistry } from "../db/schema/index.ts";
+import { inLibraries } from "../libraries/membership.ts";
 
 /** Live playback expires from activity listings after five minutes without a player heartbeat. */
 export const playbackActivitySeconds = 300;
@@ -49,7 +50,7 @@ export async function listPlaybackActivity(
       and(
         inArray(sessionRegistry.credentialId, credentialIds),
         admin ? undefined : eq(sessionRegistry.userId, actorId),
-        inArray(items.libraryId, libraries),
+        inLibraries(libraries),
         ne(sessionRegistry.state, "stopped"),
         gt(
           sessionRegistry.lastSeenAt,

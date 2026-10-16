@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { setupAdmin } from "../auth/accounts.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem, itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   artwork,
@@ -17,7 +18,6 @@ import {
   shows,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { createJobQueue } from "../jobs/queue.ts";
 import { createJobRegistry } from "../jobs/registry.ts";
 import { registerLibraryJobs } from "../libraries/jobs.ts";
@@ -76,6 +76,7 @@ async function fixture(db: Database, rootPath: string) {
   });
   if (!library) throw new Error("Fixture library missing.");
   const item = await insertItem(db, {
+    withVersion: true,
     libraryId: library.id,
     kind: "movie",
     title: "Alien",
@@ -96,6 +97,7 @@ async function showFixture(db: Database, rootPath: string) {
   });
   if (!library) throw new Error("Fixture library missing.");
   const show = await insertItem(db, {
+    withVersion: true,
     libraryId: library.id,
     kind: "show",
     title: "Breaking Bad",
@@ -106,6 +108,7 @@ async function showFixture(db: Database, rootPath: string) {
     .insert(providerIds)
     .values({ provider: "tvdb", value: "81189", itemId: show.id });
   const season = await insertItem(db, {
+    withVersion: true,
     libraryId: library.id,
     kind: "season",
     parentId: show.id,
@@ -114,6 +117,7 @@ async function showFixture(db: Database, rootPath: string) {
     extension: { seasonNumber: 1 },
   });
   const episode = await insertItem(db, {
+    withVersion: true,
     libraryId: library.id,
     kind: "episode",
     parentId: season.id,
@@ -156,7 +160,10 @@ function mockRequest(responder: (url: URL) => Response) {
 }
 
 async function storedItem(db: Database, itemId: string) {
-  const [item] = await db.select().from(items).where(eq(items.id, itemId));
+  const [item] = await db
+    .select(itemFixtureFields)
+    .from(items)
+    .where(eq(items.id, itemId));
   if (!item) throw new Error("Stored item missing.");
   return item;
 }
@@ -284,7 +291,7 @@ describe.skipIf(!databaseUrl)("provider-fetch job", () => {
         expect(claimedScan?.id).toBe(scanJob.id);
         await registry.run(claimedScan ?? scanJob);
         await queue.complete(claimedScan ?? scanJob);
-        const [item] = await db.select().from(items);
+        const [item] = await db.select(itemFixtureFields).from(items);
         if (!item) throw new Error("Scanned item missing.");
         const claimedFetch = await queue.claim(["provider-fetch"]);
         if (!claimedFetch) throw new Error("provider-fetch was not enqueued.");
@@ -420,6 +427,7 @@ describe.skipIf(!databaseUrl)("provider-fetch job", () => {
           throw new Error(`Unexpected request to ${url.hostname}.`);
         });
         const item = await insertItem(db, {
+          withVersion: true,
           libraryId: library.id,
           kind: "movie",
           title: "Alien",
@@ -481,6 +489,7 @@ describe.skipIf(!databaseUrl)("provider-fetch job", () => {
           throw new Error(`Unexpected request to ${url.hostname}.`);
         });
         const item = await insertItem(db, {
+          withVersion: true,
           libraryId: library.id,
           kind: "movie",
           title: "Alien",
@@ -526,6 +535,7 @@ describe.skipIf(!databaseUrl)("provider-fetch job", () => {
           throw new Error(`Unexpected request to ${url.hostname}.`);
         });
         const item = await insertItem(db, {
+          withVersion: true,
           libraryId: library.id,
           kind: "movie",
           title: "Alien",
@@ -600,7 +610,7 @@ describe.skipIf(!databaseUrl)("provider-fetch job", () => {
         const claimedScan = await queue.claim(["scan"]);
         await registry.run(claimedScan ?? scanJob);
         await queue.complete(claimedScan ?? scanJob);
-        const [item] = await db.select().from(items);
+        const [item] = await db.select(itemFixtureFields).from(items);
         if (!item) throw new Error("Scanned item missing.");
         const claimedFetch = await queue.claim(["provider-fetch"]);
         if (!claimedFetch) throw new Error("provider-fetch was not enqueued.");
@@ -684,7 +694,7 @@ describe.skipIf(!databaseUrl)("provider-fetch job", () => {
         const claimedScan = await queue.claim(["scan"]);
         await registry.run(claimedScan ?? scanJob);
         await queue.complete(claimedScan ?? scanJob);
-        const [item] = await db.select().from(items);
+        const [item] = await db.select(itemFixtureFields).from(items);
         if (!item) throw new Error("Scanned item missing.");
         const claimedFetch = await queue.claim(["provider-fetch"]);
         if (!claimedFetch) throw new Error("provider-fetch was not enqueued.");
@@ -988,7 +998,7 @@ describe.skipIf(!databaseUrl)("provider-fetch job", () => {
         await registry.run(claimedScan ?? scanJob);
         await queue.complete(claimedScan ?? scanJob);
         const [show] = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "show"));
         if (!show) throw new Error("Scanned Show missing.");

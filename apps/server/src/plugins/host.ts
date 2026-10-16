@@ -13,7 +13,16 @@ import type {
   PluginResponse,
   SubtitleProvider,
 } from "@thalia/plugin-api";
-import { and, asc, eq, gt, inArray, lt, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  getTableColumns,
+  gt,
+  inArray,
+  lt,
+  type SQL,
+} from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import type { JsonObject } from "../db/schema/common.ts";
 import {
@@ -24,6 +33,7 @@ import {
   providerIds,
   versions,
 } from "../db/schema/index.ts";
+import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
 import { type LibraryRoot, rootsOf } from "../libraries/roots.ts";
 import { assertPlainData } from "./boundary.ts";
 import { anyHost } from "./manifest.ts";
@@ -132,7 +142,7 @@ async function readItems(
   limit: number,
 ): Promise<Item[]> {
   const rows = await db
-    .select()
+    .select({ ...getTableColumns(items), homeLibraryId: homeLibraryId() })
     .from(items)
     .where(where)
     .orderBy(asc(items.id))
@@ -154,7 +164,7 @@ async function readItems(
   ]);
   return rows.map((row) => ({
     id: row.id,
-    libraryId: row.libraryId,
+    homeLibraryId: row.homeLibraryId,
     kind: row.kind,
     parentId: row.parentId,
     title: row.title,
@@ -169,6 +179,7 @@ async function readItems(
       .filter((version) => version.itemId === row.id)
       .map((version) => ({
         id: version.id,
+        libraryId: version.libraryId,
         label: version.label,
         format: version.format,
         bytes: Number(version.bytes),
@@ -204,7 +215,7 @@ function readQuery(raw: ItemQuery) {
       query.kind === undefined ? undefined : inArray(items.kind, query.kind),
       query.libraryId === undefined
         ? undefined
-        : eq(items.libraryId, requireUuid(query.libraryId, "query.libraryId")),
+        : inLibraries([requireUuid(query.libraryId, "query.libraryId")]),
       query.parentId === undefined
         ? undefined
         : eq(items.parentId, requireUuid(query.parentId, "query.parentId")),

@@ -5,6 +5,7 @@ import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import type { JsonObject } from "../db/schema/common.ts";
 import { files, items, jobs, libraries, settings } from "../db/schema/index.ts";
+import { homeLibraryId } from "../libraries/membership.ts";
 import {
   type IdleWindow,
   idleWindowAt,
@@ -113,18 +114,24 @@ export async function requestStoredVersion(
 ) {
   await requirePermission(db, actorId, "transcoding:manage", server);
   const [item] = await db
-    .select({ libraryId: items.libraryId })
+    .select({ homeLibraryId: homeLibraryId() })
     .from(items)
     .where(eq(items.id, itemId))
     .limit(1);
-  if (item === undefined) throw new AuthError("NOT_FOUND");
-  const library = await loadLibrary(db, item.libraryId);
+  if (item === undefined || item.homeLibraryId === null)
+    throw new AuthError("NOT_FOUND");
+  const library = await loadLibrary(db, item.homeLibraryId);
   // Rungs are defined by the policy; a manual request only skips its condition.
   const rung = readStoredVersionPolicy(library.configuration)?.rungs.find(
     (candidate) => candidate.name === rungName,
   );
   if (rung === undefined) throw new AuthError("INVALID_INPUT");
-  const source = (await bestSources(db, eq(files.itemId, itemId))).get(itemId);
+  const source = (
+    await bestSources(
+      db,
+      and(eq(files.itemId, itemId), eq(files.libraryId, item.homeLibraryId)),
+    )
+  ).get(itemId);
   if (source === undefined || !rungFits(rung, source.video))
     throw new AuthError("CONFLICT");
   return { queued: await requestStore(db, source.fileId, rung.name) };

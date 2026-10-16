@@ -8,6 +8,7 @@ import { startApiServer } from "../api.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { removeArtworkFiles } from "../metadata/artwork-store.ts";
 import { createDatabase, type Database, probeDatabase } from "./client.ts";
+import { insertItem } from "./item-fixtures.ts";
 import { migrateDatabase } from "./migrate.ts";
 import {
   artwork,
@@ -36,7 +37,6 @@ import { databaseUrl, withDatabase } from "./testing.ts";
 import {
   type DeletedArtworkFile,
   deleteItemSubtree,
-  insertItem,
   moveItem,
 } from "./tree.ts";
 
@@ -59,6 +59,7 @@ async function fixture(db: Database) {
     });
     const second = await insertItem(tx, {
       ...base,
+      canonicalFolder: "/shows/other",
       kind: "show",
       extension: {},
     });
@@ -181,7 +182,7 @@ describe.skipIf(!databaseUrl)("Postgres schema", () => {
         await migrateDatabase(db);
         const before = await migrationState(db);
         expect(before.journal).toHaveLength(migrationJournal.entries.length);
-        expect(before.tables).toHaveLength(36);
+        expect(before.tables).toHaveLength(37);
         expect(before.extensions).toEqual([
           { extname: "btree_gist" },
           { extname: "pg_trgm" },
@@ -236,7 +237,7 @@ describe.skipIf(!databaseUrl)("Postgres schema", () => {
             ]);
             const state = await migrationState(db);
             expect(state.journal).toHaveLength(migrationJournal.entries.length);
-            expect(state.tables).toHaveLength(36);
+            expect(state.tables).toHaveLength(37);
             expect(state.groups).toHaveLength(2);
           } finally {
             for (const runner of runners) runner.kill();
@@ -264,11 +265,8 @@ describe.skipIf(!databaseUrl)("Postgres schema", () => {
         "Parent kind",
       );
       await expect(moveItem(db, f.season.id, f.movie.id)).rejects.toThrow(
-        "Parent kind or library",
+        "Parent kind",
       );
-      await expect(
-        insertItem(db, { ...f.base, kind: "movie", extension: {} }),
-      ).rejects.toThrow("medium");
 
       await moveItem(db, f.season.id, f.second.id);
       await expectClosure(db);
@@ -547,12 +545,11 @@ describe.skipIf(!databaseUrl)("Postgres schema", () => {
             .execute(),
         ).rejects.toMatchObject({ cause: { errno: "23503" } });
       }
-      await expect(
-        db
-          .insert(versions)
-          .values({ ...values, libraryId: f.base.libraryId })
-          .execute(),
-      ).rejects.toMatchObject({ cause: { errno: "23503" } });
+      // A copy may belong to another Library; File/Version and File/root ownership still agree.
+      await db
+        .insert(versions)
+        .values({ ...values, libraryId: f.base.libraryId })
+        .execute();
       const [source] = await db.insert(versions).values(values).returning();
       if (!source) throw new Error("Source Version missing.");
       await expect(

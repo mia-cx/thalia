@@ -1,9 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import type { Database } from "../db/client.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { createJobQueue } from "../jobs/queue.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { fetchPlugin, installPlugin } from "./install.ts";

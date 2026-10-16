@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { insertItem } from "../db/item-fixtures.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { seedBrowse } from "./view-fixtures.ts";
 import {
   type ItemViewQuery,
@@ -39,7 +39,7 @@ describe.skipIf(!databaseUrl)("item views", () => {
       });
       expect(
         await titles({ ancestorId: s.show.id, kinds: ["season"] }),
-      ).toEqual({ titles: ["Season 1", "Season 2"], total: 2 });
+      ).toEqual({ titles: ["Season 1"], total: 1 });
       expect(
         (await titles({ ancestorId: s.show.id, kinds: ["episode"] })).titles,
       ).toEqual(["Good News About Hell", "Half Loop"]);
@@ -63,6 +63,7 @@ describe.skipIf(!databaseUrl)("item views", () => {
       ).toBe("Severance");
 
       await insertItem(db, {
+        withVersion: true,
         libraryId: s.films.id,
         kind: "movie",
         title: "2001: A Space Odyssey",

@@ -5,6 +5,7 @@ import type { MetadataProvider } from "@thalia/plugin-api";
 import { and, eq, inArray } from "drizzle-orm";
 import { createHlsHandler } from "../api/hls.ts";
 import { seedBrowse } from "../api/view-fixtures.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { artwork, items, providerIds } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { createJobQueue } from "../jobs/queue.ts";
@@ -508,7 +509,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
           ids.filter((row) => row.itemId === seed.episodeTwo.id),
         ).toHaveLength(1);
         const [pinnedChild] = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.id, seed.episodeTwo.id));
         expect(pinnedChild?.title).toBe("Other pinned-episode");

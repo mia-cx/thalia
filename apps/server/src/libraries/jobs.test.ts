@@ -13,6 +13,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { setupAdmin } from "../auth/accounts.ts";
 import { AuthError } from "../auth/errors.ts";
 import type { Database } from "../db/client.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   events,
@@ -152,7 +153,9 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
                 ),
               );
             if (!rootItem) throw new Error("Fixture root Item missing.");
-            const itemIdsBefore = (await db.select().from(items))
+            const itemIdsBefore = (
+              await db.select(itemFixtureFields).from(items)
+            )
               .filter((item) => !removedAncestors.has(item.id))
               .map((item) => item.id)
               .sort();
@@ -305,7 +308,9 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
             ).toHaveLength(1);
             expect(await db.select().from(progress)).toEqual(progressBefore);
             expect(
-              (await db.select().from(items)).map((item) => item.id).sort(),
+              (await db.select(itemFixtureFields).from(items))
+                .map((item) => item.id)
+                .sort(),
             ).toEqual(itemIdsBefore);
             expect(
               await db.select().from(files).where(eq(files.id, other.id)),
@@ -338,7 +343,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         const library = await insertLibrary(db, "Movies", root);
         await scanDirectory(db, library.id, folder);
         expect(await db.select().from(scanFailures)).toHaveLength(1);
-        expect(await db.select().from(items)).toEqual([]);
+        expect(await db.select(itemFixtureFields).from(items)).toEqual([]);
         await rm(join(root, folder), { recursive: true });
         const queue = createJobQueue(db);
         const registry = createJobRegistry();
@@ -393,7 +398,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
             await queue.complete(job);
           }
           expect(
-            (await db.select().from(items))
+            (await db.select(itemFixtureFields).from(items))
               .map((item) => item.canonicalFolder)
               .sort(),
           ).toEqual([".", "Alien (1979)", "Heat (1995)"]);
@@ -560,7 +565,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         const claimed = await queue.claim();
         if (!claimed) throw new Error("Scan job was not claimed.");
         await registry.run(claimed);
-        const [item] = await db.select().from(items);
+        const [item] = await db.select(itemFixtureFields).from(items);
         if (!item) throw new Error("Scanned item missing.");
         const queued = await listJobs(db, { state: "queued" });
         expect(queued.map((job) => job.payload)).toEqual([
@@ -598,7 +603,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         if (!first) throw new Error("Scan job was not claimed.");
         await registry.run(first);
         await queue.complete(first);
-        const [item] = await db.select().from(items);
+        const [item] = await db.select(itemFixtureFields).from(items);
         if (!item) throw new Error("Scanned item missing.");
         await db
           .update(items)
@@ -616,7 +621,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         const claimed = await queue.claim(["scan"]);
         if (!claimed) throw new Error("Rescan job was not claimed.");
         await registry.run(claimed);
-        const [rescanned] = await db.select().from(items);
+        const [rescanned] = await db.select(itemFixtureFields).from(items);
         expect(rescanned?.metadataState).toBe("matched");
         expect(
           (await listJobs(db, { state: "queued" })).map((job) => job.payload),
@@ -651,7 +656,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         if (!first) throw new Error("Scan job was not claimed.");
         await registry.run(first);
         await queue.complete(first);
-        const [item] = await db.select().from(items);
+        const [item] = await db.select(itemFixtureFields).from(items);
         if (!item) throw new Error("Scanned item missing.");
         // Claim the fetch but never finish it: it stays running.
         const running = await queue.claim(["provider-fetch"]);
@@ -732,7 +737,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         if (!first) throw new Error("Scan job was not claimed.");
         await registry.run(first);
         await queue.complete(first);
-        const [item] = await db.select().from(items);
+        const [item] = await db.select(itemFixtureFields).from(items);
         if (!item) throw new Error("Scanned item missing.");
         // The Item stays pending while its provider-fetch remains queued.
         await queue.enqueue(
@@ -775,7 +780,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         if (!first) throw new Error("Scan job was not claimed.");
         await registry.run(first);
         await queue.complete(first);
-        const [item] = await db.select().from(items);
+        const [item] = await db.select(itemFixtureFields).from(items);
         if (!item) throw new Error("Scanned item missing.");
         await db
           .update(items)
@@ -803,7 +808,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         const claimed = await queue.claim(["scan"]);
         if (!claimed) throw new Error("Rescan job was not claimed.");
         await registry.run(claimed);
-        const [rescanned] = await db.select().from(items);
+        const [rescanned] = await db.select(itemFixtureFields).from(items);
         expect(rescanned?.metadataState).toBe("pending");
         const queued = await listJobs(db, { state: "queued" });
         expect(queued.map((job) => job.payload)).toEqual([
@@ -857,7 +862,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         if (!claimed) throw new Error("Scan job was not claimed.");
         await registry.run(claimed);
         expect(await listJobs(db, { state: "queued" })).toHaveLength(0);
-        expect(await db.select().from(items)).toHaveLength(0);
+        expect(await db.select(itemFixtureFields).from(items)).toHaveLength(0);
         expect(await db.select().from(events)).toMatchObject([
           { kind: "library.changed" },
         ]);
@@ -1001,7 +1006,7 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         if (!directory) throw new Error("Root directory scan was not queued.");
         await registry.run(directory);
         await queue.complete(directory);
-        const [show] = await db.select().from(items);
+        const [show] = await db.select(itemFixtureFields).from(items);
         expect(show).toMatchObject({
           kind: "show",
           title: "Breaking Bad",

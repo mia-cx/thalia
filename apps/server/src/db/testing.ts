@@ -1,15 +1,39 @@
 import { afterAll } from "bun:test";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sql";
+import { migrate } from "drizzle-orm/bun-sql/migrator";
 import { listJobs } from "../jobs/queue.ts";
 import { runKeyframeIndexJob } from "../libraries/keyframe-index.ts";
 import { createDatabase, type Database } from "./client.ts";
 import { migrateDatabase } from "./migrate.ts";
 
 type Admin = ReturnType<typeof createDatabase>;
+
+/** Historical migration tests stop before the deliberately destructive catalogue cutover. */
+export async function migrateBeforeCatalogueReset(db: Database) {
+  const folder = await mkdtemp(join(tmpdir(), "thalia-history-"));
+  try {
+    await cp(resolve(import.meta.dir, "../../drizzle"), folder, {
+      recursive: true,
+    });
+    const path = join(folder, "meta/_journal.json");
+    const journal: { entries: { tag: string }[] } = await Bun.file(path).json();
+    const cut = journal.entries.findIndex((entry) =>
+      entry.tag.endsWith("_server_items"),
+    );
+    if (cut < 0) throw new Error("Missing catalogue reset migration.");
+    journal.entries = journal.entries.slice(0, cut);
+    await writeFile(path, JSON.stringify(journal));
+    await migrate(db, { migrationsFolder: folder });
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+}
 
 /** One admin pool per worker process for database creates, drops and the template lock. */
 let sharedAdmin: Admin | undefined;

@@ -3,13 +3,13 @@ import type {
   MetadataProvider,
   MetadataResult,
 } from "@thalia/plugin-api";
-import { eq } from "drizzle-orm";
-import { publishEvent } from "../api/events.ts";
+import { eq, getTableColumns } from "drizzle-orm";
 import { server } from "../auth/access.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { items, providerIds } from "../db/schema/index.ts";
+import { homeLibraryId, publishItemChange } from "../libraries/membership.ts";
 import { applyArtworkSelection } from "./artwork-selection.ts";
 import { storeArtworkOriginal } from "./artwork-store.ts";
 import { editItemMetadata } from "./edit.ts";
@@ -21,7 +21,10 @@ import {
 import { providersForLibrary, readMetadataSettings } from "./settings.ts";
 
 async function subject(db: Database, actorId: string, id: string) {
-  const [item] = await db.select().from(items).where(eq(items.id, id));
+  const [item] = await db
+    .select({ ...getTableColumns(items), homeLibraryId: homeLibraryId() })
+    .from(items)
+    .where(eq(items.id, id));
   if (item === undefined) return null;
   await requirePermission(db, actorId, "view", {
     type: "item",
@@ -79,7 +82,7 @@ export async function searchRemoteMetadata(
   const providers = await providersFor(
     db,
     input.kind,
-    item?.libraryId,
+    item?.homeLibraryId ?? undefined,
     options,
     input.includeDisabled,
   );
@@ -123,9 +126,9 @@ export async function remoteMetadataProviders(
 ) {
   const item = await subject(db, actorId, itemId);
   if (item === null) return [];
-  return (await providersFor(db, item.kind, item.libraryId, options)).map(
-    (provider) => ({ id: provider.id, kinds: provider.kinds }),
-  );
+  return (
+    await providersFor(db, item.kind, item.homeLibraryId ?? undefined, options)
+  ).map((provider) => ({ id: provider.id, kinds: provider.kinds }));
 }
 
 /** Lists remote artwork for the item's stored external identities without changing selected images. */
@@ -138,7 +141,12 @@ export async function remoteArtwork(
 ) {
   const item = await subject(db, actorId, itemId);
   if (item === null) return { images: [], providers: [] };
-  const providers = await providersFor(db, item.kind, item.libraryId, options);
+  const providers = await providersFor(
+    db,
+    item.kind,
+    item.homeLibraryId ?? undefined,
+    options,
+  );
   const images = [];
   for (const provider of providers) {
     if (
@@ -180,7 +188,7 @@ export async function selectRemoteMetadata(
   const providers = await providersFor(
     db,
     item.kind,
-    item.libraryId,
+    item.homeLibraryId ?? undefined,
     options,
     true,
   );
@@ -226,10 +234,7 @@ export async function selectRemoteMetadata(
       artworkPolicy: input.replaceArtwork ? "replace" : "keep",
       provider: provider.id,
     });
-  await publishEvent(db, {
-    kind: "library.changed",
-    libraryId: item.libraryId,
-  });
+  await publishItemChange(db, itemId);
 }
 
 /** Selects one downloaded artwork original for an item after checking metadata-management permission. */
@@ -250,8 +255,5 @@ export async function downloadRemoteArtwork(
   // Libraries and metadata identities have no artwork owner in the core.
   if (item === null) return;
   await storeArtworkOriginal(db, itemId, image, request);
-  await publishEvent(db, {
-    kind: "library.changed",
-    libraryId: item.libraryId,
-  });
+  await publishItemChange(db, itemId);
 }

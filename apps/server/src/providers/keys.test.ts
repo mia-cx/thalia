@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { and, eq, inArray } from "drizzle-orm";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem, itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { items, jobs, providerIds } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { createJobQueue } from "../jobs/queue.ts";
 import { createJobRegistry } from "../jobs/registry.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -36,6 +36,7 @@ async function seed(db: Database) {
 /** A Show tree whose pending descendants share one provider fetch. */
 async function seedShow(db: Database, libraryId: string) {
   const show = await insertItem(db, {
+    withVersion: true,
     libraryId,
     kind: "show",
     title: "Breaking Bad",
@@ -43,6 +44,7 @@ async function seedShow(db: Database, libraryId: string) {
     extension: {},
   });
   const season = await insertItem(db, {
+    withVersion: true,
     libraryId,
     kind: "season",
     parentId: show.id,
@@ -51,6 +53,7 @@ async function seedShow(db: Database, libraryId: string) {
     extension: { seasonNumber: 1 },
   });
   const episode = await insertItem(db, {
+    withVersion: true,
     libraryId,
     kind: "episode",
     parentId: season.id,
@@ -75,6 +78,7 @@ describe.skipIf(!databaseUrl)("provider keys", () => {
         if (!movieLibrary || !showLibrary)
           throw new Error("Fixture libraries missing.");
         const movie = await insertItem(db, {
+          withVersion: true,
           libraryId: movieLibrary.id,
           kind: "movie",
           title: "Alien",
@@ -135,7 +139,7 @@ describe.skipIf(!databaseUrl)("provider keys", () => {
         await queueProviderFetch(db, show.id);
         await runFetches();
         expect(
-          (await db.select().from(items)).every(
+          (await db.select(itemFixtureFields).from(items)).every(
             (item) => item.metadataState === "pending",
           ),
         ).toBe(true);
@@ -170,12 +174,12 @@ describe.skipIf(!databaseUrl)("provider keys", () => {
         );
         await runFetches();
         expect(
-          (await db.select().from(items)).every(
+          (await db.select(itemFixtureFields).from(items)).every(
             (item) => item.metadataState === "matched",
           ),
         ).toBe(true);
         const descendants = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(inArray(items.id, [season.id, episode.id]))
           .orderBy(items.kind);
@@ -253,6 +257,7 @@ describe.skipIf(!databaseUrl)("provider keys", () => {
         throw new Error("Fixture libraries missing.");
       }
       const movie = await insertItem(db, {
+        withVersion: true,
         libraryId: movieLibrary.id,
         kind: "movie",
         title: "Unmatched Movie",
@@ -260,6 +265,7 @@ describe.skipIf(!databaseUrl)("provider keys", () => {
         extension: {},
       });
       const show = await insertItem(db, {
+        withVersion: true,
         libraryId: showLibrary.id,
         kind: "show",
         title: "Unmatched Show",
@@ -277,12 +283,16 @@ describe.skipIf(!databaseUrl)("provider keys", () => {
 
       await setProviderKey(db, admin.id, "opensubtitles", "other-key");
       expect(
-        (await db.select().from(items).where(eq(items.id, movie.id)))[0]
-          ?.metadataState,
+        (
+          await db
+            .select(itemFixtureFields)
+            .from(items)
+            .where(eq(items.id, movie.id))
+        )[0]?.metadataState,
       ).toBe("unmatched");
 
       await setProviderKey(db, admin.id, "TMDB", "api-key");
-      const rows = await db.select().from(items);
+      const rows = await db.select(itemFixtureFields).from(items);
       expect(rows.find((row) => row.id === movie.id)?.metadataState).toBe(
         "pending",
       );
@@ -295,7 +305,7 @@ describe.skipIf(!databaseUrl)("provider keys", () => {
         .set({ metadataState: "unmatched" })
         .where(eq(items.id, movie.id));
       await setProviderKey(db, admin.id, "tvdb", "api-key");
-      const afterTvdb = await db.select().from(items);
+      const afterTvdb = await db.select(itemFixtureFields).from(items);
       expect(afterTvdb.find((row) => row.id === show.id)?.metadataState).toBe(
         "pending",
       );

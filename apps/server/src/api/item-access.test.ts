@@ -11,6 +11,11 @@ import { createApiKey } from "../auth/sessions.ts";
 import { writeAuthSettings } from "../auth/settings.ts";
 import type { Database } from "../db/client.ts";
 import {
+  insertItem,
+  insertItems,
+  itemFixtureFields,
+} from "../db/item-fixtures.ts";
+import {
   accessRules,
   artwork,
   files,
@@ -19,7 +24,7 @@ import {
   versions,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { deleteItemSubtree, insertItem } from "../db/tree.ts";
+import { deleteItemSubtree } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { toGuid } from "../jellyfin/request.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -100,15 +105,13 @@ async function seed(db: Database, root: string) {
     }
   }
   // A mixed fixture keeps the unrelated movie in the same permission chain.
-  const [movie] = await db
-    .insert(items)
-    .values({
-      libraryId: library.id,
-      kind: "movie",
-      title: "Movie",
-      canonicalFolder: ".",
-    })
-    .returning();
+  const [movie] = await insertItems(db, {
+    libraryId: library.id,
+    kind: "movie",
+    title: "Movie",
+    canonicalFolder: ".",
+    titleKey: "movie",
+  });
   if (!movie) throw new Error("Missing movie.");
   const playable = [];
   for (const item of [...episodes, movie]) {
@@ -384,7 +387,7 @@ describe.skipIf(!databaseUrl)("single-Item Access rules", () => {
       expect(
         (
           await db
-            .select()
+            .select(itemFixtureFields)
             .from(items)
             .where(eq(items.id, fx.episodes[0]?.id ?? ""))
         )[0]?.overview,

@@ -11,7 +11,9 @@ import { dirname, join } from "node:path";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { setupAdmin } from "../auth/accounts.ts";
 import { createDatabase, type Database } from "../db/client.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
+import { itemFolders } from "../db/schema/core.ts";
 import {
   episodes,
   favourites,
@@ -224,7 +226,7 @@ describe.skipIf(!databaseUrl)("scan file failures", () => {
       withFiles(async (db, root, library) => {
         await scan(db, library.id, scope, { probe: async () => video });
         const beforeItems = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .orderBy(asc(items.id));
         const beforeVersions = await db
@@ -266,9 +268,12 @@ describe.skipIf(!databaseUrl)("scan file failures", () => {
               },
             ],
           });
-          expect(await db.select().from(items).orderBy(asc(items.id))).toEqual(
-            beforeItems,
-          );
+          expect(
+            await db
+              .select(itemFixtureFields)
+              .from(items)
+              .orderBy(asc(items.id)),
+          ).toEqual(beforeItems);
           expect(
             await db.select().from(versions).orderBy(asc(versions.id)),
           ).toEqual(beforeVersions);
@@ -292,7 +297,7 @@ describe.skipIf(!databaseUrl)("scan file failures", () => {
             parseProbeOutput({ streams: [{ codec_type: "video" }] }),
         });
         expect(await db.select().from(scanFailures)).toHaveLength(3);
-        expect(await db.select().from(items)).toEqual([]);
+        expect(await db.select(itemFixtureFields).from(items)).toEqual([]);
         for (const path of paths)
           await utimes(
             join(root, path),
@@ -314,7 +319,7 @@ describe.skipIf(!databaseUrl)("scan file failures", () => {
             source,
           ),
         ).rejects.toThrow("File changed during probe.");
-        expect(await db.select().from(items)).toEqual([]);
+        expect(await db.select(itemFixtureFields).from(items)).toEqual([]);
       }));
 
     test(`${medium}: a failed probe of a changed or missing file still retries`, () =>
@@ -431,7 +436,7 @@ describe.skipIf(!databaseUrl)("scan file failures", () => {
             },
           ],
         });
-        expect(await db.select().from(items)).toMatchObject([
+        expect(await db.select(itemFixtureFields).from(items)).toMatchObject([
           { title: "Alien" },
         ]);
         expect(await db.select().from(providerIds)).toEqual([]);
@@ -599,7 +604,7 @@ describe.skipIf(!databaseUrl)("scanDirectory", () => {
           expect(result.versionIds).toHaveLength(2);
           expect(result.itemId).not.toBeNull();
 
-          expect(await db.select().from(items)).toMatchObject([
+          expect(await db.select(itemFixtureFields).from(items)).toMatchObject([
             {
               id: result.itemId,
               libraryId: library.id,
@@ -753,7 +758,7 @@ describe.skipIf(!databaseUrl)("scanDirectory", () => {
           expect(curated.versionIds).toEqual(first.versionIds);
           expect(curated.probed).toBe(0);
           expect(seen).toHaveLength(2);
-          expect(await db.select().from(items)).toMatchObject([
+          expect(await db.select(itemFixtureFields).from(items)).toMatchObject([
             { id: first.itemId, title: "Curated Alien", tags: ["curated"] },
           ]);
 
@@ -877,7 +882,9 @@ describe.skipIf(!databaseUrl)("scanDirectory", () => {
               };
             },
           });
-          expect(await db.select().from(items)).toHaveLength(1);
+          expect(await db.select(itemFixtureFields).from(items)).toHaveLength(
+            1,
+          );
           expect(await db.select().from(versions)).toHaveLength(1);
           expect(await db.select().from(files)).toMatchObject([
             { path: file1080 },
@@ -906,7 +913,9 @@ describe.skipIf(!databaseUrl)("scanDirectory", () => {
               ]);
               expect(results[0]?.itemId).toBe(results[1]?.itemId);
               expect(results[0]?.versionIds).toEqual(results[1]?.versionIds);
-              expect(await db.db.select().from(items)).toHaveLength(1);
+              expect(
+                await db.db.select(itemFixtureFields).from(items),
+              ).toHaveLength(1);
               expect(await db.db.select().from(versions)).toHaveLength(2);
               expect(await db.db.select().from(files)).toHaveLength(2);
               expect(await db.db.select().from(streams)).toHaveLength(6);
@@ -960,7 +969,7 @@ describe.skipIf(!databaseUrl)("scanDirectory", () => {
             );
           });
 
-          const itemRows = await db.select().from(items);
+          const itemRows = await db.select(itemFixtureFields).from(items);
           expect(itemRows.map((row) => row.id)).toEqual([itemId]);
           expect(await db.select().from(versions)).toHaveLength(1);
           expect(await db.select().from(files)).toHaveLength(1);
@@ -1040,7 +1049,7 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
         expect(result.versionIds).toHaveLength(3);
         expect(result.itemId).not.toBeNull();
 
-        const itemRows = await db.select().from(items);
+        const itemRows = await db.select(itemFixtureFields).from(items);
         expect(itemRows).toHaveLength(6);
         const show = itemRows.find((item) => item.kind === "show");
         const seasonItems = itemRows.filter((item) => item.kind === "season");
@@ -1266,7 +1275,7 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
         expect(second.probed).toBe(0);
         expect(seen).toHaveLength(0);
         expect(await snapshotIds()).toEqual(before);
-        const curated = await db.select().from(items);
+        const curated = await db.select(itemFixtureFields).from(items);
         expect(curated.find((item) => item.id === show.id)?.title).toBe(
           "Curated Expanse",
         );
@@ -1421,7 +1430,7 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
         const second = await scanShowDirectory(db, library.id, show);
         expect(second.versionIds).toHaveLength(2);
 
-        const itemRows = await db.select().from(items);
+        const itemRows = await db.select(itemFixtureFields).from(items);
         expect(itemRows.filter((item) => item.kind === "show")).toHaveLength(1);
         expect(itemRows.filter((item) => item.kind === "season")).toHaveLength(
           1,
@@ -1879,14 +1888,14 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
 
         const first = await scanShowDirectory(db, library.id, show);
         expect(first.versionIds).toHaveLength(2);
-        expect(await db.select().from(items)).toHaveLength(5);
+        expect(await db.select(itemFixtureFields).from(items)).toHaveLength(5);
         expect(await db.select().from(seasons)).toHaveLength(2);
 
         await rm(seasonTwoDir, { recursive: true });
 
         const second = await scanShowDirectory(db, library.id, show);
         expect(second.versionIds).toHaveLength(1);
-        expect(await db.select().from(items)).toHaveLength(5);
+        expect(await db.select(itemFixtureFields).from(items)).toHaveLength(5);
         expect(await db.select().from(seasons)).toHaveLength(2);
         expect(await db.select().from(versions)).toHaveLength(2);
         expect(await db.select().from(files)).toHaveLength(2);
@@ -1895,7 +1904,7 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
           reconcileMissing: true,
         });
         expect(third.versionIds).toHaveLength(1);
-        const itemRows = await db.select().from(items);
+        const itemRows = await db.select(itemFixtureFields).from(items);
         expect(itemRows.map((row) => row.kind).sort()).toEqual([
           "episode",
           "season",
@@ -1974,7 +1983,7 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
           keyframesSeconds: null,
           lazyIndexPending: true,
         });
-        const itemRows = await db.select().from(items);
+        const itemRows = await db.select(itemFixtureFields).from(items);
         expect(itemRows.map((row) => row.kind).sort()).toEqual([
           "episode",
           "season",
@@ -2043,7 +2052,7 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
         const scanned = await scanShowDirectory(db, library.id, show);
         const showId = scanned.itemId;
         if (!showId) throw new Error("Initial scan produced no Show.");
-        const itemBefore = await db.select().from(items);
+        const itemBefore = await db.select(itemFixtureFields).from(items);
         const episodeId = itemBefore.find((row) => row.kind === "episode")?.id;
         if (itemBefore.length !== 3 || !episodeId) {
           throw new Error("Initial scan produced no hierarchy.");
@@ -2076,7 +2085,7 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
           );
         });
 
-        const itemRows = await db.select().from(items);
+        const itemRows = await db.select(itemFixtureFields).from(items);
         expect(itemRows.map((row) => row.id).sort()).toEqual(
           itemBefore.map((row) => row.id).sort(),
         );
@@ -2144,7 +2153,7 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
         });
         if (!library) throw new Error("Fixture library missing.");
         await scanShowDirectory(db, library.id, "Show A");
-        const itemsBefore = await db.select().from(items);
+        const itemsBefore = await db.select(itemFixtureFields).from(items);
 
         await rename(join(root, before), join(root, after));
         // The moved File still belongs to Show A's Episode, so a new Show B cannot take it.
@@ -2162,7 +2171,9 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
           }),
         ).rejects.toThrow("Auth record already exists.");
 
-        expect(await db.select().from(items)).toEqual(itemsBefore);
+        expect(await db.select(itemFixtureFields).from(items)).toEqual(
+          itemsBefore,
+        );
       });
     }));
 
@@ -2204,7 +2215,7 @@ describe.skipIf(!databaseUrl)("scanShowDirectory", () => {
         });
 
         const [show] = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "show"));
         expect(show).toMatchObject({ id: showId, canonicalFolder: "New Show" });
@@ -2247,7 +2258,7 @@ describe.skipIf(!databaseUrl)("scans across roots", () => {
         const scanned = await scanDirectory(db, library.id, dirname(movie));
         expect(scanned.versionIds).toHaveLength(2);
         if (!scanned.itemId) throw new Error("scanDirectory returned no item.");
-        expect(await db.select().from(items)).toHaveLength(1);
+        expect(await db.select(itemFixtureFields).from(items)).toHaveLength(1);
         const stored = await db
           .select()
           .from(files)
@@ -2302,7 +2313,9 @@ describe.skipIf(!databaseUrl)("scans across roots", () => {
         if (!library) throw new Error("Fixture library missing.");
         await addRoot(db, library.id, transcoded);
         await scanShowDirectory(db, library.id, "Show");
-        const kinds = (await db.select().from(items)).map((item) => item.kind);
+        const kinds = (await db.select(itemFixtureFields).from(items)).map(
+          (item) => item.kind,
+        );
         expect(kinds.sort()).toEqual(["episode", "episode", "season", "show"]);
         const perEpisode = await db
           .select({ number: episodes.episodeNumber, versionId: versions.id })
@@ -2327,9 +2340,11 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
 
   const rootShows = async (db: Database, libraryId: string) =>
     db
-      .select()
+      .select(itemFixtureFields)
       .from(items)
-      .where(and(eq(items.libraryId, libraryId), eq(items.kind, "show")))
+      .where(
+        and(eq(itemFixtureFields.libraryId, libraryId), eq(items.kind, "show")),
+      )
       .orderBy(asc(items.title));
 
   test("two single-show roots become two titled Shows at the library root", () =>
@@ -2496,7 +2511,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
         const scanned = await scanDirectory(db, library.id, "Movies");
         expect(scanned.itemIds).toHaveLength(2);
         const rootMovies = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "movie"))
           .orderBy(asc(items.title));
@@ -2531,7 +2546,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
         await scanDirectory(db, library.id, "Movies", {
           reconcileMissing: true,
         });
-        expect(await db.select().from(items)).toMatchObject([
+        expect(await db.select(itemFixtureFields).from(items)).toMatchObject([
           { id: dune?.id, title: "Dune", canonicalFolder: "Movies" },
         ]);
         expect(await versionsOf(arrival?.id ?? "")).toHaveLength(0);
@@ -2555,7 +2570,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
 
         const state = async () => {
           const movieItems = await db
-            .select()
+            .select(itemFixtureFields)
             .from(items)
             .where(eq(items.kind, "movie"));
           const versionRows = await db.select().from(versions);
@@ -2611,7 +2626,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
             ],
           });
           const [duneItem] = await db
-            .select()
+            .select(itemFixtureFields)
             .from(items)
             .where(eq(items.title, "Dune"));
           if (!duneItem) throw new Error("Dune Item missing.");
@@ -2628,7 +2643,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
               },
             ],
           });
-          const movieItems = await db.select().from(items);
+          const movieItems = await db.select(itemFixtureFields).from(items);
           expect(movieItems).toMatchObject([
             { id: duneItem.id, title: "Dune", canonicalFolder: "Movies" },
           ]);
@@ -2659,7 +2674,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
         const scanned = await scanDirectory(db, library.id, "Movies (2020)");
         expect(scanned.itemIds).toHaveLength(1);
         const [original] = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "movie"));
         if (!original) throw new Error("Movie Item missing.");
@@ -2695,9 +2710,9 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
         // The upgrade moved the folder: the stored rows follow it by hand.
         await rename(join(root, "Movies (2020)"), join(root, "Movies"));
         await db
-          .update(items)
+          .update(itemFolders)
           .set({ canonicalFolder: "Movies" })
-          .where(eq(items.id, original.id));
+          .where(eq(itemFolders.itemId, original.id));
         await db
           .update(files)
           .set({ path: "Movies/Arrival.2016.mkv" })
@@ -2716,7 +2731,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
           reconcileMissing: true,
         });
         const movieItems = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "movie"));
         expect(movieItems).toMatchObject([
@@ -2755,7 +2770,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
         await createVideoFixture(join(root, "Movies", "Heat.1995.mkv"));
         await scanDirectory(db, library.id, "Movies");
         const renamed = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "movie"))
           .orderBy(asc(items.title));
@@ -2814,10 +2829,10 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
         }
 
         const movieItems = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "movie"))
-          .orderBy(asc(items.canonicalFolder));
+          .orderBy(asc(itemFixtureFields.canonicalFolder));
         expect(movieItems).toMatchObject([
           { id: cd1.item.id, canonicalFolder: "Alien (1979)/CD1" },
           { id: cd2.item.id, canonicalFolder: "Alien (1979)/CD2" },
@@ -2917,7 +2932,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
           const scanned = await scanDirectory(db, library.id, "Movies (2020)");
           expect(scanned.itemIds).toHaveLength(1);
           const [original] = await db
-            .select()
+            .select(itemFixtureFields)
             .from(items)
             .where(eq(items.kind, "movie"));
           if (!original) throw new Error("Movie Item missing.");
@@ -2929,9 +2944,9 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
           // The upgrade moved the folder: the stored rows follow it by hand.
           await rename(join(root, "Movies (2020)"), join(root, "Movies"));
           await db
-            .update(items)
+            .update(itemFolders)
             .set({ canonicalFolder: "Movies" })
-            .where(eq(items.id, original.id));
+            .where(eq(itemFolders.itemId, original.id));
           await db
             .update(files)
             .set({ path: movedArrival })
@@ -2957,7 +2972,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
           await scanDirectory(db, library.id, "Movies", { changes });
           await scanDirectory(db, library.id, "Movies", { changes });
           const [kept] = await db
-            .select()
+            .select(itemFixtureFields)
             .from(items)
             .where(eq(items.kind, "movie"));
           expect(kept).toMatchObject({
@@ -3002,7 +3017,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
           changes,
         });
         const movieItems = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "movie"));
         expect(movieItems).toHaveLength(1);
@@ -3024,7 +3039,10 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
         });
         expect(again.itemId).toBe(item.id);
         expect(
-          await db.select().from(items).where(eq(items.kind, "movie")),
+          await db
+            .select(itemFixtureFields)
+            .from(items)
+            .where(eq(items.kind, "movie")),
         ).toHaveLength(1);
         expect(
           await db.select().from(files).where(eq(files.itemId, item.id)),
@@ -3057,7 +3075,7 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
           ],
         });
         const [original] = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.kind, "movie"));
         if (!original) throw new Error("Movie Item missing.");
@@ -3076,7 +3094,10 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
           })),
         });
         expect(
-          await db.select().from(items).where(eq(items.kind, "movie")),
+          await db
+            .select(itemFixtureFields)
+            .from(items)
+            .where(eq(items.kind, "movie")),
         ).toMatchObject([
           {
             id: original.id,
@@ -3117,10 +3138,10 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
     await scanDirectory(db, library.id, "A (1979)", { probe: probeWithIndex });
     await scanDirectory(db, library.id, "B (1980)", { probe: probeWithIndex });
     const oldItems = await db
-      .select()
+      .select(itemFixtureFields)
       .from(items)
       .where(eq(items.kind, "movie"))
-      .orderBy(asc(items.canonicalFolder));
+      .orderBy(asc(itemFixtureFields.canonicalFolder));
     if (oldItems.length !== 2) throw new Error("Seed Items missing.");
     const moves = [
       ["A (1979)/a.mkv", "Alien (1979)/CD1/Alien.1979.CD1.mkv"],
@@ -3133,9 +3154,9 @@ describe.skipIf(!databaseUrl)("scans at any depth", () => {
       const item = oldItems[index];
       if (!item) throw new Error("Old Item missing.");
       await db
-        .update(items)
+        .update(itemFolders)
         .set({ canonicalFolder: dirname(to) })
-        .where(eq(items.id, item.id));
+        .where(eq(itemFolders.itemId, item.id));
       await db.update(files).set({ path: to }).where(eq(files.itemId, item.id));
       const [file] = await db
         .select()

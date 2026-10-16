@@ -5,8 +5,11 @@ import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/bun-sql/migrator";
 import type { Database } from "./client.ts";
-import { migrateDatabase } from "./migrate.ts";
-import { databaseUrl, withDatabase } from "./testing.ts";
+import {
+  databaseUrl,
+  migrateBeforeCatalogueReset,
+  withDatabase,
+} from "./testing.ts";
 
 const rootsMigration = "0016_library_roots";
 const drizzleFolder = new URL("../../drizzle", import.meta.url).pathname;
@@ -145,7 +148,7 @@ describe.skipIf(!databaseUrl)("The library roots migration", () => {
           tables.map((table) => count(db, table)),
         );
 
-        await migrateDatabase(db);
+        await migrateBeforeCatalogueReset(db);
 
         expect(
           await Promise.all(tables.map((table) => count(db, table))),
@@ -199,7 +202,7 @@ describe.skipIf(!databaseUrl)("The library roots migration", () => {
         insert into libraries (id, name, medium, root_path) values
           (${id()}, 'Movies', 'movies', '/srv/media'),
           (${id()}, 'Shows', 'shows', '/srv/media')`);
-        const failure = await migrateDatabase(db).catch(
+        const failure = await migrateBeforeCatalogueReset(db).catch(
           (error: unknown) => error,
         );
         expect(failure).toMatchObject({

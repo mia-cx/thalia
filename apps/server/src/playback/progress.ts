@@ -58,7 +58,7 @@ async function requireViewableItem(
   itemId: string,
 ) {
   const [item] = await db
-    .select({ libraryId: items.libraryId })
+    .select({ id: items.id })
     .from(items)
     .where(eq(items.id, itemId))
     .limit(1);

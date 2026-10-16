@@ -6,14 +6,9 @@ import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
 import { login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
-import {
-  accessRules,
-  files,
-  items,
-  streams,
-  versions,
-} from "../db/schema/index.ts";
+import { accessRules, files, streams, versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -57,15 +52,12 @@ async function seedDownload(db: Database, root: string) {
   });
   if (!library) throw new Error("Library insert returned no row.");
   const insertItem = async (title: string, folder: string) => {
-    const [item] = await db
-      .insert(items)
-      .values({
-        libraryId: library.id,
-        kind: "movie",
-        title,
-        canonicalFolder: folder,
-      })
-      .returning();
+    const [item] = await insertItems(db, {
+      libraryId: library.id,
+      kind: "movie",
+      title,
+      canonicalFolder: folder,
+    });
     if (!item) throw new Error("Item insert returned no row.");
     return item;
   };

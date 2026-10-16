@@ -11,6 +11,7 @@ import { listVersionViews } from "../api/views.ts";
 import { setupAdmin } from "../auth/accounts.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   files,
@@ -358,9 +359,10 @@ describe.skipIf(!databaseUrl)("stored subtitle tracks", () => {
       withDatabase((db) =>
         withScannedMovie(db, async ({ itemId }) => {
           const [item] = await db
-            .select({ libraryId: items.libraryId })
+            .select({ libraryId: itemFixtureFields.libraryId })
             .from(items);
-          if (!item) throw new Error("Item missing.");
+          if (!item || item.libraryId === null)
+            throw new Error("Item missing.");
           const extra = await mkdtemp(join(tmpdir(), "thalia-sub-extra-"));
           await addRoot(db, item.libraryId, extra);
           await writeSubtitle(
@@ -387,10 +389,10 @@ describe.skipIf(!databaseUrl)("stored subtitle tracks", () => {
       withScannedMovie(db, async ({ adminId, itemId }) => {
         await writeSubtitle(db, itemId, { language: "en", format: "srt" }, cue);
         const [item] = await db
-          .select({ libraryId: items.libraryId })
+          .select({ libraryId: itemFixtureFields.libraryId })
           .from(items)
           .where(eq(items.id, itemId));
-        if (!item) throw new Error("Item missing.");
+        if (!item || item.libraryId === null) throw new Error("Item missing.");
         const [home] = await rootsOf(db, item.libraryId);
         if (!home) throw new Error("Library has no root.");
         const [second] = await db

@@ -1,8 +1,9 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { lockCatalogue } from "../db/catalogue-lock.ts";
 import type { Database } from "../db/client.ts";
+import { itemFolders } from "../db/schema/core.ts";
 import {
   files,
-  items,
   type JobPayload,
   jobs,
   libraries,
@@ -106,6 +107,7 @@ export async function runKeyframeIndexJob(
     return;
   let indexed = false;
   await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     // The per-file lock probeLibraryFile takes, then the scan's library lock.
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${`${target.rootId}:${target.path}`}, 0))`,
@@ -188,9 +190,15 @@ async function reconcileItems(
     .where(eq(libraries.id, payload.libraryId));
   if (library === undefined) return;
   const folders = await db
-    .selectDistinct({ folder: items.canonicalFolder })
+    .selectDistinct({ folder: itemFolders.canonicalFolder })
     .from(files)
-    .innerJoin(items, eq(items.id, files.itemId))
+    .innerJoin(
+      itemFolders,
+      and(
+        eq(itemFolders.itemId, files.itemId),
+        eq(itemFolders.rootId, files.rootId),
+      ),
+    )
     .where(and(eq(files.rootId, payload.rootId), eq(files.path, payload.path)));
   for (const { folder } of folders)
     await reconcileStoredVersions(db, library, folder);
@@ -237,6 +245,7 @@ export async function requestKeyframeIndex(
   payload: Omit<Extract<JobPayload, { type: "keyframe-index" }>, "type">,
 ) {
   await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     const [existing] = await tx
       .select({ id: jobs.id, state: jobs.state })
       .from(jobs)

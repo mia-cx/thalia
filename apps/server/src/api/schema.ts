@@ -12,7 +12,7 @@ export const ItemSort = Schema.Literal("added", "title");
 export const ItemCard = Schema.Struct({
   id: Schema.UUID,
   kind: ItemKind,
-  libraryId: Schema.UUID,
+  homeLibraryId: Schema.NullOr(Schema.UUID),
   title: Schema.String,
   year: Schema.NullOr(Schema.Int),
   addedAt: Schema.String,
@@ -93,6 +93,7 @@ export const ItemDetail = Schema.Struct({
   versions: Schema.Array(
     Schema.Struct({
       id: Schema.UUID,
+      libraryId: Schema.UUID,
       label: Schema.String,
       format: Schema.Literal("video", "audio", "ebook", "image"),
       durationSeconds: Schema.NullOr(Schema.Number),

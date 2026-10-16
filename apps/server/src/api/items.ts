@@ -31,6 +31,7 @@ import {
   streams,
   versions,
 } from "../db/schema/index.ts";
+import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
 import { ApiError, fromHost } from "./errors.ts";
 import {
   after,
@@ -76,7 +77,7 @@ const selectedArtwork = (owner: "items" | "show_item", type: string) =>
 const cardFields = {
   id: items.id,
   kind: items.kind,
-  libraryId: items.libraryId,
+  homeLibraryId: homeLibraryId(),
   title: items.title,
   year: items.year,
   addedAt: instantText(items.addedAt),
@@ -210,11 +211,11 @@ export function listItemCards(
           type: "library",
           id: input.libraryId,
         });
-        return eq(items.libraryId, input.libraryId);
+        return inLibraries([input.libraryId]);
       }
       const viewable = await viewableLibraryIds(db, caller.user.id);
       if (viewable.length === 0) throw new AuthError("FORBIDDEN");
-      return inArray(items.libraryId, viewable);
+      return inLibraries(viewable);
     });
     const limit = input.limit ?? defaultPageSize;
     const plan = sortPlan(input.sort, input.cursor);
@@ -275,6 +276,7 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
           db
             .select({
               id: versions.id,
+              libraryId: versions.libraryId,
               label: versions.label,
               format: versions.format,
               durationSeconds: versions.durationSeconds,
@@ -438,7 +440,7 @@ export function searchItems(db: Database, caller: Caller, query: string) {
         .from(items)
         .where(
           and(
-            inArray(items.libraryId, viewable),
+            inLibraries(viewable),
             inArray(items.kind, ["movie", "show"]),
             sql`(${items.title} % ${query} or ${query} <% ${items.title})`,
           ),

@@ -1,5 +1,13 @@
-import { type SQLWrapper, sql } from "drizzle-orm";
+import { and, asc, eq, type SQLWrapper, sql } from "drizzle-orm";
+import { publishEvent } from "../api/events.ts";
 import type { Database } from "../db/client.ts";
+import {
+  files,
+  itemAncestors,
+  itemFolders,
+  libraryRoots,
+  versions,
+} from "../db/schema/index.ts";
 
 type Connection =
   | Database
@@ -32,32 +40,55 @@ export function homeLibraryId(itemId: SQLWrapper = sql.raw('"items"."id"')) {
   )`;
 }
 
+/** Publishes shared mutations to every Library currently holding the Item. */
+export async function publishItemChange(db: Connection, itemId: string) {
+  for (const libraryId of await memberLibraryIds(db, itemId))
+    await publishEvent(db, { kind: "library.changed", libraryId });
+}
+
 /** Every Library that must refresh after a shared Item changes. */
 export async function memberLibraryIds(db: Connection, itemId: string) {
-  const rows = await db.execute<{ libraryId: string }>(sql`
-    select distinct v.library_id as "libraryId" from item_ancestors a
-    join versions v on v.item_id = a.descendant_id where a.ancestor_id = ${itemId}
-  `);
+  const rows = await db
+    .selectDistinct({ libraryId: versions.libraryId })
+    .from(itemAncestors)
+    .innerJoin(versions, eq(versions.itemId, itemAncestors.descendantId))
+    .where(eq(itemAncestors.ancestorId, itemId));
   return rows.map((row) => row.libraryId);
 }
 
 /** The home root belongs to the oldest copy's Library, then follows that Library's root order. */
 export async function homeLocation(db: Connection, itemId: string) {
-  const [location] = await db.execute<{
-    libraryId: string;
-    rootId: string;
-    path: string;
-    canonicalFolder: string;
-  }>(sql`
-    select r.library_id as "libraryId", r.id as "rootId", r.path,
-      i.canonical_folder as "canonicalFolder"
-    from items i
-    join item_ancestors a on a.ancestor_id = i.id
-    join versions v on v.item_id = a.descendant_id and v.origin = 'imported'
-    join files f on f.version_id = v.id
-    join library_roots r on r.id = f.root_id
-    where i.id = ${itemId} and r.library_id = ${homeLibraryId(sql`${itemId}::uuid`)}
-    order by r.position, r.id limit 1
-  `);
+  const [location] = await db
+    .select({
+      libraryId: libraryRoots.libraryId,
+      rootId: libraryRoots.id,
+      path: libraryRoots.path,
+      canonicalFolder: itemFolders.canonicalFolder,
+    })
+    .from(itemAncestors)
+    .innerJoin(
+      versions,
+      and(
+        eq(versions.itemId, itemAncestors.descendantId),
+        eq(versions.origin, "imported"),
+      ),
+    )
+    .innerJoin(files, eq(files.versionId, versions.id))
+    .innerJoin(libraryRoots, eq(libraryRoots.id, files.rootId))
+    .innerJoin(
+      itemFolders,
+      and(
+        eq(itemFolders.itemId, itemAncestors.ancestorId),
+        eq(itemFolders.rootId, libraryRoots.id),
+      ),
+    )
+    .where(
+      and(
+        eq(itemAncestors.ancestorId, itemId),
+        eq(libraryRoots.libraryId, homeLibraryId(sql`${itemId}::uuid`)),
+      ),
+    )
+    .orderBy(asc(libraryRoots.position), asc(libraryRoots.id))
+    .limit(1);
   return location;
 }

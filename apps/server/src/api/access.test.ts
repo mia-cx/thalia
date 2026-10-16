@@ -3,9 +3,9 @@ import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { createGroup, setPermissionOverride } from "../auth/permissions.ts";
 import { createApiKey } from "../auth/sessions.ts";
-import { accessRules, items, serverOnlyActions } from "../db/schema/index.ts";
+import { insertItem, insertItems } from "../db/item-fixtures.ts";
+import { accessRules, serverOnlyActions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 
@@ -30,15 +30,12 @@ describe.skipIf(!databaseUrl)("Access rule mutations", () => {
         rootPath: "/srv/movies",
       });
       if (!library) throw new Error("Missing Library.");
-      const [item] = await db
-        .insert(items)
-        .values({
-          libraryId: library.id,
-          kind: "movie",
-          title: "Movie",
-          canonicalFolder: ".",
-        })
-        .returning();
+      const [item] = await insertItems(db, {
+        libraryId: library.id,
+        kind: "movie",
+        title: "Movie",
+        canonicalFolder: ".",
+      });
       if (!item) throw new Error("Missing Item.");
       const { token } = await createApiKey(db, admin.id, "admin");
       const server = await startThalia("api", { databaseUrl: url, port: 0 });
@@ -174,6 +171,7 @@ describe.skipIf(!databaseUrl)("Access rule reads", () => {
     });
     if (!library) throw new Error("Missing Library.");
     const show = await insertItem(db, {
+      withVersion: true,
       libraryId: library.id,
       kind: "show",
       title: "Show",
@@ -181,6 +179,7 @@ describe.skipIf(!databaseUrl)("Access rule reads", () => {
       extension: {},
     });
     const season = await insertItem(db, {
+      withVersion: true,
       libraryId: library.id,
       kind: "season",
       parentId: show.id,
@@ -189,6 +188,7 @@ describe.skipIf(!databaseUrl)("Access rule reads", () => {
       extension: { seasonNumber: 1 },
     });
     const episode = await insertItem(db, {
+      withVersion: true,
       libraryId: library.id,
       kind: "episode",
       parentId: season.id,

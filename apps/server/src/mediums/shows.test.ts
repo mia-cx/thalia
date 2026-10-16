@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
+import { insertItem, itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
@@ -13,7 +14,6 @@ import {
   users,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import {
   createShowsMedium,
@@ -658,6 +658,7 @@ async function addShow(
   seasonEpisodes: [number, number[]][],
 ): Promise<FixtureShow> {
   const show = await insertItem(db, {
+    withVersion: true,
     libraryId,
     kind: "show",
     title,
@@ -669,6 +670,7 @@ async function addShow(
     const seasonFolder =
       seasonNumber === 0 ? "Specials" : `Season ${seasonNumber}`;
     const season = await insertItem(db, {
+      withVersion: true,
       libraryId,
       kind: "season",
       parentId: show.id,
@@ -678,6 +680,7 @@ async function addShow(
     });
     for (const episodeNumber of episodeNumbers) {
       const episode = await insertItem(db, {
+        withVersion: true,
         libraryId,
         kind: "episode",
         parentId: season.id,
@@ -740,7 +743,7 @@ async function seedShows(db: Database) {
   ]);
   await addShow(db, library.id, "Unstarted Show", [[1, [1]]]);
 
-  expect(await db.select().from(items)).toHaveLength(20);
+  expect(await db.select(itemFixtureFields).from(items)).toHaveLength(20);
   expect(await db.select().from(seasons)).toHaveLength(7);
   expect(await db.select().from(episodes)).toHaveLength(9);
 
