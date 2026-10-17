@@ -126,32 +126,20 @@ describe.skipIf(!databaseUrl || browser === undefined)("next Episode", () => {
           const page = await openPage();
           try {
             await signIn(page, api, token, `/play/${first}`);
-            // Click the transport's Play so the trusted gesture starts playback.
+            // Wait for the source before playing with CDP's user gesture. A
+            // transport click can race the initial autoplay and pause it.
             await page.waitFor(
-              `(()=>{const el=document.querySelector('button[aria-label="Play"]');if(!el)return false;const r=el.getBoundingClientRect();return r.width>0;})()`,
+              "document.querySelector('video')?.readyState >= 3",
             );
-            const centre = await page.eval<{ x: number; y: number }>(
-              `(()=>{const r=document.querySelector('button[aria-label="Play"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`,
-            );
-            for (const type of ["mousePressed", "mouseReleased"])
-              await page.send("Input.dispatchMouseEvent", {
-                type,
-                ...centre,
-                button: "left",
-                clickCount: 1,
-              });
+            await page.eval("document.querySelector('video').play()");
             // E1 ends, the end card counts five seconds, E2 plays to its end.
-            const moved = await waitFor(async () =>
-              (await page.eval<string>("location.pathname")) ===
-              `/play/${second}`
-                ? true
-                : undefined,
+            await page.waitFor(
+              `location.pathname === ${JSON.stringify(`/play/${second}`)}`,
+              30_000,
             );
-            expect(moved).toBe(true);
-            await waitFor(() =>
-              page.eval<boolean>(
-                "document.querySelector('video')?.ended ?? false",
-              ),
+            await page.waitFor(
+              "document.querySelector('video')?.ended ?? false",
+              30_000,
             );
             const firstProgress = await waitFor(() =>
               completedProgress(db, admin.id, first),
