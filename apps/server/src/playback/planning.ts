@@ -24,6 +24,7 @@ import {
   versions,
 } from "../db/schema/index.ts";
 import { requestKeyframeIndex } from "../libraries/keyframe-index.ts";
+import { creditsStartSeconds } from "../mediums/video-common/credits.ts";
 import {
   loadStoredCandidates,
   pickStoredVariants,
@@ -711,6 +712,10 @@ export async function planPlayback(
           ? `/api/playback/${session.id}/${item.id}/subtitles/${shownSubtitleIndex}.vtt?token=${encodeURIComponent(issued.token)}`
           : null,
       subtitles,
+      creditsStartSeconds: creditsStartSeconds(
+        file.chapters,
+        version.durationSeconds ?? file.durationSeconds ?? 0,
+      ),
       audioStreamIndex: indexOf(audioDetails, selection.audio),
       subtitleStreamIndex: shownSubtitleIndex,
       audioStreams: audioDetails.map(

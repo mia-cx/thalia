@@ -134,7 +134,7 @@ function moveStars(event: KeyboardEvent) {
   star?.focus();
 }
 
-const downloadVersion = $derived(pickVersion(detail.versions, null, undefined));
+const downloadVersion = $derived(detail.versions[0]);
 const downloadable = $derived(
   (detail.kind === "movie" || detail.kind === "episode") &&
     detail.canDownload &&

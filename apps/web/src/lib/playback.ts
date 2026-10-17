@@ -187,16 +187,17 @@ export function subtitleNames(streams: readonly SubtitleStream[]): string[] {
 
 /**
  * The Version to open: the one a link asked for, else the one progress was
- * made on, else the first.
+ * made on if the caller may play it, else the first playable, else the first.
  */
-export function pickVersion<V extends { id: string }>(
+export function pickVersion<V extends { id: string; playable: boolean }>(
   versions: readonly V[],
   askedId: string | null,
   progressId: string | null | undefined,
 ): V | undefined {
   return (
     versions.find((version) => version.id === askedId) ??
-    versions.find((version) => version.id === progressId) ??
+    versions.find((version) => version.id === progressId && version.playable) ??
+    versions.find((version) => version.playable) ??
     versions[0]
   );
 }

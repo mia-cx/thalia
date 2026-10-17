@@ -41,6 +41,7 @@ export type PlannedTracks = Pick<
   | "subtitleStreams"
   | "audioStreamIndex"
   | "subtitleStreamIndex"
+  | "creditsStartSeconds"
   | "quality"
 >;
 
@@ -141,6 +142,11 @@ export function play(options: PlaybackOptions) {
       ? video.currentTime
       : Math.min(video.currentTime, options.durationSeconds);
 
+  // Reaching the credits start counts as watched.
+  let creditsStart: number | null = null;
+  const completed = () =>
+    video.ended || (creditsStart !== null && position() >= creditsStart);
+
   const on = <K extends keyof HTMLMediaElementEventMap>(
     type: K,
     listener: () => void,
@@ -182,7 +188,7 @@ export function play(options: PlaybackOptions) {
     const current = {
       ...session,
       positionSeconds: position(),
-      completed: video.ended,
+      completed: completed(),
     };
     reports = reports
       .then(async () => {
@@ -331,6 +337,7 @@ export function play(options: PlaybackOptions) {
     if (planned.sessionId !== null)
       scope = { sessionId: planned.sessionId, itemId };
     if (closing !== undefined) return;
+    creditsStart = planned.creditsStartSeconds;
     options.onTracks(planned);
     if (planned.url === null) {
       onNotice({
@@ -366,10 +373,13 @@ export function play(options: PlaybackOptions) {
       if (hls === undefined) return false;
       return capHlsLevels(hls, variantIds);
     },
-    /** Stops the session with its last position and releases the video element. Safe to call twice. */
-    close(): Promise<void> {
+    /** Stops the session with its last position and releases the video element. `completed` forces the stop report; safe to call twice. */
+    close(options?: { completed?: boolean }): Promise<void> {
       closing ??= (async () => {
-        const final = { positionSeconds: position(), completed: video.ended };
+        const final = {
+          positionSeconds: position(),
+          completed: options?.completed === true || completed(),
+        };
         events.abort();
         clearInterval(heartbeat);
         clearTimeout(refreshTimer);

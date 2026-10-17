@@ -15,6 +15,7 @@ import { AuthError } from "../auth/errors.ts";
 import {
   checkPermission,
   loadPermissionScope,
+  type PermissionScope,
   requirePermission,
   viewableLibraryIds,
 } from "../auth/permissions.ts";
@@ -243,6 +244,68 @@ export function listItemCards(
   });
 }
 
+/** Enriches browse cards with the overview, first viewable imported Version's runtime and the caller's progress a detail child shows. */
+export async function detailChildren(
+  db: Database,
+  userId: string,
+  permissions: PermissionScope,
+  cards: Awaited<ReturnType<typeof browseCards>>,
+) {
+  if (cards.length === 0) return [];
+  const ids = cards.map((card) => card.id);
+  const [overviews, runtimes, marks] = await Promise.all([
+    db
+      .select({ id: items.id, overview: items.overview })
+      .from(items)
+      .where(inArray(items.id, ids)),
+    // The detail orders Versions the same way; the first row per item wins.
+    db
+      .select({
+        id: versions.id,
+        itemId: versions.itemId,
+        libraryId: versions.libraryId,
+        durationSeconds: versions.durationSeconds,
+      })
+      .from(versions)
+      .where(
+        and(inArray(versions.itemId, ids), eq(versions.origin, "imported")),
+      )
+      .orderBy(versions.itemId, asc(versions.label), asc(versions.id)),
+    db
+      .select({
+        itemId: progress.itemId,
+        positionSeconds: progress.positionSeconds,
+        completed: progress.completed,
+        updatedAt: instantText(progress.updatedAt),
+      })
+      .from(progress)
+      .where(and(inArray(progress.itemId, ids), eq(progress.userId, userId))),
+  ]);
+  const overviewOf = new Map(overviews.map((row) => [row.id, row]));
+  const permitted = await permissions.versionIds("view", runtimes);
+  const runtimeOf = new Map<string, (typeof runtimes)[number]>();
+  for (const runtime of runtimes)
+    if (permitted.has(runtime.id) && !runtimeOf.has(runtime.itemId))
+      runtimeOf.set(runtime.itemId, runtime);
+  const markOf = new Map(marks.map((row) => [row.itemId, row]));
+  return cards.map((card) => {
+    const mark = markOf.get(card.id);
+    return {
+      ...card,
+      overview: overviewOf.get(card.id)?.overview ?? null,
+      durationSeconds: runtimeOf.get(card.id)?.durationSeconds ?? null,
+      progress:
+        mark === undefined
+          ? null
+          : {
+              positionSeconds: mark.positionSeconds,
+              completed: mark.completed,
+              updatedAt: mark.updatedAt,
+            },
+    };
+  });
+}
+
 /** Reads one Item's detail after checking its inherited Access rules. */
 export function getItemDetail(db: Database, caller: Caller, id: string) {
   return Effect.gen(function* () {
@@ -317,6 +380,9 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
     const itemVersions = candidates.filter((version) =>
       visibleVersions.has(version.id),
     );
+    const playableVersions = yield* fromHost(() =>
+      permissions.versionIds("play", itemVersions),
+    );
     const children = childCards.filter((child) =>
       visibleChildren.has(child.id),
     );
@@ -363,66 +429,9 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
       list.push(stream);
       streamsOf.set(stream.versionId, list);
     }
-    const enriched = yield* fromHost(async () => {
-      if (children.length === 0) return [];
-      const ids = children.map((child) => child.id);
-      const [overviews, runtimes, marks] = await Promise.all([
-        db
-          .select({ id: items.id, overview: items.overview })
-          .from(items)
-          .where(inArray(items.id, ids)),
-        // The detail orders Versions the same way; the first row per item wins.
-        db
-          .select({
-            id: versions.id,
-            itemId: versions.itemId,
-            libraryId: versions.libraryId,
-            durationSeconds: versions.durationSeconds,
-          })
-          .from(versions)
-          .where(
-            and(inArray(versions.itemId, ids), eq(versions.origin, "imported")),
-          )
-          .orderBy(versions.itemId, asc(versions.label), asc(versions.id)),
-        db
-          .select({
-            itemId: progress.itemId,
-            positionSeconds: progress.positionSeconds,
-            completed: progress.completed,
-            updatedAt: instantText(progress.updatedAt),
-          })
-          .from(progress)
-          .where(
-            and(
-              inArray(progress.itemId, ids),
-              eq(progress.userId, caller.user.id),
-            ),
-          ),
-      ]);
-      const overviewOf = new Map(overviews.map((row) => [row.id, row]));
-      const permitted = await permissions.versionIds("view", runtimes);
-      const runtimeOf = new Map<string, (typeof runtimes)[number]>();
-      for (const runtime of runtimes)
-        if (permitted.has(runtime.id) && !runtimeOf.has(runtime.itemId))
-          runtimeOf.set(runtime.itemId, runtime);
-      const markOf = new Map(marks.map((row) => [row.itemId, row]));
-      return children.map((child) => {
-        const mark = markOf.get(child.id);
-        return {
-          ...child,
-          overview: overviewOf.get(child.id)?.overview ?? null,
-          durationSeconds: runtimeOf.get(child.id)?.durationSeconds ?? null,
-          progress:
-            mark === undefined
-              ? null
-              : {
-                  positionSeconds: mark.positionSeconds,
-                  completed: mark.completed,
-                  updatedAt: mark.updatedAt,
-                },
-        };
-      });
-    });
+    const enriched = yield* fromHost(() =>
+      detailChildren(db, caller.user.id, permissions, children),
+    );
     return {
       ...card,
       ...detail,
@@ -431,6 +440,7 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
       // JSON has no bigint; a byte count stays exact below 2^53.
       versions: itemVersions.map(({ itemId: _itemId, ...version }) => ({
         ...version,
+        playable: playableVersions.has(version.id),
         bytes: Number(version.bytes),
         container: containerOf.get(version.id) ?? null,
         streams: (streamsOf.get(version.id) ?? []).map(

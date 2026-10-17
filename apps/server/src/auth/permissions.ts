@@ -193,6 +193,9 @@ export async function loadPermissionScope(db: Queryable, userId: string) {
   return { versionIds, itemIds };
 }
 
+/** The caller's preloaded Access rules, for filtering many Items or Versions at once. */
+export type PermissionScope = Awaited<ReturnType<typeof loadPermissionScope>>;
+
 /** Returns the candidate copies permitted by their own Library branch and Item rules. */
 export async function permittedVersionIds(
   db: Queryable,

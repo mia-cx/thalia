@@ -98,6 +98,8 @@ export const ItemDetail = Schema.Struct({
       format: Schema.Literal("video", "audio", "ebook", "image"),
       durationSeconds: Schema.NullOr(Schema.Number),
       bytes: Schema.Number,
+      /** Whether the caller may play this Version. */
+      playable: Schema.Boolean,
       /** The container of the Version's first File. */
       container: Schema.NullOr(Schema.String),
       streams: Schema.Array(
