@@ -216,17 +216,21 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               removeButtonPresent("Remove the View rule on the server"),
             );
 
+            // Access stays on Deny from the server rule.
+            await click(page, "#access-access");
+            await pick(page, "Allow");
             for (const show of [showA, showB]) {
-              await signIn(page, base, token, `/shows/${show.id}`);
-              await page.waitFor(
-                "document.querySelector('#access-subject') !== null",
-              );
-              await click(page, "#access-subject");
-              await pick(page, "Newbie");
+              await typeObject(page, show.title);
+              await pick(page, show.title);
               await addRule(page);
               await page.waitFor(
-                removeButtonPresent("Remove the View rule for Newbie"),
+                removeButtonPresent(`Remove the View rule on ${show.title}`),
               );
+              expect(
+                await page.eval<string>(
+                  "document.getElementById('access-object').value",
+                ),
+              ).toBe("");
             }
 
             const held = (await db.select().from(accessRules)).filter(
