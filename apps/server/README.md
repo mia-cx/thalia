@@ -196,7 +196,7 @@ Server callers use these functions after authenticating the actor:
 
 - `accounts.ts`: `setupAdmin` and `createLocalUser`. Only setup accepts anonymous account creation; later users require `users:manage`.
 - `access.ts`: the pure Access rule resolver. The most specific object decides; on that object a user's rule beats Groups, and deny wins between Groups. Every Action except `view` also requires `view` on the same object.
-- `permissions.ts`: `checkPermission` and `requirePermission` take an explicit server or Library object. Built-in admins bypass rules; disabled users do not. The Actions are `view`, `play`, `download`, `metadata:edit`, `subtitles:edit`, `libraries:manage`, `users:manage`, `plugins:manage`, `transcoding:manage` and `server:manage`. The last five can only name the server. Group editor checks write server allow rules, user overrides write server allow/deny rules, and Library access writes Library `view` rules. Inherit deletes the rule.
+- `permissions.ts`: `checkPermission` and `requirePermission` take an explicit server or Library object. Built-in admins bypass rules; disabled users do not. The Actions are `view`, `play`, `download`, `metadata:edit`, `subtitles:edit`, `libraries:manage`, `users:manage`, `plugins:manage`, `transcoding:manage` and `server:manage`. The last five can only name the server. User overrides write server allow/deny rules, and Library access writes Library `view` rules. Inherit deletes the rule.
 - Jellyfin policy maps `EnableAllFolders` and `EnabledFolders` to user Library `view` rules. `EnableMediaPlayback` and `EnableContentDownloading` write user `play` and `download` rules on the server.
 - A saved Jellyfin folder list writes a user `view` allow or deny for each Library that exists at that moment. Libraries created later follow Group rules. Restoring `EnableAllFolders` clears those rules and restores normal inheritance.
 - `permissions.ts`: `createGroup`, `setUserGroups` and `setPermissionOverride` require built-in admin membership. A null override restores inheritance. Membership replacement serializes on the admins group and rejects removal of the final enabled admin with `CONFLICT`.
@@ -311,7 +311,7 @@ The api and all roles serve one procedure router on two transports. `/rpc` carri
 | `me` | GET `/api/me` | None | `user`, `credential`, and `admin` saying whether the caller is a built-in admin |
 | `items.list` | GET `/api/items` | `libraryId`, `kind`, `sort`, `limit`, `cursor` | `{ items, cursor }` of cards |
 | `items.get` | GET `/api/items/{id}` | `id` in the path | the detail shape |
-| `items.search` | GET `/api/search` | `query` | card array, best match first |
+| `items.search` | GET `/api/search` | `query`, optional `kinds` | browse card array, best match first |
 | `items.refresh` | POST `/api/items/{id}/refresh` | `id` in the path | `{ jobId }` |
 | `shelves.home` | GET `/api/shelves/home` | None | `Shelf` array |
 | `events.stream` | GET `/api/events` | `Last-Event-ID` header | `text/event-stream` |
@@ -322,12 +322,14 @@ The api and all roles serve one procedure router on two transports. `/rpc` carri
 | `users.sessions` | GET `/api/users/{id}/sessions` | `id` | `Session` array |
 | `users.revokeSession` | POST `/api/sessions/{id}/revoke` | `id` | `{ ok: true }` |
 | `users.setGroups` | PUT `/api/users/{id}/groups` | `id`, `groupIds` | `UserAccess` |
-| `users.setOverride` | PUT `/api/users/{id}/overrides/{permission}` | `id`, `permission`, nullable `allowed` | `UserAccess` |
 | `users.setSettings` | PUT `/api/users/{id}/settings` | `id`, nullable `bitrateCapBps`, nullable `contentRatingCeiling` | `UserAccess` |
 | `users.setLibraryAccess` | PUT `/api/users/{id}/libraries/{libraryId}` | `id`, `libraryId`, nullable `allowed` | `UserAccess` |
 | `groups.list` | GET `/api/groups` | None | `Group` array |
-| `groups.create` | POST `/api/groups` | `name`, `permissions` | `Group` |
-| `groups.setPermissions` | PUT `/api/groups/{id}/permissions` | `id`, `permissions` | `Group` |
+| `groups.create` | POST `/api/groups` | `name` | `Group` |
+| `access.rulesForSubject` | GET `/api/access/rules/subject` | `subject` | `Rule` array |
+| `access.rulesOnObject` | GET `/api/access/rules/object` | `object` | `{ direct, inherited }` `Rule` arrays |
+| `access.setRule` | PUT `/api/access/rules` | `subject`, `object`, `action`, `allowed` | `{}` |
+| `access.removeRule` | DELETE `/api/access/rules` | `subject`, `object`, `action` | `{}` |
 | `settings.get` | GET `/api/settings` | None | `ServerSettings` |
 | `settings.update` | PATCH `/api/settings` | optional `trustedProxyAddresses`, `artworkRequiresAuth`, `oidcClientSecret`, nullable `bitrateCapBps`, `idleWindow` | `ServerSettings` |
 | `settings.setProviderKey` | PUT `/api/settings/providers/{name}` | `name`, `value` | `ServerSettings` |
@@ -337,14 +339,14 @@ Procedures accept the same `Authorization: Bearer <token>` or `thalia_session` c
 `me` is the only auth route wrapped as a procedure. Setup, login and logout stay on the auth handler because they set cookies, check Origin and consume login windows.
 
 `setup.status` is the only unauthenticated procedure. The first-run wizard asks it before any account exists, and it leaks one boolean that `POST /api/auth/setup` already leaks through its 409. The login page also reads whether OIDC is configured and its button name, which `GET /api/auth/oidc/login` already reveals.
-The other admin procedures check permissions inside the auth slice: `users:manage` for user reads and settings, `server:manage` for server settings, and built-in admin membership for group and library access writes.
+The other admin procedures check permissions inside the auth slice: `users:manage` for user and group reads and settings, `server:manage` for server settings, and built-in admin membership for group creation, access-rule writes and per-user group and Library access writes.
 
-`users.get` and the four `users.set*` mutations all answer the full `UserAccess` shape, so the per-user screen refreshes in one round trip. The mutations read that shape back without re-checking the caller, which exposes nothing new because reaching that line already required passing the write's own check; it lets an admin demote themselves and still receive the saved state.
-`users.setOverride` restores inheritance on a null `allowed`. `users.setLibraryAccess` writes user rows only; group access rows stay unexposed in this slice.
+`users.get` and the three `users.set*` mutations all answer the full `UserAccess` shape, so the per-user screen refreshes in one round trip. The mutations read that shape back without re-checking the caller, which exposes nothing new because reaching that line already required passing the write's own check; it lets an admin demote themselves and still receive the saved state.
+`users.setLibraryAccess` writes user rows only; group access rows stay unexposed in this slice. Access rules for users and Groups on the server, a Library or an Item are written with `access.setRule` and `access.removeRule`: the first upserts and the second unsets, so a removed user rule falls back to their Groups. Server-only Actions are rejected on a Library or Item.
 `bitrateCapBps` crosses the API as a nullable integer and the service stores it as bigint. It must be a positive safe integer, because the playback planner reads the column as a number and rejects anything larger. `contentRatingCeiling` trims, rejects blanks and clears on null.
 Session and user instants cross as ISO-8601 at millisecond precision, because the auth slice hands back `Date` values. Item instants stay the database's own UTC text.
 
-Group permission edits apply to custom groups only. The built-in `admins` and `users` groups reject writes: admins bypass every check, and `users` is the documented default group.
+Groups answer with a `rules` summary: their server rules and how many Libraries and Items they have rules on. Access rules apply to built-in groups too: `users` is the documented default group, and rules on `admins` are stored but never decide anything because its members bypass every check.
 
 `settings.get` answers the trusted proxy addresses, the artwork toggle, whether OIDC is configured, whether an OIDC client secret is stored, the provider key names, the global bitrate cap, the store idle window and the artwork store. No read returns a provider key value, the OIDC client secret or S3 credentials; provider keys are write-only over the API.
 `settings.update` writes `trustedProxyAddresses`, `artworkRequiresAuth`, `oidcClientSecret`, `bitrateCapBps` and `idleWindow`. `oidcClientSecret` sets or replaces the stored OIDC client secret and is never read back. The rest of the OIDC setting is written in the database.
@@ -362,7 +364,7 @@ The default page is 24 and `limit` caps at 100. An unparseable cursor answers 40
 
 `items.refresh` queues a provider-fetch for one Item and needs `libraries:manage`. It runs at priority 1, ahead of background scans at 0. When a due fetch for the Item is already queued, it raises that job to priority 1 and returns its id instead of adding another. A refresh of a Show re-fetches its whole tree. An unknown id answers 404.
 
-`items.search` matches the titles of Movies and Shows in the libraries the caller may view, with pg_trgm. Trigram similarity forgives a misspelling, so `Interstelar` finds `Interstellar`; word similarity lets a prefix or one word of a longer title match. Results come best match first, at most 24. `query` is trimmed, must keep 1 to 200 characters and may not contain NUL. A caller who may view no library gets an empty list.
+`items.search` matches the titles of Items in the libraries the caller may view, with pg_trgm, among the `kinds` given — a non-empty list of Item kinds defaulting to Movies and Shows, so Seasons and Episodes match only when asked for and carry their Show. Trigram similarity forgives a misspelling, so `Interstelar` finds `Interstellar`; word similarity lets a prefix or one word of a longer title match. Results come best match first, at most 24. `query` is trimmed, must keep 1 to 200 characters and may not contain NUL. A caller who may view no library gets an empty list.
 
 `shelves.home` assembles Home from the mediums in one call. Continue watching comes first, then each medium's own shelves such as next up, then recently added. A core shelf appears only when some medium joins it, each holds at most 24 entries, and an empty shelf is left out. A shelf is `{ id, title, entries }` and an entry is `{ item, progress }`: a browse card, and `{ positionSeconds, durationSeconds }` on continue watching or null elsewhere. Recently added lists Movies and Shows by their own `addedAt`, so a new Episode does not lift its Show.
 
