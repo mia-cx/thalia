@@ -196,9 +196,7 @@ export function pickVersion<V extends { id: string; playable: boolean }>(
 ): V | undefined {
   return (
     versions.find((version) => version.id === askedId) ??
-    versions.find(
-      (version) => version.id === progressId && version.playable,
-    ) ??
+    versions.find((version) => version.id === progressId && version.playable) ??
     versions.find((version) => version.playable) ??
     versions[0]
   );

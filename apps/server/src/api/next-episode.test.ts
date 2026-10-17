@@ -256,10 +256,7 @@ describe.skipIf(!databaseUrl)("playback.next", () => {
         .select()
         .from(versions)
         .where(
-          and(
-            eq(versions.itemId, e2),
-            eq(versions.libraryId, fx.library.id),
-          ),
+          and(eq(versions.itemId, e2), eq(versions.libraryId, fx.library.id)),
         );
       if (!first) throw new Error("Missing Version.");
       // View allowed in both Libraries; play denied in the home one.
