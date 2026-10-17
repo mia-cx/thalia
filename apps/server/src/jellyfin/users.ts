@@ -1,7 +1,11 @@
 import { server } from "../auth/access.ts";
 import { readUserAccess } from "../auth/admin.ts";
 import { checkPermission, viewableLibraryIds } from "../auth/permissions.ts";
-import { readAccount, readClientPreference } from "../auth/profile.ts";
+import {
+  readAccount,
+  readClientPreference,
+  readPlaybackPreferences,
+} from "../auth/profile.ts";
 import {
   type issueSession,
   login,
@@ -30,6 +34,7 @@ export async function userDto(db: Database, user: User, serverId: string) {
     account,
     access,
     canManageSubtitles,
+    playbackPreferences,
   ] = await Promise.all([
     checkPermission(db, user.id, "play", server),
     checkPermission(db, user.id, "download", server),
@@ -37,6 +42,7 @@ export async function userDto(db: Database, user: User, serverId: string) {
     readAccount(db, user.id, user.id),
     readUserAccess(db, user.id),
     checkPermission(db, user.id, "subtitles:edit", server),
+    readPlaybackPreferences(db, user.id, user.id),
   ]);
   // An allow-list must retain inherited access when a policy is read and saved again.
   const restrictedFolders = access.libraryAccess.length > 0;
@@ -65,12 +71,13 @@ export async function userDto(db: Database, user: User, serverId: string) {
       HidePlayedInLatest: true,
       RememberAudioSelections: true,
       RememberSubtitleSelections: true,
-      EnableNextEpisodeAutoPlay: true,
       ...(preference !== null &&
       typeof preference === "object" &&
       !Array.isArray(preference)
         ? preference
         : {}),
+      // The Thalia playback setting wins over a stale stored client blob.
+      EnableNextEpisodeAutoPlay: playbackPreferences.autoplayNextEpisode,
     },
     Policy: {
       IsAdministrator: account.administrator,

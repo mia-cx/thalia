@@ -16,6 +16,7 @@ import {
   requireAccountAccess,
   updateAccountAccess,
   writeClientPreference,
+  writePlaybackPreferences,
 } from "../auth/profile.ts";
 import { readServerId } from "../server-id.ts";
 import { json, noContent, type Route, type UserContext } from "./http.ts";
@@ -151,14 +152,25 @@ export const accountRoutes: Route[] = [
     path: "/Users/Configuration",
     handle: async (context) => {
       const value = await readDto(context.request, "UserConfiguration");
+      const userId = await targetUser(context);
       await writeClientPreference(
         context.db,
         context.caller.user.id,
-        await targetUser(context),
+        userId,
         "jellyfin",
         "configuration",
         value,
       );
+      // The same switch exists as a Thalia playback preference; keep them equal.
+      if (typeof value.EnableNextEpisodeAutoPlay === "boolean")
+        await writePlaybackPreferences(
+          context.db,
+          context.caller.user.id,
+          userId,
+          {
+            autoplayNextEpisode: value.EnableNextEpisodeAutoPlay,
+          },
+        );
       return noContent();
     },
   },
