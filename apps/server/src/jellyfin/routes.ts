@@ -16,6 +16,7 @@ import { accessOf, operations } from "./openapi.ts";
 import { playbackRoutes } from "./playback.ts";
 import { progressRoutes } from "./progress.ts";
 import { quickConnectRoutes } from "./quick-connect.ts";
+import { segmentRoutes } from "./segments.ts";
 import { subtitleRoutes } from "./subtitles.ts";
 import { systemRoutes } from "./system.ts";
 import { userRoutes } from "./users.ts";
@@ -40,6 +41,7 @@ export function jellyfinRoutes(
     ...imageRoutes(artwork),
     ...playbackRoutes(hls),
     ...progressRoutes,
+    ...segmentRoutes,
     ...subtitleRoutes(subtitles),
   ];
   const shape = (path: string) =>
