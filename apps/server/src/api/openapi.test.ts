@@ -56,6 +56,7 @@ describe("openapi document", () => {
         "/items/{itemId}/marks",
         "/items/{itemId}/favourite",
         "/items/{itemId}/rating",
+        "/items/{itemId}/played",
         "/shelves/continue-watching",
         "/shelves/next-up",
         "/setup/status",
@@ -135,6 +136,7 @@ describe("openapi document", () => {
       ["/items/{itemId}/marks", "get"],
       ["/items/{itemId}/favourite", "put"],
       ["/items/{itemId}/rating", "put"],
+      ["/items/{itemId}/played", "put"],
       ["/shelves/continue-watching", "get"],
       ["/shelves/next-up", "get"],
     ];
@@ -155,7 +157,7 @@ describe("openapi document", () => {
       | undefined;
     expect(
       marksSchema?.properties && Object.keys(marksSchema.properties),
-    ).toEqual(expect.arrayContaining(["favourite", "rating"]));
+    ).toEqual(expect.arrayContaining(["favourite", "rating", "played"]));
     const shelfSchema = paths?.["/shelves/continue-watching"]?.get?.responses?.[
       "200"
     ]?.content?.["application/json"]?.schema as

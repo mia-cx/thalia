@@ -8,6 +8,7 @@ import {
   continueWatching as continueWatchingItems,
   getItemMarks,
   setFavourite as saveFavourite,
+  setPlayed as savePlayed,
   setRating as saveRating,
 } from "../playback/marks.ts";
 import { homeShelves, pluginShelves } from "./browse.ts";
@@ -19,6 +20,7 @@ import { connection, ItemCard, PageSize, Shelf } from "./schema.ts";
 const Marks = Schema.Struct({
   favourite: Schema.Boolean,
   rating: Schema.NullOr(Schema.Number),
+  played: Schema.Boolean,
 });
 
 const RatingInput = Schema.NullOr(
@@ -88,6 +90,28 @@ const setRating = authenticatedMutation
       ),
     ),
   );
+
+const setPlayed = authenticatedMutation
+  .route({ method: "PUT", path: "/items/{itemId}/played" })
+  .input(
+    Schema.standardSchemaV1(
+      Schema.Struct({ itemId: Schema.UUID, played: Schema.Boolean }),
+    ),
+  )
+  .output(Schema.standardSchemaV1(Schema.Struct({ played: Schema.Boolean })))
+  .handler(async ({ context, input }) => {
+    await runApi(
+      fromHost(() =>
+        savePlayed(
+          context.db,
+          context.caller.user.id,
+          input.itemId,
+          input.played,
+        ),
+      ),
+    );
+    return { played: input.played };
+  });
 
 const ContinueItem = Schema.Struct({
   item: ItemCard,
@@ -171,7 +195,7 @@ const item = authenticated
   );
 
 /** The per-user favourite and rating procedures mounted under `marks`. */
-export const markProcedures = { get, setFavourite, setRating };
+export const markProcedures = { get, setFavourite, setRating, setPlayed };
 
 /** The shelf read procedures mounted under `shelves`; `item` lists plugin shelves for an Item page. */
 export const shelfProcedures = { home, item, continueWatching, nextUp };

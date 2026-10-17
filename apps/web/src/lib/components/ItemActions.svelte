@@ -26,6 +26,7 @@ import {
   downloads,
   downloadsSupported,
 } from "$lib/downloads/index.ts";
+import { readFailure } from "$lib/errors.ts";
 import { followLibrary } from "$lib/events.ts";
 import { pickVersion } from "$lib/playback.ts";
 import { createRatingWrites } from "$lib/rating.ts";
@@ -83,11 +84,22 @@ const ratingWrites = createRatingWrites((next) =>
   client.marks.setRating({ itemId: detail.id, rating: next }),
 );
 const favoured = $derived(favourite ?? marks.data?.favourite ?? false);
+const played = $derived(marks.data?.played ?? false);
 const current = $derived(
   ($ratingWrites === undefined ? marks.data?.rating : $ratingWrites) ?? 0,
 );
 const stars = $derived(Math.round(current / 2));
 const rated = $derived(stars > 0);
+
+async function togglePlayed() {
+  try {
+    await client.marks.setPlayed({ itemId: detail.id, played: !played });
+    await Promise.all([marks.reload(), start.reload()]);
+    reload();
+  } catch (error) {
+    toast.error(readFailure(error).message);
+  }
+}
 
 async function toggleFavourite() {
   const next = !favoured;
@@ -364,26 +376,30 @@ onDestroy(() => refreshAbort?.abort());
     </Tooltip.Root>
   {/if}
 
-  {#if admin}
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger>
-        {#snippet child({ props })}
-          <Button
-            {...props}
-            variant="glass"
-            size="icon-lg"
-            class="size-11"
-            aria-label="More actions"
-          >
-            <EllipsisIcon />
-          </Button>
-        {/snippet}
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end">
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger>
+      {#snippet child({ props })}
+        <Button
+          {...props}
+          variant="glass"
+          size="icon-lg"
+          class="size-11"
+          aria-label="More actions"
+        >
+          <EllipsisIcon />
+        </Button>
+      {/snippet}
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content align="end">
+      <DropdownMenu.Item onSelect={() => void togglePlayed()}>
+        {played ? "Mark as unwatched" : "Mark as watched"}
+      </DropdownMenu.Item>
+      {#if admin}
+        <DropdownMenu.Separator />
         <DropdownMenu.Item onSelect={() => void refreshMetadata()}>
           Refresh metadata
         </DropdownMenu.Item>
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
-  {/if}
+      {/if}
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
 </div>
