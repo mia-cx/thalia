@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { ORPCError } from "@orpc/client";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { setRule } from "../auth/rules.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import { insertItem, insertItems } from "../db/item-fixtures.ts";
-import { versions } from "../db/schema/index.ts";
+import { files, streams, versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -196,6 +196,133 @@ describe.skipIf(!databaseUrl)("playback.next", () => {
         (await client.playback.next({ itemId: at(fx.numbered[1] ?? [], 1) }))
           ?.id,
       ).toBe(at(fx.numbered[2] ?? [], 1));
+    }));
+
+  test("the next Episode's unplayable Version is marked, and only playable Versions plan", () =>
+    withShow(async (db, fx, client) => {
+      const [other] = await insertLibraries(db, {
+        name: "Other",
+        medium: "shows",
+        rootPath: "/srv/other",
+      });
+      if (!other) throw new Error("Missing Library.");
+      const e2 = at(fx.numbered[2] ?? [], 0);
+      // E2's "Original" lives in the home Library; "Zulu" lands in `other`.
+      const [second] = await db
+        .insert(versions)
+        .values({
+          itemId: e2,
+          itemKind: "episode",
+          libraryId: other.id,
+          label: "Zulu",
+          format: "video",
+          bytes: 13n,
+          durationSeconds: 60,
+        })
+        .returning();
+      if (!second) throw new Error("Missing Version.");
+      const [root] = await db.query.libraryRoots.findMany({
+        where: (roots, { eq }) => eq(roots.libraryId, other.id),
+      });
+      if (!root) throw new Error("Missing root.");
+      const [file] = await db
+        .insert(files)
+        .values({
+          itemId: e2,
+          versionId: second.id,
+          libraryId: other.id,
+          rootId: root.id,
+          path: `${e2}.mkv`,
+          order: 0,
+          bytes: 13n,
+          modifiedAt: new Date(),
+          container: "mkv",
+          durationSeconds: 60,
+        })
+        .returning();
+      if (!file) throw new Error("Missing File.");
+      await db.insert(streams).values({
+        versionId: second.id,
+        fileId: file.id,
+        index: 0,
+        kind: "video",
+        codec: "h264",
+        width: 320,
+        height: 180,
+        bitrate: 1000n,
+        hdr: "sdr",
+      });
+      const [first] = await db
+        .select()
+        .from(versions)
+        .where(
+          and(
+            eq(versions.itemId, e2),
+            eq(versions.libraryId, fx.library.id),
+          ),
+        );
+      if (!first) throw new Error("Missing Version.");
+      // View allowed in both Libraries; play denied in the home one.
+      await setRule(db, fx.admin.id, {
+        subject: { type: "user", id: fx.viewer.id },
+        object: { type: "library", id: fx.library.id },
+        action: "play",
+        allowed: false,
+      });
+      const next = await client.playback.next({
+        itemId: at(fx.numbered[1] ?? [], 1),
+      });
+      expect(next?.id).toBe(e2);
+      const detail = await client.items.get({ id: e2 });
+      const byLabel = new Map(
+        detail.versions.map((version) => [version.label, version]),
+      );
+      expect(byLabel.get("Original")?.playable).toBe(false);
+      expect(byLabel.get("Zulu")?.playable).toBe(true);
+      await expect(
+        client.playback.plan({
+          itemId: e2,
+          versionId: second.id,
+          profile: {
+            containers: ["mkv"],
+            progressive: true,
+            videoCodecs: [
+              {
+                codec: "h264",
+                profiles: ["high"],
+                maxLevel: 41,
+                maxWidth: 1920,
+                maxHeight: 1080,
+              },
+            ],
+            audioCodecs: [{ codec: "aac", maxChannels: 2 }],
+            subtitleFormats: ["srt"],
+            hdr: ["sdr"],
+          },
+        }),
+      ).resolves.toMatchObject({ versionId: second.id });
+      await expect(
+        client.playback.plan({
+          itemId: e2,
+          versionId: first.id,
+          profile: {
+            containers: ["mkv"],
+            progressive: true,
+            videoCodecs: [
+              {
+                codec: "h264",
+                profiles: ["high"],
+                maxLevel: 41,
+                maxWidth: 1920,
+                maxHeight: 1080,
+              },
+            ],
+            audioCodecs: [{ codec: "aac", maxChannels: 2 }],
+            subtitleFormats: ["srt"],
+            hdr: ["sdr"],
+          },
+        }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
     }));
 
   test("the series finale has no next Episode", () =>

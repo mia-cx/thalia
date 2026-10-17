@@ -137,13 +137,34 @@ describe("playback helpers", () => {
   });
 
   test("a link's Version wins, then the one progress was made on", () => {
-    const versions = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    const versions = [
+      { id: "a", playable: true },
+      { id: "b", playable: true },
+      { id: "c", playable: true },
+    ];
     expect(pickVersion(versions, "c", "b")).toBe(versions[2]);
     expect(pickVersion(versions, null, "b")).toBe(versions[1]);
     // Progress on a Version this Item no longer has falls back to the first.
     expect(pickVersion(versions, null, "x")).toBe(versions[0]);
     expect(pickVersion(versions, null, null)).toBe(versions[0]);
     expect(pickVersion([], null, null)).toBeUndefined();
+  });
+
+  test("an unplayable Version never wins unless a link asks for it", () => {
+    const versions = [
+      { id: "a", playable: false },
+      { id: "b", playable: true },
+      { id: "c", playable: true },
+    ];
+    // Progress on an unplayable Version falls to the first playable.
+    expect(pickVersion(versions, null, "a")).toBe(versions[1]);
+    // The first Version unplayable picks the second.
+    expect(pickVersion(versions, null, null)).toBe(versions[1]);
+    // An explicit link stays explicit.
+    expect(pickVersion(versions, "a", null)).toBe(versions[0]);
+    // None playable keeps the first.
+    const denied = versions.map((version) => ({ ...version, playable: false }));
+    expect(pickVersion(denied, null, null)).toBe(denied[0]);
   });
 
   test("positions read as minutes or hours", () => {

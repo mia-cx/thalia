@@ -380,6 +380,9 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
     const itemVersions = candidates.filter((version) =>
       visibleVersions.has(version.id),
     );
+    const playableVersions = yield* fromHost(() =>
+      permissions.versionIds("play", itemVersions),
+    );
     const children = childCards.filter((child) =>
       visibleChildren.has(child.id),
     );
@@ -437,6 +440,7 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
       // JSON has no bigint; a byte count stays exact below 2^53.
       versions: itemVersions.map(({ itemId: _itemId, ...version }) => ({
         ...version,
+        playable: playableVersions.has(version.id),
         bytes: Number(version.bytes),
         container: containerOf.get(version.id) ?? null,
         streams: (streamsOf.get(version.id) ?? []).map(
