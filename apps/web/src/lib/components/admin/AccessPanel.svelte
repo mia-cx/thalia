@@ -83,20 +83,15 @@ const pickableGroups = $derived(
   ),
 );
 
-// Server-only Actions are offered only when the picked object is the server.
+// Server-only Actions are offered only when the rule's object is the server.
 const actionOptions = $derived(
-  object !== undefined || objectSel?.type === "server"
+  object === undefined && objectSel?.type === "server"
     ? permissionNames
     : objectActions,
 );
 
 $effect(() => {
-  if (
-    objectSel !== undefined &&
-    objectSel.type !== "server" &&
-    !actionOptions.includes(actionSel)
-  )
-    actionSel = "view";
+  if (!actionOptions.includes(actionSel)) actionSel = "view";
 });
 
 const ruleKey = (rule: Rule) =>

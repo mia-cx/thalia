@@ -368,6 +368,10 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await page.waitFor(
               removeButtonPresent("Remove the View rule for Family"),
             );
+            // A fixed Library object offers only the object Actions.
+            await click(page, "#access-action");
+            expect(await optionLabels(page)).not.toContain("Manage server");
+            await pick(page, "View");
             await signIn(page, base, token, `/shows/${showA.id}`);
             await page.waitFor(
               removeButtonPresent("Remove the Download rule for Family"),
