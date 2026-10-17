@@ -21,7 +21,7 @@ import { homeLocation, inLibraries } from "./membership.ts";
 import { scanDirectory, scanShowDirectory } from "./scan.ts";
 import { deleteLibrary, updateLibrary } from "./service.ts";
 import { libraryStats, librarySummary } from "./stats.ts";
-import { insertLibraries } from "./testing.ts";
+import { addRoot, insertLibraries } from "./testing.ts";
 
 const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAEklEQVR4nGP4y8CAFWEXHbQSAPZwP0G2GkFNAAAAAElFTkSuQmCC",
@@ -192,6 +192,68 @@ describe.skipIf(!databaseUrl)("server-owned shared Items", () => {
       20_000,
     );
   }
+
+  // Proves restoring a secondary Show copy restores its identity for ordinary watcher rescans.
+  test("a restored Show copy survives a rescan while a lower-position copy remains", () =>
+    withDatabase(async (db) => {
+      const folder = await mkdtemp(join(tmpdir(), "thalia-restored-show-"));
+      try {
+        const [library] = await insertLibraries(db, {
+          name: "TV",
+          medium: "shows",
+          rootPath: join(folder, "a"),
+        });
+        if (!library) throw new Error("Missing Library");
+        const rootB = await addRoot(db, library.id, join(folder, "b"));
+        const original = "Original/Original.S01E01.mkv";
+        const other = "Other/Other.S01E01.mkv";
+        await mkdir(join(library.rootPath, "Original"), { recursive: true });
+        await mkdir(join(folder, "b", "Other"), { recursive: true });
+        await createVideoFixture(join(library.rootPath, original));
+        await cp(join(library.rootPath, original), join(folder, "b", other));
+        const first = await scanShowDirectory(db, library.id, "Original", {
+          changes: [
+            {
+              kind: "add",
+              rootId: library.rootId,
+              path: original,
+              providerIds: { tvdb: "371980" },
+            },
+          ],
+        });
+        const importOther = () =>
+          scanShowDirectory(db, library.id, "Other", {
+            changes: [
+              {
+                kind: "add",
+                rootId: rootB,
+                path: other,
+                providerIds: { tvdb: "371980" },
+              },
+            ],
+          });
+        expect((await importOther()).itemId).toBe(first.itemId);
+        const before = (await db.select({ id: items.id }).from(items))
+          .map((item) => item.id)
+          .sort();
+        await rm(join(folder, "b", other));
+        await scanShowDirectory(db, library.id, "Other", {
+          reconcileMissing: true,
+        });
+        await cp(join(library.rootPath, original), join(folder, "b", other));
+        expect((await importOther()).itemId).toBe(first.itemId);
+        expect((await scanShowDirectory(db, library.id, "Other")).itemId).toBe(
+          first.itemId,
+        );
+        expect(
+          (await db.select({ id: items.id }).from(items))
+            .map((item) => item.id)
+            .sort(),
+        ).toEqual(before);
+      } finally {
+        await rm(folder, { recursive: true, force: true });
+      }
+    }));
 
   // Proves adding and renaming a non-holder copy cannot rewrite a shared original's address.
   test("a second Library's different folder preserves existing shared artwork", () =>

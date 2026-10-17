@@ -1422,7 +1422,8 @@ export async function scanShowDirectory(
       }))
         if (value !== "") asserted.set(`${provider}:${value}`, showId);
       for (const rootId of new Set(groupFiles.map((file) => file.rootId))) {
-        if ((await itemLocation(tx, showId, rootId)) === undefined)
+        const location = await itemLocation(tx, showId, rootId);
+        if (location === undefined || location.titleKey === null)
           await setItemLocation(
             tx,
             showId,
