@@ -101,6 +101,9 @@ async function generateMovies(db: Database, libraryId: string, count: number) {
   `);
   await db.execute(sql`analyze items`);
   await db.execute(sql`analyze artwork`);
+  // Membership and home queries need statistics for the bulk-inserted copies too.
+  await db.execute(sql`analyze versions`);
+  await db.execute(sql`analyze item_ancestors`);
 }
 
 async function medianMs(run: () => Promise<unknown>) {
