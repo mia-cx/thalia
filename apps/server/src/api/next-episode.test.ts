@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { ORPCError } from "@orpc/client";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { setRule } from "../auth/rules.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
-import { items, versions } from "../db/schema/index.ts";
+import { versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
+import { insertItem, insertItems } from "../db/item-fixtures.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 
@@ -79,15 +80,14 @@ async function seed(db: Database) {
       }
     }
   }
-  const [movie] = await db
-    .insert(items)
-    .values({
-      libraryId: library.id,
-      kind: "movie",
-      title: "Movie",
-      canonicalFolder: ".",
-    })
-    .returning();
+  const [movie] = await insertItems(db, {
+    libraryId: library.id,
+    kind: "movie",
+    title: "Movie",
+    canonicalFolder: ".",
+    titleKey: "movie",
+    withVersion: true,
+  });
   if (!movie) throw new Error("Missing Movie.");
   const { token } = await createApiKey(db, viewer.id, "viewer");
   return { admin, viewer, library, show, numbered, specials, movie, token };
@@ -166,6 +166,30 @@ describe.skipIf(!databaseUrl)("playback.next", () => {
         subject: { type: "user", id: fx.viewer.id },
         object: { type: "item", id: at(fx.numbered[2] ?? [], 0) },
         action: "play",
+        allowed: false,
+      });
+      expect(
+        (await client.playback.next({ itemId: at(fx.numbered[1] ?? [], 1) }))
+          ?.id,
+      ).toBe(at(fx.numbered[2] ?? [], 1));
+    }));
+
+  test("an Episode whose only Version lives in a hidden Library is skipped", () =>
+    withShow(async (db, fx, client) => {
+      const [restricted] = await insertLibraries(db, {
+        name: "Restricted",
+        medium: "shows",
+        rootPath: "/srv/restricted",
+      });
+      if (!restricted) throw new Error("Missing Library.");
+      await db
+        .update(versions)
+        .set({ libraryId: restricted.id })
+        .where(eq(versions.itemId, at(fx.numbered[2] ?? [], 0)));
+      await setRule(db, fx.admin.id, {
+        subject: { type: "user", id: fx.viewer.id },
+        object: { type: "library", id: restricted.id },
+        action: "view",
         allowed: false,
       });
       expect(
