@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
 import { ORPCError } from "@orpc/client";
+import { eq } from "drizzle-orm";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { setRule } from "../auth/rules.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem, insertItems } from "../db/item-fixtures.ts";
 import { versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem, insertItems } from "../db/item-fixtures.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 

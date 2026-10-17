@@ -1,9 +1,6 @@
 import { eq } from "drizzle-orm";
 import { Schema } from "effect";
-import {
-  loadPermissionScope,
-  requirePermission,
-} from "../auth/permissions.ts";
+import { loadPermissionScope, requirePermission } from "../auth/permissions.ts";
 import { items } from "../db/schema/index.ts";
 import { nextEpisodeId } from "../mediums/shows.ts";
 import { planPlayback, refreshPlayback } from "../playback/planning.ts";
@@ -195,12 +192,9 @@ const next = authenticated
         if (id === null) return null;
         const [card] = await browseCards(context.db, eq(items.id, id));
         if (!card) return null;
-        const [child] = await detailChildren(
-          context.db,
-          userId,
-          permissions,
-          [card],
-        );
+        const [child] = await detailChildren(context.db, userId, permissions, [
+          card,
+        ]);
         return child ?? null;
       }),
     ),
