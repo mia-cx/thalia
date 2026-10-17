@@ -4,14 +4,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { setupAdmin } from "../auth/accounts.ts";
-import { favourites, files, items, versions } from "../db/schema/index.ts";
+import {
+  favourites,
+  files,
+  items,
+  providerIds,
+  versions,
+} from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
+import {
+  readArtworkOriginal,
+  storeArtworkBytes,
+} from "../metadata/artwork-store.ts";
 import { homeLocation, inLibraries } from "./membership.ts";
 import { scanDirectory, scanShowDirectory } from "./scan.ts";
 import { deleteLibrary, updateLibrary } from "./service.ts";
 import { libraryStats, librarySummary } from "./stats.ts";
 import { insertLibraries } from "./testing.ts";
+
+const png = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAACXBIWXMAAAABAAAAAQBPJcTWAAAAEklEQVR4nGP4y8CAFWEXHbQSAPZwP0G2GkFNAAAAAElFTkSuQmCC",
+  "base64",
+);
 
 describe.skipIf(!databaseUrl)("server-owned shared Items", () => {
   for (const [simultaneous, removal] of [
@@ -99,10 +114,72 @@ describe.skipIf(!databaseUrl)("server-owned shared Items", () => {
             await db
               .insert(favourites)
               .values({ userId: admin.id, itemId: item.id });
-            await deleteLibrary(db, admin.id, a.id);
+            const originalArtwork =
+              removal === "queued" || removal === "reconcile"
+                ? await storeArtworkBytes(db, item.id, "poster", png)
+                : undefined;
+            if (removal === "library") await deleteLibrary(db, admin.id, a.id);
+            else if (removal === "root")
+              await updateLibrary(db, admin.id, a.id, {
+                roots: [{ path: join(folder, "a-empty") }],
+              });
+            else {
+              await rm(join(a.rootPath, movie, "Movie.mkv"));
+              await scanDirectory(
+                db,
+                a.id,
+                movie,
+                removal === "reconcile"
+                  ? { reconcileMissing: true }
+                  : {
+                      changes: [
+                        {
+                          kind: "delete",
+                          target: "file",
+                          rootId: a.rootId,
+                          path: `${movie}/Movie.mkv`,
+                          providerIds: {},
+                        },
+                      ],
+                    },
+              );
+            }
             expect(await db.select().from(items)).toHaveLength(1);
             expect(await db.select().from(favourites)).toHaveLength(1);
             expect((await homeLocation(db, item.id))?.libraryId).toBe(b.id);
+            if (removal === "queued" || removal === "reconcile") {
+              await cp(
+                join(b.rootPath, movie, "Movie.mkv"),
+                join(a.rootPath, movie, "Movie.mkv"),
+              );
+              const replacement = await scanDirectory(db, a.id, movie, {
+                changes: [
+                  {
+                    kind: "add",
+                    rootId: a.rootId,
+                    path: `${movie}/Movie.mkv`,
+                    providerIds: { tmdb: "348" },
+                  },
+                ],
+              });
+              expect(replacement.itemIds).toHaveLength(1);
+              expect(replacement.itemIds[0]).not.toBe(item.id);
+              expect(
+                await db
+                  .select({ value: providerIds.value })
+                  .from(providerIds)
+                  .where(eq(providerIds.itemId, item.id)),
+              ).toEqual([{ value: "603" }]);
+              expect(await db.select().from(favourites)).toHaveLength(1);
+              if (!originalArtwork) throw new Error("Missing original artwork");
+              expect(
+                Buffer.from(
+                  (await readArtworkOriginal(db, originalArtwork.id))?.bytes ??
+                    [],
+                ),
+              ).toEqual(png);
+              await deleteLibrary(db, admin.id, a.id);
+            }
             await updateLibrary(db, admin.id, b.id, {
               roots: [{ path: join(folder, "empty") }],
             });
@@ -115,6 +192,54 @@ describe.skipIf(!databaseUrl)("server-owned shared Items", () => {
       20_000,
     );
   }
+
+  // Proves adding and renaming a non-holder copy cannot rewrite a shared original's address.
+  test("a second Library's different folder preserves existing shared artwork", () =>
+    withDatabase(async (db) => {
+      const folder = await mkdtemp(join(tmpdir(), "thalia-shared-art-"));
+      try {
+        const [a, b] = await insertLibraries(db, [
+          { name: "A", medium: "movies", rootPath: join(folder, "a") },
+          { name: "B", medium: "movies", rootPath: join(folder, "b") },
+        ]);
+        if (!a || !b) throw new Error("Missing Libraries");
+        const aFolder = "The Matrix (1999) [tmdbid-603]";
+        const bFolder = "Matrix Copy (1999) [tmdbid-603]";
+        const renamed = "Renamed Copy (1999) [tmdbid-603]";
+        await mkdir(join(a.rootPath, aFolder), { recursive: true });
+        await mkdir(join(b.rootPath, bFolder), { recursive: true });
+        await createVideoFixture(join(a.rootPath, aFolder, "Movie.mkv"));
+        await cp(
+          join(a.rootPath, aFolder, "Movie.mkv"),
+          join(b.rootPath, bFolder, "Movie.mkv"),
+        );
+        const imported = await scanDirectory(db, a.id, aFolder);
+        const itemId = imported.itemIds[0];
+        if (!itemId) throw new Error("Missing Item");
+        const stored = await storeArtworkBytes(db, itemId, "poster", png);
+        await scanDirectory(db, b.id, bFolder);
+        expect(
+          Buffer.from((await readArtworkOriginal(db, stored.id))?.bytes ?? []),
+        ).toEqual(png);
+        await rename(join(b.rootPath, bFolder), join(b.rootPath, renamed));
+        await scanDirectory(db, b.id, renamed, {
+          changes: [
+            {
+              kind: "move",
+              rootId: b.rootId,
+              previousPath: `${bFolder}/Movie.mkv`,
+              path: `${renamed}/Movie.mkv`,
+              providerIds: { tmdb: "603" },
+            },
+          ],
+        });
+        const original = await readArtworkOriginal(db, stored.id);
+        expect(original?.artwork.storageKey).toBe(stored.storageKey);
+        expect(Buffer.from(original?.bytes ?? [])).toEqual(png);
+      } finally {
+        await rm(folder, { recursive: true, force: true });
+      }
+    }));
 
   // Proves a move collision replaces only this root's copy, preserving the other Library and its marks.
   test(

@@ -843,6 +843,33 @@ describe.skipIf(!databaseUrl)("scan changes", () => {
       });
     }));
 
+  // Proves a batch of Episode renames shares its Season folder without claiming scan identities.
+  test("multiple Episode files can be renamed in one batch", () =>
+    withDatabase((db) =>
+      withVideoFixture(async (root) => {
+        const library = await scanTwoShows(db, root);
+        const before = (await db.select().from(files))
+          .map((file) => file.id)
+          .sort();
+        const changes: ScanChange[] = [];
+        for (const previousPath of showAEpisodes) {
+          const path = previousPath.replace(".mkv", ".new.mkv");
+          await rename(join(root, previousPath), join(root, path));
+          changes.push({
+            kind: "move",
+            rootId: library.rootId,
+            previousPath,
+            path,
+            providerIds: {},
+          });
+        }
+        await runScanJob(db, library.id, "Show A", changes);
+        expect(
+          (await db.select().from(files)).map((file) => file.id).sort(),
+        ).toEqual(before);
+      }),
+    ));
+
   test("a show file-delete removes the Episode and keeps its containers", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);

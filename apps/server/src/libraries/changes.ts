@@ -249,7 +249,8 @@ export async function updateItemCanonicalFolder(
   rootIds?: readonly string[],
 ): Promise<void> {
   const tailPattern = /(?:^|\/)(\.thalia\/artwork\/.+)$/;
-  const roots = (await assetRoots(db, item.id)).filter(
+  const locations = await assetRoots(db, item.id);
+  const roots = locations.filter(
     (root) => rootIds === undefined || rootIds.includes(root.id),
   );
   const inRoot = (rootId: string, storageKey: string) =>
@@ -264,24 +265,28 @@ export async function updateItemCanonicalFolder(
     const nextStorageKey = posix.join(canonicalFolder, tail);
     // The file moved with the Item folder in whichever root actually holds it.
     let holder: string | undefined;
-    for (const root of roots) {
+    for (const root of locations) {
       if (await pathExists(await inRoot(root.id, row.storageKey))) {
         holder = root.id;
         break;
       }
     }
-    if (
-      holder === undefined ||
-      (await pathExists(await inRoot(holder, nextStorageKey)))
-    ) {
+    // Another copy's folder cannot change the globally shared original's address.
+    if (holder !== undefined && !roots.some((root) => root.id === holder))
+      continue;
+    for (const root of roots) {
+      if (!(await pathExists(await inRoot(root.id, nextStorageKey)))) continue;
       await db
         .update(artwork)
         .set({ storageKey: nextStorageKey })
         .where(eq(artwork.id, row.id));
+      break;
     }
   }
+  const identityKey =
+    item.kind === "movie" || item.kind === "show" ? titleKey : null;
   for (const root of roots)
-    await setItemLocation(db, item.id, root.id, canonicalFolder, titleKey);
+    await setItemLocation(db, item.id, root.id, canonicalFolder, identityKey);
   await db
     .update(items)
     .set({ updatedAt: new Date() })
@@ -320,6 +325,7 @@ export async function applyScanChanges(
         : [[rootedKey({ rootId: change.rootId, path }), previousPath] as const],
     ),
   );
+  const touchedItemIds = new Set<string>();
   const fileAt = async (rootId: string, at: string) => {
     const [file] = await db
       .select()
@@ -331,6 +337,7 @@ export async function applyScanChanges(
           eq(files.path, at),
         ),
       );
+    if (file !== undefined) touchedItemIds.add(file.itemId);
     return file;
   };
   const emptiedItemIds: string[] = [];
@@ -422,6 +429,7 @@ export async function applyScanChanges(
         continue;
       }
       const item = await findItemByProviderIds(db, kind, change.providerIds);
+      if (item !== undefined) touchedItemIds.add(item.id);
       if (
         item &&
         (await itemLocation(db, item.id, change.rootId))?.canonicalFolder ===
@@ -457,6 +465,7 @@ export async function applyScanChanges(
             )
             .then((rows) => rows.map((row) => row.item));
     for (const item of candidates) {
+      touchedItemIds.add(item.id);
       // An Item another root still holds loses only this root's Files.
       const held = await db
         .select({ file: files })
@@ -474,5 +483,6 @@ export async function applyScanChanges(
       }
     }
   }
-  return [...new Set(emptiedItemIds)];
+  // The scan retires empty locations after all replacement Files have been written.
+  return [...new Set([...touchedItemIds, ...emptiedItemIds])];
 }

@@ -4,6 +4,7 @@ import {
   asc,
   eq,
   inArray,
+  isNotNull,
   isNull,
   notInArray,
   or,
@@ -55,7 +56,11 @@ import {
   updateItemCanonicalFolder,
 } from "./changes.ts";
 import { queueKeyframeIndex } from "./keyframe-index.ts";
-import { itemLocation, setItemLocation } from "./locations.ts";
+import {
+  itemLocation,
+  retireEmptyLocations,
+  setItemLocation,
+} from "./locations.ts";
 import { inLibraries } from "./membership.ts";
 import { type ProbedLibraryFile, probeLibraryFile } from "./probe-cache.ts";
 import {
@@ -422,6 +427,7 @@ async function rootItemCandidates(
         eq(libraryRoots.libraryId, libraryId),
         eq(items.kind, kind),
         isNull(items.parentId),
+        isNotNull(itemFolders.titleKey),
       ),
     );
   const ids = roots.map((row) => row.id);
@@ -665,7 +671,9 @@ async function reconcileStaleFiles(
     if (remaining === undefined)
       await tx.delete(versions).where(eq(versions.id, versionId));
   }
-  return [...new Set(gone.map((file) => file.itemId))];
+  const touched = [...new Set(gone.map((file) => file.itemId))];
+  await retireEmptyLocations(tx, libraryId, touched);
+  return touched;
 }
 
 /**
@@ -732,6 +740,7 @@ async function findGroupItem(
       .where(eq(itemFolders.itemId, id));
     return !locations.some(
       (location) =>
+        location.titleKey !== null &&
         group.files.some((file) => file.rootId === location.rootId) &&
         (location.canonicalFolder !== group.canonicalFolder ||
           location.titleKey !== group.titleKey),
@@ -1062,7 +1071,7 @@ export async function scanDirectory(
       });
       for (const rootId of new Set(group.files.map((file) => file.rootId))) {
         const location = await itemLocation(tx, item.id, rootId);
-        if (location === undefined)
+        if (location === undefined || location.titleKey === null)
           await setItemLocation(
             tx,
             item.id,
@@ -1214,6 +1223,7 @@ export async function scanDirectory(
     }
     for (const owner of timelineOwners) await persistScanTimelines(tx, owner);
 
+    await retireEmptyLocations(tx, libraryId, emptiedItemIds);
     await pruneEmptiedItems(tx, emptiedItemIds, deletedArtwork);
 
     if (options.reconcileMissing === true) {
@@ -1805,6 +1815,7 @@ export async function scanShowDirectory(
       }
     }
 
+    await retireEmptyLocations(tx, libraryId, emptiedItemIds);
     await pruneEmptiedItems(tx, emptiedItemIds, deletedArtwork);
 
     if (options.reconcileMissing === true) {

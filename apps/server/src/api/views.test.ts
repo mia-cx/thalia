@@ -38,6 +38,7 @@ describe.skipIf(!databaseUrl)("item views", () => {
           },
         },
       });
+      const queryCounts: number[][] = [];
       for (const limit of [1, 20]) {
         statements.length = 0;
         const page = await listItemViews(logged, s.admin.id, {
@@ -52,6 +53,7 @@ describe.skipIf(!databaseUrl)("item views", () => {
         expect(
           statements.filter((query) => query.includes('from "items"')),
         ).toHaveLength(1);
+        const viewQueryCount = statements.length;
         statements.length = 0;
         const cards = await runApi(
           listItemCards(logged, caller, {
@@ -67,7 +69,9 @@ describe.skipIf(!databaseUrl)("item views", () => {
         expect(
           statements.filter((query) => query.includes('from "items"')),
         ).toHaveLength(1);
+        queryCounts.push([viewQueryCount, statements.length]);
       }
+      expect(queryCounts[1]).toEqual(queryCounts[0]);
       for (const query of [{ offset: 99 }, { search: "absent-title" }]) {
         statements.length = 0;
         const page = await listItemViews(logged, s.admin.id, {
