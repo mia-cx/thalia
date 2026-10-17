@@ -11,10 +11,10 @@ import {
 import { createApiKey, login } from "../auth/sessions.ts";
 import { writeAuthSettings } from "../auth/settings.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { groups, jobs, settings } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import {
