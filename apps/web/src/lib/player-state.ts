@@ -319,6 +319,12 @@ export function createPlayer(options: {
       cancelCountdown();
       return;
     }
+    // Between a Version switch and its plan there is no card to show; onTracks
+    // rebuilds it from the new mode.
+    if (current.tracks === undefined) {
+      cancelCountdown();
+      return;
+    }
     if (current.upNext === undefined) {
       patch({
         upNext: {
@@ -506,6 +512,8 @@ export function createPlayer(options: {
       creditsStart = null;
       creditsDismissed = false;
       endDismissed = false;
+      cancelCountdown();
+      if (current.upNext?.at === "credits") patch({ upNext: undefined });
     }
     evaluateUpNext();
     settleControls();

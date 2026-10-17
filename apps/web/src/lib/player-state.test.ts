@@ -1019,6 +1019,68 @@ describe("next episode card", () => {
     expect(state().upNext?.at).toBe("end");
   });
 
+  test("a Version switch drops a running credits countdown until the new plan", async () => {
+    const versions = [
+      { id: "v1", durationSeconds: 100 },
+      { id: "v2", durationSeconds: 100 },
+    ];
+    const {
+      media,
+      player,
+      requests,
+      state,
+      tracks,
+      play,
+      tickSecond,
+      calls,
+      arrive,
+    } = withCard({ versions });
+    play();
+    arrive(90);
+    for (let i = 0; i < 4; i += 1) tickSecond();
+    expect(state().upNext?.remaining).toBe(6);
+    await player.chooseVersion("v2");
+    expect(state().upNext).toBeUndefined();
+    media.fire("playing");
+    requests[1]?.onTracks(tracks({ creditsStartSeconds: null }));
+    expect(state().upNext).toEqual({
+      at: "credits",
+      total: 10,
+      remaining: null,
+    });
+    for (let i = 0; i < 20; i += 1) tickSecond();
+    expect(calls()).toBe(0);
+  });
+
+  test("a Version switch into credits rebuilds the card's countdown", async () => {
+    const versions = [
+      { id: "v1", durationSeconds: 100 },
+      { id: "v2", durationSeconds: 100 },
+    ];
+    const { media, player, requests, state, tracks, play, tickSecond, calls } =
+      withCard({ versions });
+    play();
+    requests[0]?.onTracks(tracks({ creditsStartSeconds: null }));
+    media.currentTime = 90;
+    media.fire("timeupdate");
+    expect(state().upNext).toEqual({
+      at: "credits",
+      total: 10,
+      remaining: null,
+    });
+    await player.chooseVersion("v2");
+    expect(state().upNext).toBeUndefined();
+    media.fire("playing");
+    requests[1]?.onTracks(tracks({ creditsStartSeconds: 90 }));
+    expect(state().upNext?.remaining).toBe(10);
+    for (let i = 0; i < 9; i += 1) {
+      tickSecond();
+      expect(calls()).toBe(0);
+    }
+    tickSecond();
+    expect(calls()).toBe(1);
+  });
+
   test("the initial streams option reaches the first session request", () => {
     const { requests } = setup({
       streams: { audioStreamIndex: 1, subtitleStreamIndex: 3 },
