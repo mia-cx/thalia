@@ -163,6 +163,7 @@ function setup(
   const play = () => {
     media.paused = false;
     media.fire("play");
+    media.fire("playing");
   };
   /** Runs the newest pending hide timer. */
   const tick = () => timers.at(-1)?.run();
@@ -895,6 +896,37 @@ describe("next episode card", () => {
     play();
     tickSecond();
     expect(state().upNext?.remaining).toBe(8);
+    expect(calls()).toBe(0);
+  });
+
+  test("a stall holds the credits countdown until playback resumes", () => {
+    const { media, state, play, tickSecond, calls, arrive } = withCard();
+    play();
+    arrive(90);
+    tickSecond();
+    expect(state().upNext?.remaining).toBe(9);
+    media.fire("waiting");
+    for (let i = 0; i < 15; i += 1) tickSecond();
+    expect(state().upNext?.remaining).toBe(9);
+    expect(calls()).toBe(0);
+    media.fire("playing");
+    tickSecond();
+    expect(state().upNext?.remaining).toBe(8);
+  });
+
+  test("a session notice holds the credits countdown", () => {
+    const { requests, state, play, tickSecond, calls, arrive } = withCard();
+    play();
+    arrive(90);
+    tickSecond();
+    expect(state().upNext?.remaining).toBe(9);
+    requests[0]?.onNotice({
+      title: "Stopped",
+      message: "It stalled.",
+      retry: true,
+    });
+    for (let i = 0; i < 15; i += 1) tickSecond();
+    expect(state().upNext?.remaining).toBe(9);
     expect(calls()).toBe(0);
   });
 

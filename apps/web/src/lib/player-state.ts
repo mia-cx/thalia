@@ -328,8 +328,15 @@ export function createPlayer(options: {
         },
       });
     }
-    // Credits count down only while the media plays; pausing halts it.
-    if (current.upNext?.remaining !== null && current.playing) armCountdown();
+    // Credits count down only while playback runs free; pausing, buffering
+    // or a notice holds them.
+    if (
+      current.upNext?.remaining !== null &&
+      current.playing &&
+      !current.buffering &&
+      current.notice === undefined
+    )
+      armCountdown();
     else cancelCountdown();
   }
 
@@ -356,6 +363,7 @@ export function createPlayer(options: {
           switching: false,
           playing: !media.paused,
         });
+        evaluateUpNext();
         settleControls();
       },
       onTracks: (tracks) => {
@@ -420,7 +428,13 @@ export function createPlayer(options: {
         settleControls();
       },
     ],
-    ["waiting", () => patch({ buffering: true })],
+    [
+      "waiting",
+      () => {
+        patch({ buffering: true });
+        evaluateUpNext();
+      },
+    ],
     // A paused load or a refused autoplay never fires `playing`.
     [
       "canplay",
@@ -432,6 +446,7 @@ export function createPlayer(options: {
       "playing",
       () => {
         patch({ buffering: false });
+        evaluateUpNext();
         settleControls();
       },
     ],
