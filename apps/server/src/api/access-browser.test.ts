@@ -34,8 +34,12 @@ const mouse = async (page: Page, point: { x: number; y: number }) => {
 
 // Bits-ui Selects open on pointerdown, so drive real mouse input.
 async function click(page: Page, selector: string, text?: string) {
+  const element = `(() => { const els = [...document.querySelectorAll(${JSON.stringify(selector)})]; return ${text === undefined ? "els[0]" : `els.find(e => e.textContent.trim() === ${JSON.stringify(text)})`}; })()`;
+  await page.eval(`${element}?.scrollIntoView({ block: "center" })`);
+  // Closing a floating layer can restore focus and scroll after it disappears.
+  await waitForSettled(page, element);
   const point = await page.eval<{ x: number; y: number }>(
-    `(() => { const els = [...document.querySelectorAll(${JSON.stringify(selector)})]; const el = ${text === undefined ? "els[0]" : `els.find(e => e.textContent.trim() === ${JSON.stringify(text)})`}; if (!el) return null; el.scrollIntoView({ block: "center" }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
+    `(() => { const el = ${element}; if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
   );
   if (point === null) throw new Error(`No ${selector} "${text}".`);
   await mouse(page, point);
