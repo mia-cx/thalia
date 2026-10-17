@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { setupAdmin } from "../auth/accounts.ts";
+import { writePlaybackPreferences } from "../auth/profile.ts";
+import { userSettings } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { toGuid } from "./request.ts";
@@ -110,6 +113,61 @@ describe.skipIf(!databaseUrl)("jellyfin auth", () => {
         expect(logout.status).toBe(204);
         const after = await call("/Users/Me", { headers: withToken(token) });
         expect(after.status).toBe(401);
+      } finally {
+        await thalia.stop();
+      }
+    }));
+
+  test("EnableNextEpisodeAutoPlay follows the playback setting both ways", () =>
+    withDatabase(async (db, url) => {
+      const thalia = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const base = `http://127.0.0.1:${thalia.apiServer?.port}`;
+        const admin = await setupAdmin(db, {
+          username: "mia",
+          password: "secret-pass",
+        });
+        const login = await fetch(`${base}/users/authenticatebyname`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "X-Emby-Authorization": infuse,
+          },
+          body: JSON.stringify({ username: "mia", Pw: "secret-pass" }),
+        });
+        const { AccessToken: token } = (await login.json()) as {
+          AccessToken: string;
+        };
+        const headers = {
+          "X-Emby-Authorization": `${infuse}, Token="${token}"`,
+          "content-type": "application/json",
+        };
+        const autoplayOf = async () =>
+          (
+            (await (await fetch(`${base}/Users/Me`, { headers })).json()) as {
+              Configuration: { EnableNextEpisodeAutoPlay: boolean };
+            }
+          ).Configuration.EnableNextEpisodeAutoPlay;
+
+        expect(await autoplayOf()).toBe(true);
+
+        await writePlaybackPreferences(db, admin.id, admin.id, {
+          autoplayNextEpisode: false,
+        });
+        expect(await autoplayOf()).toBe(false);
+
+        const update = await fetch(`${base}/Users/Configuration`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ EnableNextEpisodeAutoPlay: true }),
+        });
+        expect(update.status).toBe(204);
+        expect(await autoplayOf()).toBe(true);
+        const [row] = await db
+          .select({ value: userSettings.autoplayNextEpisode })
+          .from(userSettings)
+          .where(eq(userSettings.userId, admin.id));
+        expect(row?.value).toBe(true);
       } finally {
         await thalia.stop();
       }
