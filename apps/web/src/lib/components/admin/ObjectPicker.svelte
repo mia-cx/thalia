@@ -170,6 +170,10 @@ function pick(next: string) {
     class="h-10 w-full min-w-0 rounded-md bg-fill px-3 text-subheadline text-label outline-none transition-colors placeholder:text-label-secondary focus:bg-fill-strong"
     oninput={(event) => {
       input = event.currentTarget.value;
+      if (sel !== "") {
+        sel = "";
+        value = undefined;
+      }
       open = true;
     }}
     onmousedown={() => (justCleared = false)}

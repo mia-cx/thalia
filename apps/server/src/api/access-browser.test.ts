@@ -314,6 +314,22 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             expect(await optionLabels(page)).not.toContain("Manage server");
             await pick(page, "View");
 
+            // Editing the picked object's text drops the target.
+            await page.eval(
+              "(() => { const i = document.getElementById('access-object'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); })()",
+            );
+            await page.send("Input.insertText", { text: "x" });
+            expect(
+              await page.eval<string>(
+                "document.getElementById('access-object').value",
+              ),
+            ).toBe("Showsx");
+            expect(
+              await page.eval<boolean>(
+                "[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add rule')?.disabled",
+              ),
+            ).toBe(true);
+
             // The server object offers every Action.
             await typeObject(page, "Server");
             await pick(page, "Server");
