@@ -312,18 +312,23 @@ function onKeydown(event: KeyboardEvent) {
     return;
   const target = event.target as HTMLElement | null;
   if (target?.closest("[role='menu']") !== null) return;
+  const upNext = playerState?.upNext;
+  // A hidden card only reappears on this key; it doesn't act on it.
+  const cardShown =
+    upNext !== undefined &&
+    (playerState?.controls === true || upNext.remaining !== null);
   player?.activity();
   const onSlider = target?.closest("[role='slider']") !== null;
   const onAction = target?.closest("button, a, [role='slider']") !== null;
   // event.key, not code: non-QWERTY layouts get the letters they press.
   switch (event.key.toLowerCase()) {
     case "enter":
-      if (playerState?.upNext === undefined || onAction) return;
+      if (!cardShown || onAction) return;
       event.preventDefault();
       player?.playNext();
       return;
     case "escape":
-      if (playerState?.upNext === undefined) return;
+      if (!cardShown) return;
       event.preventDefault();
       player?.dismissUpNext();
       return;
