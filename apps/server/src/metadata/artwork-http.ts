@@ -1,7 +1,10 @@
 import { eq } from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
 import { readSessionToken } from "../auth/http.ts";
-import { requirePermission } from "../auth/permissions.ts";
+import {
+  requirePermission,
+  requireVersionPermission,
+} from "../auth/permissions.ts";
 import { authenticate } from "../auth/sessions.ts";
 import { readAuthSettings } from "../auth/settings.ts";
 import type { Database } from "../db/client.ts";
@@ -272,6 +275,14 @@ export function createArtworkHandler(
         }
         if (itemId === null)
           return jsonError(404, "NOT_FOUND", "Artwork not found.");
+        if (row?.versionId)
+          await requireVersionPermission(
+            db,
+            caller.user.id,
+            "view",
+            row.versionId,
+            itemId,
+          );
         await requirePermission(db, caller.user.id, "view", {
           type: "item",
           id: itemId,

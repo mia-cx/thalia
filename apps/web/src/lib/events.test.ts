@@ -66,6 +66,28 @@ describe("followLibrary", () => {
     libraryId: id,
   });
 
+  // Proves a shared Item refreshes through any visible member Library.
+  test("a server Item follows changes from every visible Library", async () => {
+    const controller = new AbortController();
+    let called = 0;
+    await followLibrary(
+      async () =>
+        (async function* () {
+          yield changed(libraryId);
+          yield changed(otherLibrary);
+          yield starting;
+          controller.abort();
+        })(),
+      null,
+      () => {
+        called += 1;
+      },
+      controller.signal,
+      1,
+    );
+    expect(called).toBe(2);
+  });
+
   test("calls onChange only for matching library.changed events", async () => {
     const controller = new AbortController();
     let called = 0;

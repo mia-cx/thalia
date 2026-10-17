@@ -11,7 +11,7 @@ import {
   users,
 } from "../db/schema/index.ts";
 import { AuthError } from "./errors.ts";
-import { requirePermission } from "./permissions.ts";
+import { requirePermission, requireVersionPermission } from "./permissions.ts";
 import type { authenticate } from "./sessions.ts";
 import { readAuthSettings } from "./settings.ts";
 
@@ -87,8 +87,9 @@ async function liveSession(db: TokenDb, scope: PlaybackScope) {
     .select({
       userId: sessionRegistry.userId,
       itemId: sessionRegistry.itemId,
+      versionId: sessionRegistry.versionId,
       state: sessionRegistry.state,
-      libraryId: items.libraryId,
+      id: items.id,
     })
     .from(sessionRegistry)
     .innerJoin(items, eq(items.id, sessionRegistry.itemId))
@@ -169,6 +170,13 @@ async function gate(
   if (session.userId !== userId) unauthenticated();
   await enabledOwner(db, userId);
   await liveCredential(db, userId, credential);
+  await requireVersionPermission(
+    db,
+    userId,
+    "play",
+    session.versionId,
+    session.itemId,
+  );
   await requirePermission(db, userId, "view", {
     type: "item",
     id: session.itemId,

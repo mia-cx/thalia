@@ -5,10 +5,10 @@ import { homeShelves } from "../api/browse.ts";
 import { setupAdmin } from "../auth/accounts.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem, itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { items, jobs, settings } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { createJobQueue } from "../jobs/queue.ts";
 import { createJobRegistry } from "../jobs/registry.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -39,6 +39,7 @@ async function seed(db: Database, folder: string, plugin: FixturePlugin) {
   });
   if (!library) throw new Error("Library missing.");
   const item = await insertItem(db, {
+    withVersion: true,
     libraryId: library.id,
     kind: "movie",
     title: "Alien",
@@ -100,7 +101,7 @@ describe.skipIf(!databaseUrl)("plugin bridges", () => {
         });
         await registry.run(job);
         const [matched] = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.id, item.id));
         expect(matched).toMatchObject({

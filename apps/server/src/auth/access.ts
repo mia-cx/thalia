@@ -16,6 +16,8 @@ type Input = {
   action: Action;
   userId: string;
   groupIds: readonly string[];
+  /** Item ancestors are shared; each candidate copy supplies its own Library branch. */
+  libraryIds?: readonly string[];
 };
 
 function decide({ rules, chain, action, userId, groupIds }: Input) {
@@ -45,6 +47,20 @@ export function resolveAccess(input: Input): {
   allowed: boolean;
   rule: AccessRule | null;
 } {
+  if (input.libraryIds !== undefined) {
+    const items = input.chain.filter((object) => object.type === "item");
+    const decisions = input.libraryIds.map((id) =>
+      resolveAccess({
+        ...input,
+        libraryIds: undefined,
+        chain: [...items, { type: "library", id }, server],
+      }),
+    );
+    return (
+      decisions.find((decision) => decision.allowed) ??
+      decisions[0] ?? { allowed: false, rule: null }
+    );
+  }
   if (
     (serverOnlyActions as readonly Action[]).includes(input.action) &&
     input.chain[0]?.type !== "server"

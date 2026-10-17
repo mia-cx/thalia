@@ -3,6 +3,7 @@ import { mkdir, rename, rm, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { createDatabase, type Database } from "../db/client.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { files, items, jobs, streams, versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
@@ -291,7 +292,7 @@ describe.skipIf(!databaseUrl)("library repair", () => {
         });
         expect(jobs[0]?.concurrencyKey).toBe(libraryConcurrencyKey(library.id));
         await drainScanJobs(db);
-        const itemRows = await db.select().from(items);
+        const itemRows = await db.select(itemFixtureFields).from(items);
         expect(itemRows).toHaveLength(1);
         expect(itemRows[0]).toMatchObject({
           libraryId: library.id,
@@ -310,17 +311,17 @@ describe.skipIf(!databaseUrl)("library repair", () => {
         await createVideoFixture(join(root, file1080));
         const library = await insertLibrary(db, root);
         await scanDirectory(db, library.id, folder);
-        expect(await db.select().from(items)).toHaveLength(1);
+        expect(await db.select(itemFixtureFields).from(items)).toHaveLength(1);
 
         const repair = createLibraryRepair(db);
         expect(await repair.run()).toBe(1);
         await drainScanJobs(db);
-        expect(await db.select().from(items)).toHaveLength(1);
+        expect(await db.select(itemFixtureFields).from(items)).toHaveLength(1);
 
         await rm(join(root, folder), { recursive: true });
         expect(await repair.run()).toBe(1);
         await drainScanJobs(db);
-        expect(await db.select().from(items)).toEqual([]);
+        expect(await db.select(itemFixtureFields).from(items)).toEqual([]);
         expect(await db.select().from(versions)).toEqual([]);
         expect(await db.select().from(files)).toEqual([]);
         expect(await db.select().from(streams)).toEqual([]);
@@ -363,7 +364,7 @@ describe.skipIf(!databaseUrl)("library repair", () => {
         expect(await repair.run()).toBe(1);
         await drainScanJobs(db);
         expect(await repair.run()).toBe(0);
-        expect(await db.select().from(items)).toHaveLength(1);
+        expect(await db.select(itemFixtureFields).from(items)).toHaveLength(1);
         expect(await db.select().from(versions)).toHaveLength(2);
       });
     }));
@@ -576,7 +577,7 @@ describe.skipIf(!databaseUrl)("library repair", () => {
           reconcileMissing: true,
         });
         await drainScanJobs(db);
-        const itemRows = await db.select().from(items);
+        const itemRows = await db.select(itemFixtureFields).from(items);
         expect(itemRows.map((row) => row.kind).sort()).toEqual([
           "episode",
           "season",
@@ -605,7 +606,7 @@ describe.skipIf(!databaseUrl)("library repair", () => {
         );
         const library = await insertLibrary(db, root, "shows");
         await scanShowDirectory(db, library.id, "Foundation");
-        expect(await db.select().from(items)).toHaveLength(5);
+        expect(await db.select(itemFixtureFields).from(items)).toHaveLength(5);
 
         const repair = createLibraryRepair(db);
         expect(await repair.run()).toBe(1);
@@ -625,7 +626,7 @@ describe.skipIf(!databaseUrl)("library repair", () => {
         ]);
         await drainScanJobs(db);
 
-        const itemRows = await db.select().from(items);
+        const itemRows = await db.select(itemFixtureFields).from(items);
         const seasonRows = itemRows.filter((row) => row.kind === "season");
         expect(
           itemRows.find((row) => row.kind === "show")?.canonicalFolder,

@@ -13,6 +13,7 @@ import {
 } from "../auth/quick-connect.ts";
 import { issueSession } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import {
   contributors,
   credits,
@@ -20,7 +21,6 @@ import {
   sessionRegistry,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { scanDirectory } from "../libraries/scan.ts";
 import { createLibrary } from "../libraries/service.ts";
 import {
@@ -253,6 +253,7 @@ async function fixtureOf(
       roots: [folder],
     });
     const item = await insertItem(db, {
+      withVersion: true,
       libraryId: library.id,
       kind: "movie",
       title: "Image subject",
@@ -299,6 +300,7 @@ async function fixtureOf(
       roots: [folder],
     });
     const item = await insertItem(db, {
+      withVersion: true,
       libraryId: library.id,
       kind: "movie",
       title: "Artwork subject",
@@ -370,6 +372,7 @@ async function fixtureOf(
       roots: [`${tmpdir()}/coverage-items-${id}`],
     });
     const item = await insertItem(db, {
+      withVersion: true,
       libraryId: library.id,
       kind: "movie",
       title: "Coverage subject",

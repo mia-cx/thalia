@@ -32,6 +32,7 @@ import {
   libraryRoots,
   providerIds,
 } from "../db/schema/index.ts";
+import { inLibraries } from "../libraries/membership.ts";
 
 /** One Library's dashboard numbers over its playable Items and their imported Versions. */
 export type LibraryStats = Schema.Schema.Type<typeof LibraryStatsSchema>;
@@ -128,7 +129,7 @@ export async function libraryStats(
       const result = await db.execute(sql`
         with playable as (
           select ${items.id} from ${items}
-          where ${items.libraryId} = ${library.id}
+          where ${inLibraries([library.id])}
             and ${items.kind} in ('movie', 'episode')
         ),
         imported as (
@@ -163,7 +164,7 @@ export async function libraryStats(
               'episodes', count(*) filter (where kind = 'episode')
             )
             from ${items}
-            where ${items.libraryId} = ${library.id}
+            where ${inLibraries([library.id])}
           ) as kinds,
           (select count(*)::int from playable) as items,
           (select count(*)::int from imported) as versions,
@@ -325,7 +326,7 @@ export async function libraryMetadataGaps(
       const counts = MetadataGapSchema.literals.map(
         (gap) =>
           sql`(select count(*)::int from ${items}
-            where ${items.libraryId} = ${library.id}
+            where ${inLibraries([library.id])}
               and ${inArray(items.kind, [...gapDefinitions[gap].kinds])}
               and ${gapDefinitions[gap].missing}
           ) as ${sql.identifier(gap)}`,
@@ -385,7 +386,7 @@ export async function metadataGapItems(
     )
     .where(
       and(
-        eq(items.libraryId, input.libraryId),
+        inLibraries([input.libraryId]),
         inArray(items.kind, [...gap.kinds]),
         gap.missing,
         input.after === undefined ? undefined : afterTitle(input.after),

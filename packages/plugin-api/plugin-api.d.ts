@@ -38,7 +38,7 @@ export interface PluginManifest {
 
 export interface Item {
   id: string;
-  libraryId: string;
+  homeLibraryId: string | null;
   kind: ItemKind;
   parentId: string | null;
   title: string;
@@ -50,6 +50,7 @@ export interface Item {
 
 export interface Version {
   id: string;
+  libraryId: string;
   label: string;
   format: "video" | "audio" | "ebook" | "image";
   bytes: number;

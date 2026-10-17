@@ -3,9 +3,9 @@ import { existsSync } from "node:fs";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { setupAdmin } from "../auth/accounts.ts";
 import { createApiKey, login } from "../auth/sessions.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { accessRules } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { browser, openPage, signIn, webBuild } from "./browser-testing.ts";
@@ -48,16 +48,33 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           });
           if (library === undefined) throw new Error("Missing Library.");
           const shows = [];
-          for (const title of ["Alpha", "Beta", "Gamma"])
-            shows.push(
-              await insertItem(db, {
-                libraryId: library.id,
-                kind: "show",
-                title,
-                canonicalFolder: ".",
-                extension: {},
-              }),
-            );
+          for (const title of ["Alpha", "Beta", "Gamma"]) {
+            const show = await insertItem(db, {
+              libraryId: library.id,
+              kind: "show",
+              title,
+              canonicalFolder: title,
+              extension: {},
+            });
+            shows.push(show);
+            const season = await insertItem(db, {
+              libraryId: library.id,
+              kind: "season",
+              title: "Season 1",
+              canonicalFolder: title,
+              parentId: show.id,
+              extension: { seasonNumber: 1 },
+            });
+            await insertItem(db, {
+              withVersion: true,
+              libraryId: library.id,
+              kind: "episode",
+              title: "Episode 1",
+              canonicalFolder: title,
+              parentId: season.id,
+              extension: { episodeNumber: 1 },
+            });
+          }
           const [showA, showB, showC] = shows;
           if (!showA || !showB || !showC) throw new Error("Missing shows.");
           const server = await startThalia("api", {

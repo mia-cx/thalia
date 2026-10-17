@@ -8,10 +8,10 @@ import type { RouterClient } from "@orpc/server";
 import { eq } from "drizzle-orm";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { createApiKey } from "../auth/sessions.ts";
+import { insertItem, itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { items, jobs, providerIds, settings } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { createJobQueue } from "../jobs/queue.ts";
 import { createJobRegistry } from "../jobs/registry.ts";
@@ -66,11 +66,29 @@ describe.skipIf(!databaseUrl)("items.refresh", () => {
         });
         if (!library) throw new Error("Fixture library missing.");
         const show = await insertItem(db, {
+          withVersion: true,
           libraryId: library.id,
           kind: "show",
           title: "Stale Title",
           canonicalFolder: "Breaking Bad",
           extension: {},
+        });
+        const season = await insertItem(db, {
+          libraryId: library.id,
+          kind: "season",
+          parentId: show.id,
+          title: "Season 1",
+          canonicalFolder: "Breaking Bad",
+          extension: { seasonNumber: 1 },
+        });
+        await insertItem(db, {
+          withVersion: true,
+          libraryId: library.id,
+          kind: "episode",
+          parentId: season.id,
+          title: "Pilot",
+          canonicalFolder: "Breaking Bad",
+          extension: { episodeNumber: 1 },
         });
         await mkdir(join(root, "Breaking Bad"));
         await db
@@ -136,7 +154,7 @@ describe.skipIf(!databaseUrl)("items.refresh", () => {
         if (!claimed) throw new Error("Refresh job was not claimed.");
         await registry.run(claimed);
         const [refreshed] = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.id, show.id));
         expect(refreshed).toMatchObject({

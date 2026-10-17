@@ -11,11 +11,11 @@ import {
   revokeSession,
 } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
   events,
-  items,
   sessionRegistry,
   versions,
 } from "../db/schema/index.ts";
@@ -533,15 +533,12 @@ describe.skipIf(!databaseUrl)("api events", () => {
       const { token: ownerToken } = await createApiKey(db, owner.id, "o");
       const { token: otherToken } = await createApiKey(db, other.id, "x");
       const library = await insertLibrary(db, "Movies");
-      const [item] = await db
-        .insert(items)
-        .values({
-          libraryId: library.id,
-          kind: "movie",
-          title: "Movie",
-          canonicalFolder: "/srv/movies/movie",
-        })
-        .returning();
+      const [item] = await insertItems(db, {
+        libraryId: library.id,
+        kind: "movie",
+        title: "Movie",
+        canonicalFolder: "/srv/movies/movie",
+      });
       if (!item) throw new Error("Item insert returned no row.");
       const [version] = await db
         .insert(versions)

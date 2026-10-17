@@ -44,7 +44,7 @@ function sampleCard(overrides: Partial<BrowseCard>): BrowseCard {
   return {
     id: "card-1",
     kind: "movie",
-    libraryId: "library-1",
+    homeLibraryId: "library-1",
     title: "Dune: Part Two",
     year: 2024,
     addedAt: "2026-10-01T00:00:00.000000Z",
@@ -527,6 +527,7 @@ const rows = Array.from(
           versions={[
             {
               id: "v-1",
+              libraryId: "library-1",
               label: "4K · Dolby Vision · HEVC",
               format: "video",
               durationSeconds: 3300,
@@ -536,6 +537,7 @@ const rows = Array.from(
             },
             {
               id: "v-2",
+              libraryId: "library-1",
               label: "1080p · HDR10 · H.264",
               format: "video",
               durationSeconds: 3300,

@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { Database } from "./db/client.ts";
+import { insertItem, itemFixtureFields } from "./db/item-fixtures.ts";
 import { migrateDatabase } from "./db/migrate.ts";
 import type { JobPayload } from "./db/schema/index.ts";
 import { items } from "./db/schema/index.ts";
 import { databaseUrl, withDatabase } from "./db/testing.ts";
-import { insertItem } from "./db/tree.ts";
 import {
   parseRole,
   type Role,
@@ -106,7 +106,7 @@ describe.skipIf(!databaseUrl)("startThalia job registration", () => {
         await waitForJobState(db, fetchJob.id, "completed");
         expect(scans).toEqual([scanPayload]);
         const [stored] = await db
-          .select()
+          .select(itemFixtureFields)
           .from(items)
           .where(eq(items.id, item.id));
         // The built-in handler completed the job; with no TMDB key configured,
@@ -161,7 +161,7 @@ describe.skipIf(!databaseUrl)("startThalia job registration", () => {
               );
             }),
           ]).finally(() => clearTimeout(timer));
-          const [item] = await db.select().from(items);
+          const [item] = await db.select(itemFixtureFields).from(items);
           if (!item) throw new Error("Scanned item missing.");
           expect(payload).toEqual({
             type: "provider-fetch",

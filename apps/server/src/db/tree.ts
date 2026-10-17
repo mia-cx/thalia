@@ -1,13 +1,14 @@
-import { and, eq, sql } from "drizzle-orm";
-import { rootsOf } from "../libraries/roots.ts";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { emitPluginEvents } from "../plugins/events.ts";
+import { lockCatalogue } from "./catalogue-lock.ts";
 import type { Database } from "./client.ts";
 import {
   artwork,
   episodes,
   itemAncestors,
+  itemFolders,
   items,
-  libraries,
+  libraryRoots,
   movies,
   seasons,
   shows,
@@ -42,16 +43,6 @@ type NewItem = Omit<Item, "kind" | "parentId"> &
       }
   );
 
-async function lockLibrary(tx: Transaction, libraryId: string) {
-  const [library] = await tx
-    .select()
-    .from(libraries)
-    .where(eq(libraries.id, libraryId))
-    .for("update");
-  if (!library) throw new Error("Library not found.");
-  return library;
-}
-
 async function getItem(tx: Transaction, itemId: string) {
   const [item] = await tx.select().from(items).where(eq(items.id, itemId));
   if (!item) throw new Error("Item not found.");
@@ -62,11 +53,7 @@ async function validateParent(
   tx: Transaction,
   item: Item,
   parentId: string | null,
-  medium: typeof libraries.$inferSelect.medium,
 ) {
-  if ((item.kind === "movie" ? "movies" : "shows") !== medium) {
-    throw new Error("Item kind does not match the library medium.");
-  }
   const parentKind = {
     movie: null,
     show: null,
@@ -79,16 +66,16 @@ async function validateParent(
   }
   if (parentId === null) throw new Error("Seasons and episodes need a parent.");
   const parent = await getItem(tx, parentId);
-  if (parent.libraryId !== item.libraryId || parent.kind !== parentKind) {
-    throw new Error("Parent kind or library does not match the item.");
+  if (parent.kind !== parentKind) {
+    throw new Error("Parent kind does not match the item.");
   }
 }
 
-/** Inserts an Item, its extension and ancestry atomically under the library lock. */
+/** Inserts an Item, its extension and ancestry atomically under the catalogue lock. */
 export async function insertItem(db: Connection, input: NewItem) {
   return db.transaction(async (tx) => {
-    const library = await lockLibrary(tx, input.libraryId);
-    await validateParent(tx, input, input.parentId ?? null, library.medium);
+    await lockCatalogue(tx);
+    await validateParent(tx, input, input.parentId ?? null);
     const { extension: _extension, ...values } = input;
     const [item] = await tx.insert(items).values(values).returning();
     if (!item) throw new Error("Item insertion returned no row.");
@@ -136,15 +123,14 @@ export async function insertItem(db: Connection, input: NewItem) {
   });
 }
 
-/** Moves a subtree and its extension parent atomically within one library. */
+/** Moves a subtree and its extension parent atomically under the catalogue lock. */
 export async function moveItem(
   db: Connection,
   itemId: string,
   parentId: string | null,
 ) {
   return db.transaction(async (tx) => {
-    const original = await getItem(tx, itemId);
-    const library = await lockLibrary(tx, original.libraryId);
+    await lockCatalogue(tx);
     const item = await getItem(tx, itemId);
     if (parentId !== null) {
       const [cycle] = await tx
@@ -158,7 +144,7 @@ export async function moveItem(
         );
       if (cycle) throw new Error("Cannot move an item into its subtree.");
     }
-    await validateParent(tx, item, parentId, library.medium);
+    await validateParent(tx, item, parentId);
     if (item.parentId === parentId) return item;
 
     // Keep internal ancestry and replace only paths entering the subtree.
@@ -220,8 +206,8 @@ export async function deleteItemSubtree(
   deletedArtwork: DeletedArtworkFile[] = [],
 ) {
   await db.transaction(async (tx) => {
-    const item = await getItem(tx, itemId);
-    await lockLibrary(tx, item.libraryId);
+    await lockCatalogue(tx);
+    await getItem(tx, itemId);
     // Serialize the artwork snapshot against concurrent stores on descendants.
     const removed = await tx
       .select({ itemId: items.id, kind: items.kind })
@@ -231,9 +217,16 @@ export async function deleteItemSubtree(
       .for("update", { of: items });
     // Colocated keys of the whole subtree resolve in the Library's roots,
     // which the File deletes below cannot leave unreachable.
-    const rootPaths = (await rootsOf(tx, item.libraryId)).map(
-      (root) => root.path,
-    );
+    const locations = await tx
+      .selectDistinct({ path: libraryRoots.path })
+      .from(itemFolders)
+      .innerJoin(libraryRoots, eq(libraryRoots.id, itemFolders.rootId))
+      .innerJoin(
+        itemAncestors,
+        eq(itemAncestors.descendantId, itemFolders.itemId),
+      )
+      .where(eq(itemAncestors.ancestorId, itemId));
+    const rootPaths = locations.map((root) => root.path);
     const deletedFields = {
       backend: artwork.backend,
       storageKey: artwork.storageKey,
@@ -278,5 +271,41 @@ export async function deleteItemSubtree(
       tx,
       removed.map((payload) => ({ event: "item.removed", payload })),
     );
+  });
+}
+
+/** Removes only Items with no Versions anywhere below them, preserving shared catalogue state. */
+export async function pruneEmptiedItems(
+  db: Connection,
+  itemIds: readonly string[],
+  deletedArtwork: DeletedArtworkFile[],
+) {
+  if (itemIds.length === 0) return;
+  return db.transaction(async (tx) => {
+    await lockCatalogue(tx);
+    const candidates = await tx
+      .selectDistinct({
+        id: itemAncestors.ancestorId,
+        depth: itemAncestors.depth,
+      })
+      .from(itemAncestors)
+      .where(inArray(itemAncestors.descendantId, [...itemIds]));
+    // Snapshot ancestors before any cascade; visit leaves before their containers.
+    for (const candidate of candidates.sort((a, b) => a.depth - b.depth)) {
+      const [empty] = await tx
+        .select({ id: items.id })
+        .from(items)
+        .where(
+          and(
+            eq(items.id, candidate.id),
+            sql`not exists (
+        select 1 from item_ancestors a join versions v on v.item_id = a.descendant_id
+        where a.ancestor_id = "items"."id"
+      )`,
+          ),
+        );
+      if (empty !== undefined)
+        await deleteItemSubtree(tx, empty.id, deletedArtwork);
+    }
   });
 }

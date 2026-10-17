@@ -111,7 +111,7 @@ describe("openapi document", () => {
       expect.arrayContaining([
         "id",
         "kind",
-        "libraryId",
+        "homeLibraryId",
         "title",
         "year",
         "addedAt",

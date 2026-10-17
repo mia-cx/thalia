@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { sql } from "drizzle-orm";
 import { viewableLibraryIds } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import {
@@ -6,6 +7,7 @@ import {
   seasons as seasonTable,
   shows as showTable,
 } from "../db/schema/shows.ts";
+import { inLibraries } from "../libraries/membership.ts";
 import type { Medium, RootedName, ScanRules } from "./medium.ts";
 import { isVideoExtra, isVideoPath } from "./video-common/paths.ts";
 import { folderProviderIds } from "./video-common/provider-ids.ts";
@@ -68,9 +70,9 @@ export function createShowsMedium(db: Database): Medium {
 
 /** Return the first unwatched Episode after each user's last completed Episode per Show. */
 export async function nextUp(db: Database, userId: string): Promise<string[]> {
-  const viewable = new Set(await viewableLibraryIds(db, userId));
-  if (viewable.size === 0) return [];
-  const rows = await db.$client<{ id: string; libraryId: string }[]>`
+  const viewable = await viewableLibraryIds(db, userId);
+  if (viewable.length === 0) return [];
+  const rows = await db.execute(sql`
     with last_watched as (
       select distinct on (season.show_id)
         season.show_id,
@@ -87,10 +89,10 @@ export async function nextUp(db: Database, userId: string): Promise<string[]> {
         season.season_number desc,
         episode.episode_number desc
     )
-    select candidate.id, candidate.library_id as "libraryId"
+    select candidate.id
     from last_watched
     cross join lateral (
-      select episode_item.id, episode_item.library_id
+      select episode_item.id
       from seasons as candidate_season
       inner join episodes as candidate_episode
         on candidate_episode.season_id = candidate_season.item_id
@@ -107,6 +109,7 @@ export async function nextUp(db: Database, userId: string): Promise<string[]> {
           last_watched.season_number,
           last_watched.episode_number
         )
+        and ${inLibraries(viewable, sql.raw("episode_item.id"))}
         and not coalesce(candidate_mark.completed, false)
       order by
         candidate_season.season_number,
@@ -118,8 +121,8 @@ export async function nextUp(db: Database, userId: string): Promise<string[]> {
       last_watched.played_at desc nulls last,
       last_watched.show_id,
       candidate.id
-  `;
-  return rows.filter((row) => viewable.has(row.libraryId)).map((row) => row.id);
+  `);
+  return rows.map((row): string => row.id);
 }
 
 const seasonFolderPattern = /^(?:season|series)[\s._-]*(\d{1,4})$/i;

@@ -17,14 +17,11 @@ import { eq, sql } from "drizzle-orm";
 import { setupAdmin } from "../auth/accounts.ts";
 import { AuthError } from "../auth/errors.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { artwork, files, versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import {
-  type DeletedArtworkFile,
-  deleteItemSubtree,
-  insertItem,
-} from "../db/tree.ts";
+import { type DeletedArtworkFile, deleteItemSubtree } from "../db/tree.ts";
 import { deleteLibrary, updateLibrary } from "../libraries/service.ts";
 import { addRoot, insertLibraries } from "../libraries/testing.ts";
 import { listSubtitles, writeSubtitle } from "../subtitles/store.ts";
@@ -92,6 +89,7 @@ async function fixture(db: Database, rootPath: string) {
   });
   if (!library) throw new Error("Fixture library missing.");
   const item = await insertItem(db, {
+    withVersion: true,
     libraryId: library.id,
     kind: "movie",
     title: "Alien",
@@ -145,6 +143,7 @@ async function expectRemovals(
   expect(await exists(owned.storageKey)).toBe(false);
 
   const sibling = await insertItem(db, {
+    withVersion: true,
     libraryId: library.id,
     kind: "movie",
     title: "Aliens",
@@ -253,6 +252,7 @@ describe.skipIf(!databaseUrl)("storeArtworkOriginal", () => {
         });
         if (!library) throw new Error("Fixture library missing.");
         const item = await insertItem(db, {
+          withVersion: true,
           libraryId: library.id,
           kind: "movie",
           title: "Dune",
@@ -282,6 +282,7 @@ describe.skipIf(!databaseUrl)("storeArtworkOriginal", () => {
         if (!library) throw new Error("Fixture library missing.");
         await mkdir(join(root, "Movies"), { recursive: true });
         const dune = await insertItem(db, {
+          withVersion: true,
           libraryId: library.id,
           kind: "movie",
           title: "Dune",
@@ -291,6 +292,7 @@ describe.skipIf(!databaseUrl)("storeArtworkOriginal", () => {
           extension: {},
         });
         const arrival = await insertItem(db, {
+          withVersion: true,
           libraryId: library.id,
           kind: "movie",
           title: "Arrival",

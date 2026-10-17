@@ -1,4 +1,4 @@
-import { and, eq, isNull, or, type SQL, sql } from "drizzle-orm";
+import { and, eq, isNull, or, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "../db/client.ts";
 import {
@@ -14,7 +14,7 @@ import {
 import type { AccessObject } from "./access.ts";
 import { server } from "./access.ts";
 import { AuthError, postgresCode } from "./errors.ts";
-import { requireAdmin } from "./permissions.ts";
+import { itemAccessChain, requireAdmin } from "./permissions.ts";
 
 /** The user or Group named by an Access rule. */
 export type AccessSubject = { type: "user" | "group"; id: string };
@@ -196,30 +196,12 @@ const sameObject = (rule: Rule, object: AccessObject) =>
       ? rule.object.type === "library" && rule.object.id === object.id
       : rule.object.type === "item" && rule.object.id === object.id;
 
-// The Item's ancestor chain, nearest first, mirroring itemAccess in
-// permissions.ts but loading no rules.
+// Inheritance display uses the resolver's facts without ranking unrelated Library branches.
 async function itemChain(db: Database, itemId: string) {
-  const rows = await db
-    .select({
-      id: sql<string>`chain.id`,
-      libraryId: sql<string>`chain.library_id`,
-    })
-    .from(
-      sql`(
-        with recursive ancestors as (
-          select id, parent_id, library_id, 0 as depth from items where id = ${itemId}
-          union all
-          select parent.id, parent.parent_id, parent.library_id, child.depth + 1
-          from items parent inner join ancestors child on parent.id = child.parent_id
-        )
-        select * from ancestors
-      ) chain`,
-    )
-    .orderBy(sql`chain.depth`);
-  if (!rows[0]) throw new AuthError("NOT_FOUND");
+  const { chain, libraryIds } = await itemAccessChain(db, itemId);
   return [
-    ...rows.map((row) => ({ type: "item" as const, id: row.id })),
-    { type: "library" as const, id: rows[0].libraryId },
+    ...chain,
+    ...libraryIds.map((id): AccessObject => ({ type: "library", id })),
     server,
   ];
 }

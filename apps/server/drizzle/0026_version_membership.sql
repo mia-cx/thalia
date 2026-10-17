@@ -1,0 +1,2 @@
+ALTER TABLE "versions" ADD COLUMN "created_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
+CREATE INDEX "versions_library_item_idx" ON "versions" USING btree ("library_id","item_id");

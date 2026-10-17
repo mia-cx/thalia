@@ -2,7 +2,11 @@ import { and, asc, desc, eq, ne, or, sql } from "drizzle-orm";
 import { Schema } from "effect";
 import { publishEvent } from "../api/events.ts";
 import { AuthError } from "../auth/errors.ts";
-import { requirePermission } from "../auth/permissions.ts";
+import {
+  permittedVersionIds,
+  requirePermission,
+  requireVersionPermission,
+} from "../auth/permissions.ts";
 import type { authenticate } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
 import {
@@ -49,7 +53,21 @@ async function readProgressRow(db: ProgressDb, userId: string, itemId: string) {
 
 async function readProgress(db: ProgressDb, userId: string, itemId: string) {
   const row = await readProgressRow(db, userId, itemId);
-  return row === undefined ? null : toProgress(row);
+  if (row === undefined) return null;
+  if (row.versionId === null) return toProgress(row);
+  const candidates = await db
+    .select({
+      id: versions.id,
+      itemId: versions.itemId,
+      libraryId: versions.libraryId,
+    })
+    .from(versions)
+    .where(eq(versions.id, row.versionId));
+  const visible = await permittedVersionIds(db, userId, "view", candidates);
+  return toProgress({
+    ...row,
+    versionId: visible.has(row.versionId) ? row.versionId : null,
+  });
 }
 
 async function requireViewableItem(
@@ -58,7 +76,7 @@ async function requireViewableItem(
   itemId: string,
 ) {
   const [item] = await db
-    .select({ libraryId: items.libraryId })
+    .select({ id: items.id })
     .from(items)
     .where(eq(items.id, itemId))
     .limit(1);
@@ -135,6 +153,7 @@ export async function resumeProgress(
     .where(and(eq(versions.id, versionId), eq(versions.itemId, itemId)))
     .limit(1);
   if (version === undefined) throw new AuthError("NOT_FOUND");
+  await requireVersionPermission(db, userId, "play", version.id, itemId);
   return {
     positionSeconds: await resumePosition(db, userId, itemId, version),
   };
@@ -184,6 +203,7 @@ async function lockSession(tx: LifecycleDb, userId: string, scope: Scope) {
     )
     .limit(1);
   if (version === undefined) throw new AuthError("NOT_FOUND");
+  await requireVersionPermission(tx, userId, "play", version.id, scope.itemId);
   await requirePermission(tx, userId, "view", {
     type: "item",
     id: version.itemId,
@@ -300,8 +320,17 @@ export async function resolvePlaySession(
       desc(sessionRegistry.id),
     )
     .limit(1);
-  const [version] = await db
-    .select({ id: versions.id, durationSeconds: versions.durationSeconds })
+  if (versionId !== undefined)
+    await requireVersionPermission(db, userId, "play", versionId, itemId);
+  if (found !== undefined)
+    await requireVersionPermission(db, userId, "play", found.versionId, itemId);
+  const candidates = await db
+    .select({
+      id: versions.id,
+      itemId: versions.itemId,
+      libraryId: versions.libraryId,
+      durationSeconds: versions.durationSeconds,
+    })
     .from(versions)
     .where(
       and(
@@ -314,8 +343,9 @@ export async function resolvePlaySession(
             : eq(versions.id, versionId),
       ),
     )
-    .orderBy(asc(versions.label), asc(versions.id))
-    .limit(1);
+    .orderBy(asc(versions.label), asc(versions.id));
+  const allowed = await permittedVersionIds(db, userId, "play", candidates);
+  const version = candidates.find((version) => allowed.has(version.id));
   if (version === undefined) throw new AuthError("NOT_FOUND");
   const { durationSeconds } = version;
   if (found !== undefined)

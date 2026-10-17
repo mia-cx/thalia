@@ -7,11 +7,11 @@ import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
   events,
-  items,
   progress,
   segmentTimelines,
   sessionRegistry,
@@ -56,15 +56,12 @@ async function seed(db: Database) {
     rootPath: "/srv/movies",
   });
   if (!library) throw new Error("Library insert returned no row.");
-  const [item] = await db
-    .insert(items)
-    .values({
-      libraryId: library.id,
-      kind: "movie",
-      title: "Movie",
-      canonicalFolder: "movie",
-    })
-    .returning();
+  const [item] = await insertItems(db, {
+    libraryId: library.id,
+    kind: "movie",
+    title: "Movie",
+    canonicalFolder: "movie",
+  });
   if (!item) throw new Error("Item insert returned no row.");
   return { admin, owner, keyToken, library, item };
 }
@@ -567,15 +564,12 @@ describe.skipIf(!databaseUrl)("playback progress", () => {
         fx.item.id,
         version.id,
       );
-      const [item2] = await db
-        .insert(items)
-        .values({
-          libraryId: fx.library.id,
-          kind: "movie",
-          title: "Second",
-          canonicalFolder: "second",
-        })
-        .returning();
+      const [item2] = await insertItems(db, {
+        libraryId: fx.library.id,
+        kind: "movie",
+        title: "Second",
+        canonicalFolder: "second",
+      });
       if (!item2) throw new Error("Item insert returned no row.");
       const version2 = await addVersion(db, {
         library: fx.library,

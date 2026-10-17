@@ -6,10 +6,10 @@ import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { setupAdmin } from "../auth/accounts.ts";
 import { login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { artwork } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { addRoot, insertLibraries } from "../libraries/testing.ts";
 import { withFolder } from "../plugins/testing.ts";
@@ -463,6 +463,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           const item = await insertItem(db, {
             libraryId: library.id,
             kind: "movie",
+            withVersion: true,
             title: "Poster Fails",
             year: 2001,
             canonicalFolder: "Poster Fails",

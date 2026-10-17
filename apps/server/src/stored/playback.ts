@@ -1,4 +1,8 @@
 import { and, asc, eq, inArray, type SQL } from "drizzle-orm";
+import {
+  permittedVersionIds,
+  requireVersionPermission,
+} from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import {
   files,
@@ -29,8 +33,12 @@ import { sourceRungName } from "./policy.ts";
 type StreamRow = typeof streams.$inferSelect;
 
 /** Loads the complete stored Versions of an Item on one timeline, with their video and first audio Stream. */
-async function loadStored(db: Database, where: SQL | undefined) {
-  const rows = await db
+async function loadStored(
+  db: Database,
+  userId: string,
+  where: SQL | undefined,
+) {
+  const candidates = await db
     .select({ version: versions, timeline: segmentTimelines })
     .from(versions)
     .innerJoin(
@@ -40,6 +48,13 @@ async function loadStored(db: Database, where: SQL | undefined) {
     .where(
       and(eq(versions.origin, "stored"), eq(versions.complete, true), where),
     );
+  const allowed = await permittedVersionIds(
+    db,
+    userId,
+    "play",
+    candidates.map((row) => row.version),
+  );
+  const rows = candidates.filter((row) => allowed.has(row.version.id));
   const streamRows =
     rows.length === 0
       ? []
@@ -92,13 +107,14 @@ const accepts = (client: ClientProfile, audio: StreamRow | undefined) =>
 /** Loads the complete stored Versions derived from one File, with their video and first audio Stream. */
 export async function loadStoredCandidates(
   db: Database,
-  source: { itemId: string; fileId: string },
+  source: { itemId: string; fileId: string; userId: string },
 ) {
   // Only rungs of the played File: another Version may be another
   // translation or release on the same timeline. A trigger keeps their
   // timeline equal to the source's.
   return loadStored(
     db,
+    source.userId,
     and(
       eq(versions.itemId, source.itemId),
       eq(versions.sourceFileId, source.fileId),
@@ -176,6 +192,7 @@ const notFound = () =>
 /** Serves a stored session from disk: the master over its variants with the session's WebVTT renditions, and each variant's playlist, init and segments. */
 export async function serveStoredHls(
   db: Database,
+  userId: string,
   session: { itemId: string; variantIds: readonly string[] },
   variantId: string | null,
   name: HlsName,
@@ -186,6 +203,7 @@ export async function serveStoredHls(
     if (name.kind !== "master") return notFound();
     const stored = await loadStored(
       db,
+      userId,
       and(
         eq(versions.itemId, session.itemId),
         inArray(versions.id, [...session.variantIds]),
@@ -213,6 +231,7 @@ export async function serveStoredHls(
     name.kind === "subtitle"
   )
     return notFound();
+  await requireVersionPermission(db, userId, "play", variantId, session.itemId);
   const [row] = await db
     .select({
       storedFolder: versions.storedFolder,

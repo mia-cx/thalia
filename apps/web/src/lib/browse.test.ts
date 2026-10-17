@@ -33,7 +33,7 @@ function card(overrides: Partial<BrowseCard>): BrowseCard {
   return {
     id: "item-1",
     kind: "movie",
-    libraryId: "library-1",
+    homeLibraryId: "library-1",
     title: "Arrival",
     year: 2016,
     addedAt: "2026-01-01T00:00:00.000000Z",

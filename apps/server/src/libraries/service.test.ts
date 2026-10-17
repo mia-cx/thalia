@@ -13,6 +13,7 @@ import { asc, eq } from "drizzle-orm";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { AuthError } from "../auth/errors.ts";
 import type { Database } from "../db/client.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   files,
@@ -828,7 +829,10 @@ describe.skipIf(!databaseUrl)("library service", () => {
         );
         expect(await itemFiles(db, "Alien")).toEqual([]);
         expect(
-          await db.select().from(items).where(eq(items.id, alienFile.itemId)),
+          await db
+            .select(itemFixtureFields)
+            .from(items)
+            .where(eq(items.id, alienFile.itemId)),
         ).toEqual([]);
         expect(await db.select().from(progress)).toEqual([]);
         // Only adding or repointing a root rescans.

@@ -2,15 +2,11 @@ import { open } from "node:fs/promises";
 import type { MetadataResult } from "@thalia/plugin-api";
 import { and, eq } from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
+import { lockCatalogue } from "../db/catalogue-lock.ts";
 import type { Database } from "../db/client.ts";
 import { artwork, items, libraries } from "../db/schema/index.ts";
 import type { DeletedArtworkFile } from "../db/tree.ts";
-import {
-  assetRoots,
-  firstInRoots,
-  homeRoot,
-  rootsOf,
-} from "../libraries/roots.ts";
+import { assetRoots, firstInRoots, homeRoot } from "../libraries/roots.ts";
 import {
   type ArtworkBackendName,
   type ArtworkOpen,
@@ -198,16 +194,18 @@ export async function storeArtworkBytes(
       bytes,
     );
   // Only colocated writes need the Item folder lock; a slow S3 PUT must hold no row lock.
+  let writtenRootPath = home.path;
   let fresh: WrittenOriginal | undefined =
     store.backend === "colocated"
       ? undefined
-      : await writeOriginal(home.path, item.canonicalFolder, candidateId);
+      : await writeOriginal(home.path, home.canonicalFolder, candidateId);
   const stored = await db
     .transaction(async (tx) => {
+      await lockCatalogue(tx);
       const [lockedLibrary] = await tx
         .select()
         .from(libraries)
-        .where(eq(libraries.id, item.libraryId))
+        .where(eq(libraries.id, home.libraryId))
         .for("update");
       if (!lockedLibrary) throw new AuthError("NOT_FOUND");
       const [locked] = await tx
@@ -215,8 +213,7 @@ export async function storeArtworkBytes(
         .from(items)
         .where(eq(items.id, itemId))
         .for("update");
-      if (!locked || locked.libraryId !== lockedLibrary.id)
-        throw new AuthError("NOT_FOUND");
+      if (!locked) throw new AuthError("NOT_FOUND");
 
       const [selected] = await tx
         .select()
@@ -229,9 +226,11 @@ export async function storeArtworkBytes(
           ),
         );
       const artworkId = selected?.id ?? candidateId;
+      const currentHome = await homeRoot(tx, itemId);
+      writtenRootPath = currentHome.path;
       fresh ??= await writeOriginal(
-        home.path,
-        locked.canonicalFolder,
+        currentHome.path,
+        currentHome.canonicalFolder,
         artworkId,
       );
       const values = {
@@ -275,7 +274,7 @@ export async function storeArtworkBytes(
           .catch(() => true);
         if (!referenced)
           await removeArtworkFiles(
-            [{ ...fresh, rootPaths: [home.path] }],
+            [{ ...fresh, rootPaths: [writtenRootPath] }],
             store,
           );
       }
@@ -288,9 +287,7 @@ export async function storeArtworkBytes(
         {
           ...previous,
           // The replaced original may sit in any root the Item's Library has.
-          rootPaths: (await rootsOf(db, item.libraryId)).map(
-            (root) => root.path,
-          ),
+          rootPaths: (await assetRoots(db, itemId)).map((root) => root.path),
         },
       ],
       store,
@@ -329,15 +326,14 @@ export async function removeSelectedArtwork(
   store: ArtworkStoreConfig = artworkStoreConfig(),
 ): Promise<boolean> {
   const removed = await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
     const [locked] = await tx
       .select()
       .from(items)
       .where(eq(items.id, itemId))
       .for("update");
     if (!locked) throw new AuthError("NOT_FOUND");
-    const rootPaths = (await rootsOf(tx, locked.libraryId)).map(
-      (root) => root.path,
-    );
+    const rootPaths = (await assetRoots(tx, itemId)).map((root) => root.path);
     const [selected] = await tx
       .select()
       .from(artwork)

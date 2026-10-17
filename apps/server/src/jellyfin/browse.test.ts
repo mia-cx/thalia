@@ -25,18 +25,9 @@ describe.skipIf(!databaseUrl)("Jellyfin browse facets", () => {
         .where(eq(versions.itemId, seed.matrix.id));
       if (version === undefined) throw new Error("Missing version");
       const [file] = await db
-        .insert(files)
-        .values({
-          versionId: version.id,
-          itemId: seed.matrix.id,
-          libraryId: seed.films.id,
-          rootId: seed.films.rootId,
-          path: "The Matrix/movie.mp4",
-          order: 0,
-          bytes: 1n,
-          modifiedAt: new Date(),
-        })
-        .returning();
+        .select()
+        .from(files)
+        .where(eq(files.versionId, version.id));
       if (file === undefined) throw new Error("Missing file");
       await db.insert(streams).values([
         {

@@ -8,6 +8,7 @@ import { sessionCookieName } from "../auth/http.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
 import { createApiKey, login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
@@ -370,9 +371,9 @@ describe.skipIf(!databaseUrl)("libraries api", () => {
             expect(unknownRun.status).toBe(404);
 
             const scanned = await db
-              .select()
+              .select(itemFixtureFields)
               .from(items)
-              .where(eq(items.libraryId, created.id));
+              .where(eq(itemFixtureFields.libraryId, created.id));
             expect(scanned).toHaveLength(1);
             expect(scanned[0]).toMatchObject({
               kind: "movie",
@@ -564,9 +565,9 @@ describe.skipIf(!databaseUrl)("libraries api", () => {
             }
 
             const scanned = await db
-              .select()
+              .select(itemFixtureFields)
               .from(items)
-              .where(eq(items.libraryId, library.id));
+              .where(eq(itemFixtureFields.libraryId, library.id));
             expect(scanned).toHaveLength(6);
             const kindCounts = new Map<string, number>();
             for (const item of scanned) {
@@ -694,9 +695,9 @@ describe.skipIf(!databaseUrl)("libraries api", () => {
                 await waitForLibraryJobs(db, library.id);
                 expect(
                   await db
-                    .select()
+                    .select(itemFixtureFields)
                     .from(items)
-                    .where(eq(items.libraryId, library.id)),
+                    .where(eq(itemFixtureFields.libraryId, library.id)),
                 ).toHaveLength(1);
               } finally {
                 await server.stop();

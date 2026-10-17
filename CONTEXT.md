@@ -29,7 +29,7 @@ The folder under a root that holds a show's or movie's files, or `.` when the ro
 _Avoid_: canonical folder, media folder, item path
 
 **Title key**:
-The second half of an Item's identity next to its Item folder: empty when the folder below the root names one title, otherwise the normalised title and year, such as `breaking bad (2008)`.
+A root-specific scan key used with an Item folder to identify a Movie or Show: empty when the folder below the root names one title, otherwise the normalised title and year, such as `breaking bad (2008)`. Retained asset locations without an imported copy have no active scan identity.
 _Avoid_: slug, match key, name key
 
 **Kind**:
@@ -48,8 +48,12 @@ _Avoid_: media type, mime type
 One on-disk part of a Version. Most Versions have one.
 _Avoid_: part, media file, source file
 
+**Home Library**:
+The Library of the oldest imported Version on an Item or one of its descendants. A shared Item uses its home Library's metadata configuration.
+_Avoid_: owning Library, primary Library
+
 **Home root**:
-The lowest-position root holding one of an Item's imported Files. Artwork and fetched subtitles go there.
+The lowest-position root in the home Library holding imported Files on or below the Item. Artwork and fetched subtitles go in that root's Item folder.
 _Avoid_: primary root, default root
 
 **Stream**:

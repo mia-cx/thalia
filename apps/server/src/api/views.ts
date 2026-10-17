@@ -12,7 +12,11 @@ import {
   sql,
 } from "drizzle-orm";
 import { alias, type PgSelect } from "drizzle-orm/pg-core";
-import { checkPermission, viewableLibraryIds } from "../auth/permissions.ts";
+import {
+  checkPermission,
+  permittedVersionIds,
+  viewableLibraryIds,
+} from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import {
   artwork,
@@ -34,6 +38,7 @@ import {
   streams,
   versions,
 } from "../db/schema/index.ts";
+import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
 import { listSubtitles, type StoredSubtitle } from "../subtitles/store.ts";
 
 type ItemKind = (typeof items.kind.enumValues)[number];
@@ -123,7 +128,7 @@ function streamLanguages(
 const viewFields = {
   id: items.id,
   kind: items.kind,
-  libraryId: items.libraryId,
+  libraryId: sql<string>`${homeLibraryId()}`.as("library_id"),
   parentId: items.parentId,
   title: items.title,
   year: items.year,
@@ -132,40 +137,40 @@ const viewFields = {
   genres: items.genres,
   tags: items.tags,
   addedAt: items.addedAt,
-  premiereDate,
-  endDate: sql<string | null>`${shows.lastAirDate}::text`,
+  premiereDate: premiereDate.as("premiere_date"),
+  endDate: sql<string | null>`${shows.lastAirDate}::text`.as("end_date"),
   status: shows.status,
-  seasonNumber,
+  seasonNumber: seasonNumber.as("season_number"),
   episodeNumber: episodes.episodeNumber,
   episodeEndNumber: episodes.episodeEndNumber,
   seasonId: episodes.seasonId,
-  showId: showItem.id,
-  showTitle: showItem.title,
-  showPoster: selectedArtwork("show_item", "poster"),
-  showBackdrop: selectedArtwork("show_item", "backdrop"),
-  poster: selectedArtwork("items", "poster"),
-  backdrop: selectedArtwork("items", "backdrop"),
-  logo: selectedArtwork("items", "logo"),
-  thumb: selectedArtwork("items", "thumb"),
+  showId: sql<string | null>`${showItem.id}`.as("show_id"),
+  showTitle: sql<string | null>`${showItem.title}`.as("show_title"),
+  showPoster: selectedArtwork("show_item", "poster").as("showPoster"),
+  showBackdrop: selectedArtwork("show_item", "backdrop").as("showBackdrop"),
+  poster: selectedArtwork("items", "poster").as("poster"),
+  backdrop: selectedArtwork("items", "backdrop").as("backdrop"),
+  logo: selectedArtwork("items", "logo").as("logo"),
+  thumb: selectedArtwork("items", "thumb").as("thumb"),
   // The first imported Version in label order, as the detail screen lists them.
   durationSeconds: sql<number | null>`(
     select ${versions.durationSeconds} from ${versions}
     where ${versions.itemId} = ${items.id} and ${versions.origin} = 'imported'
     order by ${versions.label}, ${versions.id}
     limit 1
-  )`,
+  )`.as("duration_seconds"),
   childCount: sql<number>`(
     select count(*)::int from ${items} as child where child.parent_id = ${items.id}
-  )`,
+  )`.as("child_count"),
   providerIds: sql<Record<string, string>>`(
     select coalesce(jsonb_object_agg(${providerIds.provider}, ${providerIds.value}), '{}'::jsonb)
     from ${providerIds} where ${providerIds.itemId} = ${items.id}
-  )`,
+  )`.as("provider_ids"),
   positionSeconds: progress.positionSeconds,
   completed: progress.completed,
   playCount: progress.playCount,
   playedAt: progress.playedAt,
-  favourite: sql<boolean>`${favourites.id} is not null`,
+  favourite: sql<boolean>`${favourites.id} is not null`.as("favourite"),
   rating: ratings.value,
   liked: ratings.liked,
 };
@@ -203,7 +208,7 @@ function filtersOf(viewable: string[], query: ItemViewQuery) {
       : viewable.filter((id) => requested.includes(id));
   const { parentId, ancestorId, kinds, ids, search } = query;
   return and(
-    inArray(items.libraryId, scope),
+    inLibraries(scope),
     parentId === undefined
       ? undefined
       : parentId === null
@@ -411,14 +416,34 @@ export async function listItemViews(
   const viewable = await viewableLibraryIds(db, userId);
   const where = filtersOf(viewable, query);
   if (viewable.length === 0) return { items: [], total: 0 };
-  const [rows, [counted]] = await Promise.all([
-    selectViews(db, userId, where, query),
-    withJoins(
-      db.select({ total: count() }).from(items).$dynamic(),
-      userId,
-    ).where(where),
-  ]);
-  return { items: rows.map(toView), total: counted?.total ?? 0 };
+  const matching = db
+    .$with("member_items")
+    .as(
+      withJoins(
+        db.select({ id: items.id }).from(items).$dynamic(),
+        userId,
+      ).where(where),
+    );
+  const total = db
+    .select({ total: count().as("total") })
+    .from(matching)
+    .as("catalogue_count");
+  const page = selectViews(
+    db,
+    userId,
+    inArray(items.id, db.select({ id: matching.id }).from(matching)),
+    query,
+  ).as("catalogue_page");
+  // The count survives an empty/out-of-range page; both sides share one filtered CTE and one statement.
+  const rows = await db
+    .with(matching)
+    .select({ total: total.total, item: page._.selectedFields })
+    .from(total)
+    .leftJoinLateral(page, sql`true`);
+  return {
+    items: rows.flatMap((row) => (row.item === null ? [] : [toView(row.item)])),
+    total: rows[0]?.total ?? 0,
+  };
 }
 
 /**
@@ -432,7 +457,7 @@ export async function listVersionViews(
   itemId: string,
 ) {
   if (!(await getItemView(db, userId, itemId))) return [];
-  return (await loadVersionViews(db, [itemId], true)).get(itemId) ?? [];
+  return (await loadVersionViews(db, userId, [itemId], true)).get(itemId) ?? [];
 }
 
 /**
@@ -447,19 +472,34 @@ export async function listVersionViewsForItems(
   itemIds: string[],
   { externalSubtitles = false } = {},
 ): Promise<Map<string, VersionView[]>> {
-  const viewable = await viewableLibraryIds(db, userId);
-  if (viewable.length === 0 || itemIds.length === 0) return new Map();
-  return loadVersionViews(db, itemIds, externalSubtitles, viewable);
+  if (itemIds.length === 0) return new Map();
+  return loadVersionViews(db, userId, itemIds, externalSubtitles);
 }
 
 async function loadVersionViews(
   db: Database,
+  userId: string,
   itemIds: string[],
   externalSubtitles: boolean,
-  viewable?: string[],
 ): Promise<Map<string, VersionView[]>> {
   const byItem = new Map<string, VersionView[]>();
-  const rows = await versionRows(db, itemIds, viewable);
+  const candidates = await db
+    .select({
+      id: versions.id,
+      itemId: versions.itemId,
+      libraryId: versions.libraryId,
+    })
+    .from(versions)
+    .where(
+      and(
+        inArray(versions.itemId, itemIds),
+        eq(versions.origin, "imported"),
+        eq(versions.format, "video"),
+      ),
+    );
+  const allowed = await permittedVersionIds(db, userId, "view", candidates);
+  if (allowed.size === 0) return byItem;
+  const rows = await versionRows(db, itemIds, [...allowed]);
   const filesPerVersion = new Map<string, number>();
   for (const row of rows)
     filesPerVersion.set(row.id, (filesPerVersion.get(row.id) ?? 0) + 1);
@@ -513,6 +553,7 @@ async function loadVersionViews(
       ...(byItem.get(row.itemId) ?? []),
       {
         id: row.id,
+        libraryId: row.libraryId,
         label: row.label,
         durationSeconds: row.durationSeconds,
         file: {
@@ -531,10 +572,11 @@ async function loadVersionViews(
 }
 
 // Versions joined to their Files and the root path each File's path is relative to.
-function versionRows(db: Database, itemIds: string[], viewable?: string[]) {
+function versionRows(db: Database, itemIds: string[], permitted: string[]) {
   return db
     .select({
       itemId: versions.itemId,
+      libraryId: versions.libraryId,
       id: versions.id,
       label: versions.label,
       durationSeconds: versions.durationSeconds,
@@ -553,9 +595,7 @@ function versionRows(db: Database, itemIds: string[], viewable?: string[]) {
         inArray(versions.itemId, itemIds),
         eq(versions.origin, "imported"),
         eq(versions.format, "video"),
-        viewable === undefined
-          ? undefined
-          : inArray(versions.libraryId, viewable),
+        inArray(versions.id, permitted),
       ),
     )
     .orderBy(
@@ -569,6 +609,7 @@ function versionRows(db: Database, itemIds: string[], viewable?: string[]) {
 /** One playable Version of an Item with its File and Streams, as a translation layer lists it. */
 export type VersionView = {
   id: string;
+  libraryId: string;
   label: string;
   durationSeconds: number | null;
   /** The File holding the Version: `path` is absolute, root plus root-relative. */

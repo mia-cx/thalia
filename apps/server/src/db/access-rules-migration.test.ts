@@ -7,9 +7,12 @@ import { migrate } from "drizzle-orm/bun-sql/migrator";
 import { resolveAccess, server } from "../auth/access.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import type { Database } from "./client.ts";
-import { migrateDatabase } from "./migrate.ts";
 import { accessRules, actions } from "./schema/index.ts";
-import { databaseUrl, withDatabase } from "./testing.ts";
+import {
+  databaseUrl,
+  migrateBeforeCatalogueReset,
+  withDatabase,
+} from "./testing.ts";
 
 async function oldSchema(db: Database) {
   const folder = await mkdtemp(join(tmpdir(), "thalia-access-migration-"));
@@ -167,7 +170,7 @@ describe.skipIf(!databaseUrl)("Access rules migration", () => {
               actionAllowed: subject.override ?? subject.grant,
             };
           });
-          await migrateDatabase(db);
+          await migrateBeforeCatalogueReset(db);
           const migrated = await db.select().from(accessRules);
           const changes = new Set<string>();
           for (const {

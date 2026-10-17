@@ -7,6 +7,7 @@ import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
 import { authenticate, createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem, insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
@@ -21,7 +22,6 @@ import {
   versions,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { homeShelves } from "./browse.ts";
@@ -82,18 +82,28 @@ const gridBudgetMs = 50;
 // poster, so the dataset carries both.
 async function generateMovies(db: Database, libraryId: string, count: number) {
   await db.execute(sql`
-    insert into items (id, library_id, kind, title, year, canonical_folder, added_at)
-    select uuidv7(), ${libraryId}::uuid, 'movie', initcap(md5(n::text)), 1950 + n % 75,
-      'movie-' || n, timestamptz '2026-01-01' + n * interval '1 minute'
-    from generate_series(1, ${count}) as n
+    with inserted as (
+      insert into items (id, kind, title, year, added_at)
+      select uuidv7(), 'movie', initcap(md5(n::text)), 1950 + n % 75,
+        timestamptz '2026-01-01' + n * interval '1 minute'
+      from generate_series(1, ${count}) as n returning id
+    ), closure as (
+      insert into item_ancestors (id, ancestor_id, descendant_id, depth)
+      select uuidv7(), id, id, 0 from inserted
+    )
+    insert into versions (id, item_id, item_kind, library_id, label, format, bytes)
+    select uuidv7(), id, 'movie', ${libraryId}::uuid, 'Original', 'video', 1 from inserted
   `);
   await db.execute(sql`
     insert into artwork (id, item_id, type, backend, storage_key, selected)
-    select uuidv7(), id, 'poster', 'colocated', canonical_folder || '/poster.jpg', true
-    from items where library_id = ${libraryId}::uuid
+    select uuidv7(), id, 'poster', 'colocated', id::text || '/poster.jpg', true
+    from items
   `);
   await db.execute(sql`analyze items`);
   await db.execute(sql`analyze artwork`);
+  // Membership and home queries need statistics for the bulk-inserted copies too.
+  await db.execute(sql`analyze versions`);
+  await db.execute(sql`analyze item_ancestors`);
 }
 
 async function medianMs(run: () => Promise<unknown>) {
@@ -115,10 +125,12 @@ describe.skipIf(!databaseUrl)("browse grids", () => {
       const { token } = await seedViewer(db);
       const library = await addLibrary(db, "Movies");
       const titles = ["Brazil", "alien", "Alien", "Zodiac", "Heat", "Up"];
-      await db.insert(items).values(
+      await insertItems(
+        db,
         titles.map((title, index) => ({
           libraryId: library.id,
           kind: "movie" as const,
+          withVersion: true,
           title,
           canonicalFolder: `movie-${index}`,
         })),
@@ -195,7 +207,7 @@ describe.skipIf(!databaseUrl)("browse grids", () => {
 });
 
 // A Show with Seasons and Episodes inserted out of order, so reads must sort.
-async function seedShow(db: Database, libraryId: string) {
+async function seedShow(db: Database, libraryId: string, content = true) {
   const show = await insertItem(db, {
     libraryId,
     kind: "show",
@@ -222,6 +234,7 @@ async function seedShow(db: Database, libraryId: string) {
   const episodes = [];
   for (const episodeNumber of [3, 1, 2]) {
     episodes[episodeNumber] = await insertItem(db, {
+      withVersion: content || episodeNumber !== 1,
       libraryId,
       kind: "episode",
       parentId: seasonOne.id,
@@ -265,7 +278,7 @@ describe.skipIf(!databaseUrl)("browse details", () => {
       await migrateDatabase(db);
       const { token } = await seedViewer(db);
       const library = await addLibrary(db, "Shows", "shows");
-      const seeded = await seedShow(db, library.id);
+      const seeded = await seedShow(db, library.id, false);
       const people = await db
         .insert(contributors)
         .values([
@@ -375,7 +388,7 @@ describe.skipIf(!databaseUrl)("browse details", () => {
       const caller = await authenticate(db, token);
 
       const show = await runApi(getItemDetail(db, caller, seeded.show.id));
-      expect(show.children.map((child) => child.seasonNumber)).toEqual([1, 2]);
+      expect(show.children.map((child) => child.seasonNumber)).toEqual([1]);
       expect(show.posterArtworkId).toBe(seeded.poster.id);
       expect(show.show).toBeNull();
 
@@ -653,18 +666,17 @@ describe.skipIf(!databaseUrl)("browse home", () => {
       const movies = await addLibrary(db, "Movies");
       const shows = await addLibrary(db, "Shows", "shows");
       const seeded = await seedShow(db, shows.id);
-      const [arrival, heat] = await db
-        .insert(items)
-        .values(
-          ["Arrival", "Heat"].map((title, index) => ({
-            libraryId: movies.id,
-            kind: "movie" as const,
-            title,
-            canonicalFolder: title,
-            addedAt: new Date(Date.UTC(2030, 0, index + 1)),
-          })),
-        )
-        .returning();
+      const [arrival, heat] = await insertItems(
+        db,
+        ["Arrival", "Heat"].map((title, index) => ({
+          libraryId: movies.id,
+          kind: "movie" as const,
+          withVersion: true,
+          title,
+          canonicalFolder: title,
+          addedAt: new Date(Date.UTC(2030, 0, index + 1)),
+        })),
+      );
       if (!arrival || !heat) throw new Error("Item insert returned no row.");
       const [version] = await db
         .insert(versions)
@@ -774,16 +786,18 @@ describe.skipIf(!databaseUrl)("browse search", () => {
       const open = await addLibrary(db, "Movies");
       const hidden = await addLibrary(db, "Hidden");
       const titles = ["Interstellar", "Inception", "Heat", "The Prestige"];
-      await db.insert(items).values([
+      await insertItems(db, [
         ...titles.map((title) => ({
           libraryId: open.id,
           kind: "movie" as const,
+          withVersion: true,
           title,
           canonicalFolder: title,
         })),
         {
           libraryId: hidden.id,
           kind: "movie" as const,
+          withVersion: true,
           title: "Interstellar Wars",
           canonicalFolder: "Interstellar Wars",
         },

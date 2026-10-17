@@ -1,5 +1,6 @@
 import {
   and,
+  asc,
   desc,
   eq,
   gt,
@@ -17,7 +18,11 @@ import {
   toPage,
 } from "../api/pagination.ts";
 import { AuthError } from "../auth/errors.ts";
-import { requirePermission, viewableLibraryIds } from "../auth/permissions.ts";
+import {
+  loadPermissionScope,
+  requirePermission,
+  viewableLibraryIds,
+} from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import {
   artwork,
@@ -28,6 +33,7 @@ import {
   ratings,
   versions,
 } from "../db/schema/index.ts";
+import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
 
 const cursorPrefix = "cw1.";
 type MarksDb = Pick<
@@ -46,7 +52,7 @@ const instantText = (column: SQLWrapper) =>
 
 async function viewableItem(db: MarksDb, userId: string, itemId: string) {
   const [item] = await db
-    .select({ libraryId: items.libraryId })
+    .select({ homeLibraryId: homeLibraryId() })
     .from(items)
     .where(eq(items.id, itemId))
     .limit(1);
@@ -318,18 +324,19 @@ export async function updateItemState(
       .limit(1);
     // An import updates the existing play's position, so its duration belongs
     // to the selected Version, not whichever Version sorts first today.
+    const candidates = await tx
+      .select()
+      .from(versions)
+      .where(and(eq(versions.itemId, itemId), eq(versions.origin, "imported")))
+      .orderBy(versions.label, versions.id);
+    const allowed = await (await loadPermissionScope(tx, userId)).versionIds(
+      "view",
+      candidates,
+    );
     const version =
-      previous?.version ??
-      (
-        await tx
-          .select()
-          .from(versions)
-          .where(
-            and(eq(versions.itemId, itemId), eq(versions.origin, "imported")),
-          )
-          .orderBy(versions.label, versions.id)
-          .limit(1)
-      )[0];
+      previous?.version && allowed.has(previous.version.id)
+        ? previous.version
+        : candidates.find((candidate) => allowed.has(candidate.id));
     if (version === undefined) return;
     const patch = {
       // An explicit position names this Version's timeline. An unrelated
@@ -398,7 +405,7 @@ export async function continueWatching(
       item: {
         id: items.id,
         kind: items.kind,
-        libraryId: items.libraryId,
+        homeLibraryId: homeLibraryId(),
         title: items.title,
         year: items.year,
         addedAt: instantText(items.addedAt),
@@ -433,7 +440,7 @@ export async function continueWatching(
         eq(progress.completed, false),
         gt(progress.positionSeconds, 0),
         isNotNull(progress.playedAt),
-        inArray(items.libraryId, viewable),
+        inLibraries(viewable),
         key === undefined
           ? undefined
           : sql`(${progress.playedAt}, ${items.id}) < (${key.addedAt}::timestamptz, ${key.id}::uuid)`,
@@ -441,7 +448,48 @@ export async function continueWatching(
     )
     .orderBy(desc(progress.playedAt), desc(items.id))
     .limit(limit + 1);
-  const page = toPage(rows, limit, (row) => ({
+  const candidates =
+    rows.length === 0
+      ? []
+      : await db
+          .select({
+            id: versions.id,
+            itemId: versions.itemId,
+            libraryId: versions.libraryId,
+            durationSeconds: versions.durationSeconds,
+          })
+          .from(versions)
+          .where(
+            and(
+              inArray(
+                versions.itemId,
+                rows.map((row) => row.item.id),
+              ),
+              eq(versions.origin, "imported"),
+            ),
+          )
+          .orderBy(asc(versions.label), asc(versions.id));
+  const allowed = await (await loadPermissionScope(db, userId)).versionIds(
+    "view",
+    candidates,
+  );
+  const visible = candidates.filter((version) => allowed.has(version.id));
+  const safeRows = rows.map((row) => {
+    const selected =
+      row.progress.versionId !== null && allowed.has(row.progress.versionId);
+    return {
+      ...row,
+      progress: {
+        ...row.progress,
+        versionId: selected ? row.progress.versionId : null,
+      },
+      durationSeconds: selected
+        ? row.durationSeconds
+        : (visible.find((version) => version.itemId === row.item.id)
+            ?.durationSeconds ?? null),
+    };
+  });
+  const page = toPage(safeRows, limit, (row) => ({
     addedAt: row.progress.playedAt,
     id: row.item.id,
   }));

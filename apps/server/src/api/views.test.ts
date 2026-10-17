@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { drizzle } from "drizzle-orm/bun-sql";
+import { authenticate, createApiKey } from "../auth/sessions.ts";
+import { insertItem } from "../db/item-fixtures.ts";
+import * as schema from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
+import { runApi } from "./errors.ts";
+import { listItemCards } from "./items.ts";
 import { seedBrowse } from "./view-fixtures.ts";
 import {
   type ItemViewQuery,
@@ -9,6 +14,79 @@ import {
 } from "./views.ts";
 
 describe.skipIf(!databaseUrl)("item views", () => {
+  // Proves page size and duplicate copies do not add catalogue round trips or lose empty-page totals.
+  test("catalogue pages use one statement for one or many Items and empty offsets", () =>
+    withDatabase(async (db) => {
+      const s = await seedBrowse(db);
+      await db.insert(schema.versions).values({
+        itemId: s.matrix.id,
+        itemKind: "movie",
+        libraryId: s.films.id,
+        format: "video",
+        bytes: 100n,
+        label: "Second copy",
+      });
+      const { token } = await createApiKey(db, s.admin.id, "query proof");
+      const caller = await authenticate(db, token);
+      const statements: string[] = [];
+      const logged = drizzle({
+        client: db.$client,
+        schema,
+        logger: {
+          logQuery(query) {
+            statements.push(query);
+          },
+        },
+      });
+      const queryCounts: number[][] = [];
+      for (const limit of [1, 20]) {
+        statements.length = 0;
+        const page = await listItemViews(logged, s.admin.id, {
+          libraryIds: [s.films.id],
+          kinds: ["movie"],
+          limit,
+        });
+        expect(page.total).toBe(3);
+        expect(page.items.map((item) => item.title)).toEqual(
+          limit === 1 ? ["Arrival"] : ["Arrival", "Heat", "The Matrix"],
+        );
+        expect(
+          statements.filter((query) => query.includes('from "items"')),
+        ).toHaveLength(1);
+        const viewQueryCount = statements.length;
+        statements.length = 0;
+        const cards = await runApi(
+          listItemCards(logged, caller, {
+            libraryId: s.films.id,
+            kind: "movie",
+            sort: "title",
+            limit,
+          }),
+        );
+        expect(cards.items.map((item) => item.title)).toEqual(
+          limit === 1 ? ["Arrival"] : ["Arrival", "Heat", "The Matrix"],
+        );
+        expect(
+          statements.filter((query) => query.includes('from "items"')),
+        ).toHaveLength(1);
+        queryCounts.push([viewQueryCount, statements.length]);
+      }
+      expect(queryCounts[1]).toEqual(queryCounts[0]);
+      for (const query of [{ offset: 99 }, { search: "absent-title" }]) {
+        statements.length = 0;
+        const page = await listItemViews(logged, s.admin.id, {
+          libraryIds: [s.films.id],
+          kinds: ["movie"],
+          ...query,
+        });
+        expect(page.items).toEqual([]);
+        expect(page.total).toBe("offset" in query ? 3 : 0);
+        expect(
+          statements.filter((query) => query.includes('from "items"')),
+        ).toHaveLength(1);
+      }
+    }));
+
   test("filters, sorts and pages within the caller's libraries", () =>
     withDatabase(async (db) => {
       const s = await seedBrowse(db);
@@ -39,7 +117,7 @@ describe.skipIf(!databaseUrl)("item views", () => {
       });
       expect(
         await titles({ ancestorId: s.show.id, kinds: ["season"] }),
-      ).toEqual({ titles: ["Season 1", "Season 2"], total: 2 });
+      ).toEqual({ titles: ["Season 1"], total: 1 });
       expect(
         (await titles({ ancestorId: s.show.id, kinds: ["episode"] })).titles,
       ).toEqual(["Good News About Hell", "Half Loop"]);
@@ -63,6 +141,7 @@ describe.skipIf(!databaseUrl)("item views", () => {
       ).toBe("Severance");
 
       await insertItem(db, {
+        withVersion: true,
         libraryId: s.films.id,
         kind: "movie",
         title: "2001: A Space Odyssey",

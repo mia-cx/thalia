@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Capability } from "@thalia/plugin-api";
+import { insertItem } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { files, versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { addRoot, insertLibraries } from "../libraries/testing.ts";
 import { createHost, createRegistrations } from "./host.ts";
 import {
@@ -329,7 +329,7 @@ describe.skipIf(!databaseUrl)("plugin runtime", () => {
       }),
     ));
 
-  test("items reach the plugin with their library id", () =>
+  test("items expose home context and Version ownership to plugins", () =>
     withFolder((folder) =>
       withDatabase(async (db) => {
         await migrateDatabase(db);
@@ -351,6 +351,7 @@ describe.skipIf(!databaseUrl)("plugin runtime", () => {
           title: "Alien",
           year: 1979,
           canonicalFolder: "Alien (1979)",
+          withVersion: true,
           extension: {},
         });
         const runtime = createPluginRuntime(db, {
@@ -360,10 +361,10 @@ describe.skipIf(!databaseUrl)("plugin runtime", () => {
         const host = stashedHosts()[name];
         expect(await host?.items?.get(item.id)).toMatchObject({
           id: item.id,
-          libraryId: library.id,
+          homeLibraryId: library.id,
           kind: "movie",
           title: "Alien",
-          versions: [],
+          versions: [expect.objectContaining({ libraryId: library.id })],
         });
         const page = await host?.items?.query({ kind: ["movie"], limit: 1 });
         expect(page?.items.map((found) => found.id)).toEqual([item.id]);

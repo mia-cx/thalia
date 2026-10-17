@@ -8,6 +8,7 @@ import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { login } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import {
   artwork,
   files,
@@ -18,7 +19,6 @@ import {
   versions,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 
@@ -136,7 +136,7 @@ async function addMovie(
   title: string,
   fields: Partial<
     Omit<typeof items.$inferInsert, "kind" | "parentId" | "extension">
-  > = {},
+  > & { withVersion?: boolean } = {},
 ) {
   return insertItem(db, {
     libraryId,
@@ -370,6 +370,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
       await mkdir(shows.rootPath);
 
       const complete = await addMovie(db, movies.id, "Complete", {
+        withVersion: true,
         overview: "Has it all.",
       });
       await addArtwork(db, complete.id, ["poster", "backdrop"]);
@@ -404,12 +405,10 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
       ];
       const gapMovies: Record<string, { id: string }> = {};
       for (const entry of cases) {
-        const movie = await addMovie(
-          db,
-          movies.id,
-          entry.title,
-          entry.overview === undefined ? {} : { overview: entry.overview },
-        );
+        const movie = await addMovie(db, movies.id, entry.title, {
+          withVersion: true,
+          overview: entry.overview,
+        });
         await addArtwork(db, movie.id, entry.artwork);
         if (entry.providerId)
           await db.insert(providerIds).values({
@@ -441,6 +440,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
         extension: { seasonNumber: 1 },
       });
       const pilot = await insertItem(db, {
+        withVersion: true,
         libraryId: shows.id,
         kind: "episode",
         parentId: season.id,
@@ -533,6 +533,7 @@ describe.skipIf(!databaseUrl)("library stats api", () => {
       await mkdir(library.rootPath);
       for (const title of ["Alpha", "Beta", "Gamma"]) {
         const movie = await addMovie(db, library.id, title, {
+          withVersion: true,
           overview: "Set.",
         });
         await addArtwork(db, movie.id, ["backdrop"]);

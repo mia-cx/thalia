@@ -13,11 +13,11 @@ import {
   revokeSession,
 } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
+import { insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
   files,
-  items,
   sessionRegistry,
   streams,
   users,
@@ -89,15 +89,12 @@ async function seedDirect(db: Database, root: string) {
     rootPath: root,
   });
   if (!library) throw new Error("Library insert returned no row.");
-  const [item] = await db
-    .insert(items)
-    .values({
-      libraryId: library.id,
-      kind: "movie",
-      title: "Movie",
-      canonicalFolder: "movie",
-    })
-    .returning();
+  const [item] = await insertItems(db, {
+    libraryId: library.id,
+    kind: "movie",
+    title: "Movie",
+    canonicalFolder: "movie",
+  });
   if (!item) throw new Error("Item insert returned no row.");
   const [version] = await db
     .insert(versions)

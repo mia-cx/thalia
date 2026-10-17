@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { createDatabase, type Database } from "../db/client.ts";
+import { insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
   apiKeys,
-  items,
   sessionRegistry,
   sessions,
   settings,
@@ -57,15 +57,12 @@ async function seedPlayback(db: Database, username = "owner") {
     rootPath: "/srv/movies",
   });
   if (!library) throw new Error("Library insert returned no row.");
-  const [item] = await db
-    .insert(items)
-    .values({
-      libraryId: library.id,
-      kind: "movie",
-      title: "Movie",
-      canonicalFolder: "/srv/movies/movie",
-    })
-    .returning();
+  const [item] = await insertItems(db, {
+    libraryId: library.id,
+    kind: "movie",
+    title: "Movie",
+    canonicalFolder: "/srv/movies/movie",
+  });
   if (!item) throw new Error("Item insert returned no row.");
   const [version] = await db
     .insert(versions)
@@ -124,15 +121,12 @@ async function addSession(
 }
 
 async function addItem(db: Database, libraryId: string, title: string) {
-  const [item] = await db
-    .insert(items)
-    .values({
-      libraryId,
-      kind: "movie",
-      title,
-      canonicalFolder: `/srv/movies/${title.toLowerCase()}`,
-    })
-    .returning();
+  const [item] = await insertItems(db, {
+    libraryId,
+    kind: "movie",
+    title,
+    canonicalFolder: `/srv/movies/${title.toLowerCase()}`,
+  });
   if (!item) throw new Error("Item insert returned no row.");
   return item;
 }

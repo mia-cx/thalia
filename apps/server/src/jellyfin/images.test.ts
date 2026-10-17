@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHlsHandler } from "../api/hls.ts";
 import { setupAdmin } from "../auth/accounts.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { settings } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { createArtworkHandler } from "../metadata/artwork-http.ts";
 import { storeArtworkOriginal } from "../metadata/artwork-store.ts";
@@ -33,6 +33,7 @@ describe.skipIf(!databaseUrl)("jellyfin images", () => {
         });
         if (!library) throw new Error("Library insert returned no row.");
         const movie = await insertItem(db, {
+          withVersion: true,
           libraryId: library.id,
           kind: "movie",
           title: "Alien",

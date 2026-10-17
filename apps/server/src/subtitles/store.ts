@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
 import type { Database } from "../db/client.ts";
 import { items } from "../db/schema/index.ts";
+import { homeLibraryId, homeLocation } from "../libraries/membership.ts";
 import { assetRoots } from "../libraries/roots.ts";
 
 /** The formats a stored subtitle track may have. */
@@ -60,14 +61,13 @@ export function trackName(track: StoredSubtitle): string {
 export async function subtitleFolders(db: Database, itemId: string) {
   const [row] = await db
     .select({
-      libraryId: items.libraryId,
-      canonicalFolder: items.canonicalFolder,
+      libraryId: homeLibraryId(),
     })
     .from(items)
     .where(eq(items.id, itemId));
   if (row === undefined) throw new AuthError("NOT_FOUND");
   return (await assetRoots(db, itemId)).map((root) => {
-    const folder = join(root.path, row.canonicalFolder);
+    const folder = join(root.path, root.canonicalFolder);
     return {
       libraryId: row.libraryId,
       itemFolder: folder,
@@ -80,6 +80,8 @@ export async function subtitleFolders(db: Database, itemId: string) {
 
 /** Where an Item's tracks are written: the first of its asset roots' subtitle folders. */
 export async function subtitleFolder(db: Database, itemId: string) {
+  if ((await homeLocation(db, itemId)) === undefined)
+    throw new AuthError("NOT_FOUND");
   const [home] = await subtitleFolders(db, itemId);
   if (home === undefined) throw new AuthError("NOT_FOUND");
   return home;

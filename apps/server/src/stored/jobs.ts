@@ -2,6 +2,7 @@ import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, asc, eq, sql } from "drizzle-orm";
+import { lockCatalogue } from "../db/catalogue-lock.ts";
 import type { Database } from "../db/client.ts";
 import {
   files,
@@ -98,7 +99,7 @@ async function loadStoreTarget(db: Database, payload: StorePayload) {
     .from(files)
     .innerJoin(versions, eq(versions.id, files.versionId))
     .innerJoin(items, eq(items.id, files.itemId))
-    .innerJoin(libraries, eq(libraries.id, items.libraryId))
+    .innerJoin(libraries, eq(libraries.id, files.libraryId))
     .where(eq(files.id, payload.sourceFileId))
     .limit(1);
   if (row === undefined) return null;
@@ -182,37 +183,48 @@ type StoreTarget = NonNullable<Awaited<ReturnType<typeof loadStoreTarget>>>;
 
 /** Creates the incomplete Stored Version row for a target, or finds the one a stopped run left. */
 async function upsertStoredVersion(db: Database, target: StoreTarget) {
-  const { file, version, timeline, run } = target;
-  await db
-    .insert(versions)
-    .values({
-      itemId: version.itemId,
-      itemKind: version.itemKind,
-      libraryId: version.libraryId,
-      label: run.rung.name,
-      format: "video",
-      bytes: 0n,
-      durationSeconds: timeline.boundariesSeconds.at(-1) ?? null,
-      lazyIndexPending: false,
-      segmentTimelineId: timeline.id,
-      timelineAligned: true,
-      origin: "stored",
-      sourceFileId: file.id,
-      storedFolder: target.storedFolder,
-      rung: run.rung.name,
-      complete: false,
-    })
-    .onConflictDoNothing();
-  const [row] = await db
-    .select({ id: versions.id })
-    .from(versions)
-    .where(
-      and(eq(versions.sourceFileId, file.id), eq(versions.rung, run.rung.name)),
-    )
-    .limit(1);
-  if (row === undefined)
-    throw new Error("Stored Version upsert returned no row.");
-  return row.id;
+  return db.transaction(async (tx) => {
+    await lockCatalogue(tx);
+    const [source] = await tx
+      .select({ id: files.id })
+      .from(files)
+      .where(eq(files.id, target.file.id));
+    if (source === undefined) return undefined;
+    const { file, version, timeline, run } = target;
+    await tx
+      .insert(versions)
+      .values({
+        itemId: version.itemId,
+        itemKind: version.itemKind,
+        libraryId: version.libraryId,
+        label: run.rung.name,
+        format: "video",
+        bytes: 0n,
+        durationSeconds: timeline.boundariesSeconds.at(-1) ?? null,
+        lazyIndexPending: false,
+        segmentTimelineId: timeline.id,
+        timelineAligned: true,
+        origin: "stored",
+        sourceFileId: file.id,
+        storedFolder: target.storedFolder,
+        rung: run.rung.name,
+        complete: false,
+      })
+      .onConflictDoNothing();
+    const [row] = await tx
+      .select({ id: versions.id })
+      .from(versions)
+      .where(
+        and(
+          eq(versions.sourceFileId, file.id),
+          eq(versions.rung, run.rung.name),
+        ),
+      )
+      .limit(1);
+    if (row === undefined)
+      throw new Error("Stored Version upsert returned no row.");
+    return row.id;
+  });
 }
 
 /** Probes a finished rung, writes its fileless Streams and marks the Version complete. */
@@ -274,6 +286,12 @@ async function completeStoredVersion(
   let bytes = 0;
   for (const name of names) bytes += (await stat(join(run.folder, name))).size;
   await db.transaction(async (tx) => {
+    await lockCatalogue(tx);
+    const [current] = await tx
+      .select({ id: versions.id })
+      .from(versions)
+      .where(eq(versions.id, versionId));
+    if (current === undefined) return;
     await tx.delete(streams).where(eq(streams.versionId, versionId));
     if (rows.length > 0) await tx.insert(streams).values(rows);
     await tx
@@ -319,6 +337,7 @@ export function registerStoreJobs(
     const place = idleWindowAt(idleWindow, now());
     if (!place.inside || signal?.aborted) return reschedule();
     const versionId = await upsertStoredVersion(db, target);
+    if (versionId === undefined) return;
     const controller = new AbortController();
     const stop = () => controller.abort();
     const windowEnd =

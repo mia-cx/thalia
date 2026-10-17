@@ -2,6 +2,7 @@ import { and, desc, inArray } from "drizzle-orm";
 import { viewableLibraryIds } from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { itemKind, items } from "../db/schema/index.ts";
+import { inLibraries } from "../libraries/membership.ts";
 import type { CoreShelf, Medium } from "../mediums/medium.ts";
 import { moviesMedium } from "../mediums/movies.ts";
 import { createShowsMedium } from "../mediums/shows.ts";
@@ -71,7 +72,7 @@ async function recentlyAdded(
   if (viewable.length === 0 || roots.length === 0) return [];
   const cards = await browseCards(
     db,
-    and(inArray(items.libraryId, viewable), inArray(items.kind, roots)),
+    and(inLibraries(viewable), inArray(items.kind, roots)),
     [desc(items.addedAt), desc(items.id)],
     shelfSize,
   );
@@ -117,7 +118,7 @@ export async function pluginShelves(
           ? []
           : await browseCards(
               db,
-              and(inArray(items.id, ids), inArray(items.libraryId, viewable)),
+              and(inArray(items.id, ids), inLibraries(viewable)),
             );
       const byId = new Map(cards.map((card) => [card.id, card]));
       return {

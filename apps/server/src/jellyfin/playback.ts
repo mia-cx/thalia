@@ -330,7 +330,7 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
             const itemId = requiredGuid(context.params.id);
             if (kind === "Download") {
               const [item] = await context.db
-                .select({ libraryId: items.libraryId })
+                .select({ id: items.id })
                 .from(items)
                 .where(eq(items.id, itemId));
               if (!item) throw new AuthError("NOT_FOUND");

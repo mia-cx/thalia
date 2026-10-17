@@ -8,6 +8,7 @@ import type {
 import { and, eq, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
 import { createDatabase, type Database } from "../db/client.ts";
+import { insertItem, itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   contributors,
@@ -21,7 +22,6 @@ import {
   shows,
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { setItemProviderIds } from "../libraries/changes.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { applyMetadata } from "./service.ts";
@@ -84,6 +84,7 @@ async function fixture(db: Database) {
   });
   if (!library) throw new Error("Fixture library missing.");
   const item = await insertItem(db, {
+    withVersion: true,
     libraryId: library.id,
     title: "Inception",
     year: 2010,
@@ -95,7 +96,10 @@ async function fixture(db: Database) {
 }
 
 async function storedItem(db: Database, itemId: string) {
-  const [item] = await db.select().from(items).where(eq(items.id, itemId));
+  const [item] = await db
+    .select(itemFixtureFields)
+    .from(items)
+    .where(eq(items.id, itemId));
   if (!item) throw new Error("Stored item missing.");
   return item;
 }
@@ -200,6 +204,7 @@ describe.skipIf(!databaseUrl)("applyMetadata", () => {
       });
       expect((await storedItem(db, item.id)).metadataState).toBe("matched");
       const yearless = await insertItem(db, {
+        withVersion: true,
         libraryId: item.libraryId,
         title: "Yearless",
         kind: "movie",
@@ -216,6 +221,7 @@ describe.skipIf(!databaseUrl)("applyMetadata", () => {
       await migrateDatabase(db);
       const { library, item } = await fixture(db);
       const owner = await insertItem(db, {
+        withVersion: true,
         libraryId: library.id,
         title: "Fight Club",
         kind: "movie",
@@ -257,6 +263,7 @@ describe.skipIf(!databaseUrl)("applyMetadata", () => {
       });
       if (!otherLibrary) throw new Error("Other library missing.");
       const elsewhere = await insertItem(db, {
+        withVersion: true,
         libraryId: otherLibrary.id,
         title: "Elsewhere",
         kind: "movie",
@@ -751,6 +758,7 @@ describe.skipIf(!databaseUrl)("applyMetadata", () => {
       await migrateDatabase(db);
       const { item } = await fixture(db);
       const other = await insertItem(db, {
+        withVersion: true,
         libraryId: item.libraryId,
         title: "Sequel",
         kind: "movie",
@@ -840,7 +848,7 @@ describe.skipIf(!databaseUrl)("applyMetadata", () => {
         { provider: "tmdb", value: "550" },
       ]);
       const [stored] = await db
-        .select()
+        .select(itemFixtureFields)
         .from(items)
         .where(eq(items.id, item.id));
       expect(stored?.metadataState).toBe("matched");
@@ -1122,6 +1130,7 @@ describe.skipIf(!databaseUrl)("applyMetadata", () => {
       if (!library) throw new Error("Fixture library missing.");
       const tree = { libraryId: library.id, canonicalFolder: "Breaking Bad" };
       const show = await insertItem(db, {
+        withVersion: true,
         ...tree,
         kind: "show",
         title: "Breaking Bad",
@@ -1130,6 +1139,7 @@ describe.skipIf(!databaseUrl)("applyMetadata", () => {
       });
       await setItemProviderIds(db, show.id, { tvdb: "81189" });
       const season = await insertItem(db, {
+        withVersion: true,
         ...tree,
         kind: "season",
         parentId: show.id,
@@ -1137,6 +1147,7 @@ describe.skipIf(!databaseUrl)("applyMetadata", () => {
         extension: { seasonNumber: 1 },
       });
       const episode = await insertItem(db, {
+        withVersion: true,
         ...tree,
         kind: "episode",
         parentId: season.id,
@@ -1144,15 +1155,25 @@ describe.skipIf(!databaseUrl)("applyMetadata", () => {
         extension: { episodeNumber: 1, episodeEndNumber: null },
       });
       const unknownSeason = await insertItem(db, {
+        withVersion: true,
         ...tree,
         kind: "season",
         parentId: show.id,
         title: "Season 9",
         extension: { seasonNumber: 9 },
       });
+      await insertItem(db, {
+        withVersion: true,
+        ...tree,
+        kind: "episode",
+        parentId: unknownSeason.id,
+        title: "Unknown Episode",
+        extension: { episodeNumber: 1 },
+      });
       // TVDB numbers each entity kind separately: another Show may carry the
       // same number as the Pilot Episode without blocking its match.
       const otherShow = await insertItem(db, {
+        withVersion: true,
         libraryId: library.id,
         kind: "show",
         title: "Another Show",

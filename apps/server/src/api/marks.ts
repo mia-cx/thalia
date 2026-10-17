@@ -149,7 +149,7 @@ const item = authenticated
     runApi(
       fromHost(async () => {
         const [row] = await context.db
-          .select({ libraryId: items.libraryId })
+          .select({ id: items.id })
           .from(items)
           .where(eq(items.id, input.id));
         if (row === undefined) throw new AuthError("NOT_FOUND");

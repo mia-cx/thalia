@@ -9,6 +9,7 @@ import {
   runFirstRunWizard,
   setupOpen,
 } from "../../../web/src/lib/wizard.ts";
+import { itemFixtureFields } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import { items, versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
@@ -68,9 +69,9 @@ describe.skipIf(!databaseUrl)("first-run wizard", () => {
             expect(status.latest?.state).toBe("completed");
 
             const scanned = await db
-              .select()
+              .select(itemFixtureFields)
               .from(items)
-              .where(eq(items.libraryId, library.id));
+              .where(eq(itemFixtureFields.libraryId, library.id));
             expect(scanned).toHaveLength(1);
             expect(scanned[0]).toMatchObject({ title: "Alien", year: 1979 });
             expect(

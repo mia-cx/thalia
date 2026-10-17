@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { seedBrowse } from "../api/view-fixtures.ts";
+import { insertItem } from "../db/item-fixtures.ts";
 import { files, progress, versions } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
-import { insertItem } from "../db/tree.ts";
 import { scanShowDirectory } from "../libraries/scan.ts";
 import {
   createLibrary,

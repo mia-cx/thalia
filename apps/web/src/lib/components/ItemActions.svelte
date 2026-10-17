@@ -191,7 +191,7 @@ async function refreshMetadata() {
     // Show, its children. Keep reloading on each until the next refresh.
     void followLibrary(
       (signal) => client.events.stream(undefined, { signal }),
-      detail.libraryId,
+      null,
       reload,
       refreshAbort.signal,
     );

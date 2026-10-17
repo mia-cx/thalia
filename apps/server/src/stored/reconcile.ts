@@ -1,4 +1,5 @@
 import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
+import { lockCatalogue } from "../db/catalogue-lock.ts";
 import type { Database } from "../db/client.ts";
 import {
   files,
@@ -149,7 +150,10 @@ export async function reconcileStoredVersions(
       row.storedFolder === storedFolderOf(row.sourcePath, row.rung)
     )
       continue;
-    await db.delete(versions).where(eq(versions.id, row.id));
+    await db.transaction(async (tx) => {
+      await lockCatalogue(tx);
+      await tx.delete(versions).where(eq(versions.id, row.id));
+    });
     dropped = true;
   }
   // Folders go on a worker: whoever runs this may only read the share, as
