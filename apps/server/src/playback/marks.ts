@@ -63,7 +63,11 @@ async function viewableItem(db: MarksDb, userId: string, itemId: string) {
   });
 }
 
-/** Reads the caller's favourite flag and numeric rating for an Item. */
+/**
+ * Reads the caller's marks for an Item. Played is its own progress when the
+ * Item has a Version; for containers it is true once every descendant with a
+ * Version is completed, which is how a watched Show reads.
+ */
 export async function getItemMarks(
   db: MarksDb,
   userId: string,
@@ -80,9 +84,28 @@ export async function getItemMarks(
     .from(ratings)
     .where(and(eq(ratings.userId, userId), eq(ratings.itemId, itemId)))
     .limit(1);
+  const tree = (
+    await db
+      .select({ id: itemAncestors.descendantId })
+      .from(itemAncestors)
+      .where(eq(itemAncestors.ancestorId, itemId))
+  ).map((row) => row.id);
+  const leaves = await db
+    .selectDistinctOn([versions.itemId], {
+      itemId: versions.itemId,
+      completed: progress.completed,
+    })
+    .from(versions)
+    .leftJoin(
+      progress,
+      and(eq(progress.itemId, versions.itemId), eq(progress.userId, userId)),
+    )
+    .where(and(inArray(versions.itemId, tree), eq(versions.origin, "imported")))
+    .orderBy(versions.itemId, versions.label, versions.id);
   return {
     favourite: favourite !== undefined,
     rating: rating?.value == null ? null : Number(rating.value),
+    played: leaves.length > 0 && leaves.every((leaf) => leaf.completed),
   };
 }
 

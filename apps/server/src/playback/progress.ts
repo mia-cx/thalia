@@ -218,6 +218,9 @@ async function lockSession(tx: LifecycleDb, userId: string, scope: Scope) {
   return { session, version };
 }
 
+/** Jellyfin's MaxResumePct: a position past this share of a Version counts as watched. */
+const watchedThreshold = 0.9;
+
 async function upsertProgress(
   tx: LifecycleDb,
   userId: string,
@@ -227,6 +230,10 @@ async function upsertProgress(
   completed: boolean,
   countPlay: boolean,
 ) {
+  const watched =
+    completed ||
+    (version.durationSeconds !== null &&
+      positionSeconds >= watchedThreshold * version.durationSeconds);
   await tx
     .insert(progress)
     .values({
@@ -235,7 +242,7 @@ async function upsertProgress(
       versionId: version.id,
       format: version.format,
       positionSeconds,
-      completed,
+      completed: watched,
       playedAt: sql`clock_timestamp()`,
       updatedAt: sql`clock_timestamp()`,
       playCount: countPlay ? 1 : 0,
@@ -246,7 +253,7 @@ async function upsertProgress(
         versionId: version.id,
         format: version.format,
         positionSeconds,
-        completed,
+        completed: watched,
         playedAt: sql`clock_timestamp()`,
         updatedAt: sql`clock_timestamp()`,
         ...(countPlay ? { playCount: sql`${progress.playCount} + 1` } : {}),

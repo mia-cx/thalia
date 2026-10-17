@@ -7,7 +7,7 @@ import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import { setPermissionOverride } from "../auth/permissions.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import type { Database } from "../db/client.ts";
-import { insertItems } from "../db/item-fixtures.ts";
+import { insertItem, insertItems } from "../db/item-fixtures.ts";
 import { migrateDatabase } from "../db/migrate.ts";
 import {
   accessRules,
@@ -646,6 +646,122 @@ describe.skipIf(!databaseUrl)("playback progress", () => {
             .filter((event) => event.sessionId === sessionC.id)
             .map((event) => event.state),
         ).toEqual(["playing"]);
+      } finally {
+        await server.stop();
+      }
+    }));
+  test("stops and heartbeats past the watched threshold store completed", () =>
+    withDatabase(async (db, url) => {
+      await migrateDatabase(db);
+      const fx = await seed(db);
+      const addMovie = async (title: string) =>
+        insertItem(db, {
+          libraryId: fx.library.id,
+          kind: "movie",
+          title,
+          canonicalFolder: title.toLowerCase(),
+          extension: {},
+        });
+      const late = await addMovie("Credits");
+      const lateVersion = await addVersion(db, {
+        library: fx.library,
+        item: late,
+      });
+      const middle = await addMovie("Halfway");
+      const middleVersion = await addVersion(db, {
+        library: fx.library,
+        item: middle,
+      });
+      const edge = await addMovie("Edge");
+      const edgeVersion = await addVersion(db, {
+        library: fx.library,
+        item: edge,
+      });
+      const beater = await addMovie("Heartbeat");
+      const beatVersion = await addVersion(db, {
+        library: fx.library,
+        item: beater,
+      });
+      const timeless = await addMovie("Live");
+      const timelessVersion = await addVersion(
+        db,
+        { library: fx.library, item: timeless },
+        { duration: 0 },
+      );
+      await db
+        .update(versions)
+        .set({ durationSeconds: null })
+        .where(eq(versions.id, timelessVersion.id));
+      const pairs: [string, string][] = [
+        [late.id, lateVersion.id],
+        [middle.id, middleVersion.id],
+        [edge.id, edgeVersion.id],
+        [beater.id, beatVersion.id],
+        [timeless.id, timelessVersion.id],
+      ];
+      const sessions = await Promise.all(
+        pairs.map(([itemId, versionId]) =>
+          addSession(db, fx.owner.id, itemId, versionId),
+        ),
+      );
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const base = `http://127.0.0.1:${server.apiServer?.port}`;
+        const client = rpcClient(base, fx.keyToken);
+        const [lateS, middleS, edgeS, beatS, liveS] = sessions;
+        if (!lateS || !middleS || !edgeS || !beatS || !liveS)
+          throw new Error("Session fixtures missing.");
+        for (const [session, itemId] of [
+          [lateS, late.id],
+          [middleS, middle.id],
+          [edgeS, edge.id],
+          [beatS, beater.id],
+          [liveS, timeless.id],
+        ] as const)
+          await client.playback.start({
+            sessionId: session.id,
+            itemId,
+            positionSeconds: 0,
+          });
+        await client.playback.stop({
+          sessionId: lateS.id,
+          itemId: late.id,
+          positionSeconds: 114,
+        });
+        await client.playback.stop({
+          sessionId: middleS.id,
+          itemId: middle.id,
+          positionSeconds: 60,
+        });
+        await client.playback.stop({
+          sessionId: edgeS.id,
+          itemId: edge.id,
+          positionSeconds: 108,
+        });
+        await client.playback.progress({
+          sessionId: beatS.id,
+          itemId: beater.id,
+          positionSeconds: 110,
+        });
+        await client.playback.stop({
+          sessionId: liveS.id,
+          itemId: timeless.id,
+          positionSeconds: 3600,
+        });
+        const progressOf = (itemId: string) =>
+          client.playback.getProgress({ itemId });
+        expect((await progressOf(late.id))?.completed).toBe(true);
+        expect((await progressOf(middle.id))?.completed).toBe(false);
+        expect((await progressOf(edge.id))?.completed).toBe(true);
+        expect((await progressOf(beater.id))?.completed).toBe(true);
+        expect((await progressOf(timeless.id))?.completed).toBe(false);
+        const shelf = await client.shelves.continueWatching({});
+        const ids = shelf.items.map((entry) => entry.item.id);
+        expect(ids).toContain(middle.id);
+        expect(ids).toContain(timeless.id);
+        expect(ids).not.toContain(late.id);
+        expect(ids).not.toContain(edge.id);
+        expect(ids).not.toContain(beater.id);
       } finally {
         await server.stop();
       }

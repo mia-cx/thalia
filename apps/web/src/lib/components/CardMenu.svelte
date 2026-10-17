@@ -1,9 +1,12 @@
 <script lang="ts">
 import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
+import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
+import { client } from "$lib/api.ts";
 import { type BrowseCard, cardLabel, itemHref } from "$lib/browse.ts";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.ts";
+import { readFailure } from "$lib/errors.ts";
 
 const {
   card,
@@ -19,6 +22,14 @@ const showHref = $derived(
     ? `/shows/${card.id}`
     : (card.show && `/shows/${card.show.id}`) || null,
 );
+async function markWatched() {
+  try {
+    await client.marks.setPlayed({ itemId: card.id, played: true });
+  } catch (error) {
+    toast.error(readFailure(error).message);
+  }
+}
+
 // The pages a card can open: its own, then its Show's.
 const items = $derived.by(() => {
   const list: { label: string; href: string }[] = [];
@@ -54,6 +65,9 @@ const items = $derived.by(() => {
         Play from start
       </DropdownMenu.Item>
     {/if}
-    <!-- #106 adds Mark as watched, the watchlist and Share here. -->
+    <DropdownMenu.Item onSelect={() => void markWatched()}>
+      Mark as watched
+    </DropdownMenu.Item>
+    <!-- #106 adds the watchlist and Share here. -->
   </DropdownMenu.Content>
 </DropdownMenu.Root>

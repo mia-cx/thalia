@@ -168,13 +168,14 @@ describe.skipIf(!databaseUrl)("direct-play end to end", () => {
           expect(entry?.progress.positionSeconds).toBe(0.5);
           expect(
             await client.marks.setFavourite({ itemId, favourite: true }),
-          ).toEqual({ favourite: true, rating: null });
+          ).toEqual({ favourite: true, rating: null, played: false });
           expect(await client.marks.setRating({ itemId, rating: 8.5 })).toEqual(
-            { favourite: true, rating: 8.5 },
+            { favourite: true, rating: 8.5, played: false },
           );
           expect(await client.marks.get({ itemId })).toEqual({
             favourite: true,
             rating: 8.5,
+            played: false,
           });
           await client.playback.stop({
             sessionId: planned.sessionId,

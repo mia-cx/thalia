@@ -212,29 +212,69 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
         const setRating = (rating: number | null) =>
           client.marks.setRating({ itemId: item.id, rating });
 
-        expect(await get()).toEqual({ favourite: false, rating: null });
+        expect(await get()).toEqual({
+          favourite: false,
+          rating: null,
+          played: false,
+        });
         await setFavourite(true);
         await setFavourite(true);
-        expect(await get()).toEqual({ favourite: true, rating: null });
+        expect(await get()).toEqual({
+          favourite: true,
+          rating: null,
+          played: false,
+        });
         await setFavourite(false);
-        expect(await get()).toEqual({ favourite: false, rating: null });
+        expect(await get()).toEqual({
+          favourite: false,
+          rating: null,
+          played: false,
+        });
 
         await setRating(8.5);
         await setRating(8.5);
-        expect(await get()).toEqual({ favourite: false, rating: 8.5 });
+        expect(await get()).toEqual({
+          favourite: false,
+          rating: 8.5,
+          played: false,
+        });
         await setRating(0);
-        expect(await get()).toEqual({ favourite: false, rating: 0 });
+        expect(await get()).toEqual({
+          favourite: false,
+          rating: 0,
+          played: false,
+        });
         await setRating(10);
-        expect(await get()).toEqual({ favourite: false, rating: 10 });
+        expect(await get()).toEqual({
+          favourite: false,
+          rating: 10,
+          played: false,
+        });
         await setRating(null);
-        expect(await get()).toEqual({ favourite: false, rating: null });
+        expect(await get()).toEqual({
+          favourite: false,
+          rating: null,
+          played: false,
+        });
         await setRating(8.2);
-        expect(await get()).toEqual({ favourite: false, rating: 8.2 });
+        expect(await get()).toEqual({
+          favourite: false,
+          rating: 8.2,
+          played: false,
+        });
 
         await setFavourite(true);
-        expect(await get()).toEqual({ favourite: true, rating: 8.2 });
+        expect(await get()).toEqual({
+          favourite: true,
+          rating: 8.2,
+          played: false,
+        });
         await setRating(null);
-        expect(await get()).toEqual({ favourite: true, rating: null });
+        expect(await get()).toEqual({
+          favourite: true,
+          rating: null,
+          played: false,
+        });
       } finally {
         await server.stop();
       }
@@ -258,6 +298,7 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
         expect(await otherClient.marks.get({ itemId: item.id })).toEqual({
           favourite: false,
           rating: null,
+          played: false,
         });
         await otherClient.marks.setFavourite({
           itemId: item.id,
@@ -267,6 +308,7 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
         expect(await client.marks.get({ itemId: item.id })).toEqual({
           favourite: true,
           rating: 7.5,
+          played: false,
         });
 
         expect(
@@ -703,6 +745,149 @@ describe.skipIf(!databaseUrl)("marks and shelves", () => {
         });
         expect(rest.status).toBe(200);
         expect(await rest.json()).toEqual([e2.id]);
+      } finally {
+        await server.stop();
+      }
+    }));
+  test("marks.setPlayed plays and unplays items and shows", () =>
+    withDatabase(async (db, url) => {
+      await migrateDatabase(db);
+      const fx = await seed(db);
+      const library = await addLibrary(db, "movies");
+      const movie = await insertItem(db, {
+        libraryId: library.id,
+        kind: "movie",
+        title: "Movie",
+        canonicalFolder: "Movie",
+        extension: {},
+      });
+      await addVersion(db, library.id, movie.id);
+      const [shows] = await insertLibraries(db, {
+        name: "Shows",
+        medium: "shows",
+        rootPath: "/srv/shows",
+      });
+      if (!shows) throw new Error("Library insert returned no row.");
+      const show = await insertItem(db, {
+        libraryId: shows.id,
+        kind: "show",
+        title: "Show",
+        canonicalFolder: "Show",
+        extension: {},
+      });
+      const season = await insertItem(db, {
+        libraryId: shows.id,
+        kind: "season",
+        parentId: show.id,
+        title: "Season 1",
+        canonicalFolder: "Show/Season 01",
+        extension: { seasonNumber: 1 },
+      });
+      const episodes = await Promise.all(
+        [1, 2].map((number) =>
+          insertItem(db, {
+            libraryId: shows.id,
+            kind: "episode",
+            parentId: season.id,
+            title: `Episode ${number}`,
+            canonicalFolder: "Show/Season 01",
+            extension: { episodeNumber: number, episodeEndNumber: null },
+          }),
+        ),
+      );
+      const [e1, e2] = episodes;
+      if (!e1 || !e2) throw new Error("Episode fixtures missing.");
+      await Promise.all(
+        [e1, e2].map(async (episode) => {
+          const [version] = await db
+            .insert(versions)
+            .values({
+              itemId: episode.id,
+              itemKind: "episode",
+              libraryId: shows.id,
+              label: "Original",
+              format: "video",
+              bytes: 36n,
+              durationSeconds: 120,
+            })
+            .returning();
+          if (!version) throw new Error("Version insert returned no row.");
+        }),
+      );
+      await addProgress(db, {
+        userId: fx.owner.id,
+        itemId: e1.id,
+        versionId: null,
+        positionSeconds: 60,
+      });
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const base = `http://127.0.0.1:${server.apiServer?.port}`;
+        const client = rpcClient(base, fx.keyToken);
+
+        const progressOf = (itemId: string) =>
+          client.playback.getProgress({ itemId });
+        expect((await client.marks.get({ itemId: e1.id })).played).toBe(false);
+        expect((await client.marks.get({ itemId: show.id })).played).toBe(
+          false,
+        );
+        expect(
+          await client.marks.setPlayed({ itemId: e1.id, played: true }),
+        ).toEqual({ played: true });
+        expect((await progressOf(e1.id))?.completed).toBe(true);
+        expect((await client.marks.get({ itemId: e1.id })).played).toBe(true);
+        // One watched Episode is not a watched Show.
+        expect((await client.marks.get({ itemId: show.id })).played).toBe(
+          false,
+        );
+        const afterEpisode = await client.shelves.continueWatching({});
+        expect(afterEpisode.items.map((entry) => entry.item.id)).not.toContain(
+          e1.id,
+        );
+
+        expect(
+          await client.marks.setPlayed({ itemId: show.id, played: true }),
+        ).toEqual({ played: true });
+        for (const episode of [e1, e2])
+          expect((await progressOf(episode.id))?.completed).toBe(true);
+        expect((await client.marks.get({ itemId: show.id })).played).toBe(true);
+        expect((await client.marks.get({ itemId: season.id })).played).toBe(
+          true,
+        );
+        expect(await client.shelves.nextUp()).toEqual([]);
+
+        expect(
+          await client.marks.setPlayed({ itemId: show.id, played: false }),
+        ).toEqual({ played: false });
+        expect(await progressOf(e1.id)).toBeNull();
+        expect(await progressOf(e2.id)).toBeNull();
+        expect((await client.marks.get({ itemId: show.id })).played).toBe(
+          false,
+        );
+
+        expect(
+          await client.marks.setPlayed({ itemId: movie.id, played: true }),
+        ).toEqual({ played: true });
+        expect((await progressOf(movie.id))?.completed).toBe(true);
+
+        const denied = await createLocalUser(db, fx.admin.id, {
+          username: "denied",
+          password: "denied-pass",
+        });
+        const { token: deniedToken } = await createApiKey(
+          db,
+          denied.id,
+          "denied",
+        );
+        await setPermissionOverride(db, fx.admin.id, denied.id, "view", false);
+        const deniedClient = rpcClient(base, deniedToken);
+        expect(
+          (
+            await capture(
+              deniedClient.marks.setPlayed({ itemId: movie.id, played: true }),
+            )
+          ).status,
+        ).toBe(403);
       } finally {
         await server.stop();
       }

@@ -1,5 +1,6 @@
 <script lang="ts">
 import ClapperboardIcon from "@lucide/svelte/icons/clapperboard";
+import { onDestroy } from "svelte";
 import { page } from "$app/state";
 import { client } from "$lib/api.ts";
 import { heroSlides, isFresh } from "$lib/browse.ts";
@@ -10,9 +11,20 @@ import PosterCard from "$lib/components/PosterCard.svelte";
 import Shelf, { shelfColumns } from "$lib/components/Shelf.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { Skeleton } from "$lib/components/ui/skeleton/index.ts";
+import { followEvents } from "$lib/events.ts";
 import { resource } from "$lib/resource.svelte.ts";
 
 const home = resource(() => client.shelves.home());
+const controller = new AbortController();
+// Progress and played marks move cards between shelves.
+void followEvents(
+  (signal) => client.events.stream(undefined, { signal }),
+  (event) => {
+    if (event.kind === "user-data.changed") void home.reload();
+  },
+  controller.signal,
+);
+onDestroy(() => controller.abort());
 const now = new Date();
 const slides = $derived(home.data === undefined ? [] : heroSlides(home.data));
 
