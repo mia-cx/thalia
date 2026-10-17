@@ -33,6 +33,9 @@ type Option = {
 let input = $state("");
 let open = $state(false);
 let sel = $state("");
+// The parent clearing value refocuses the input; that focus must not reopen
+// the dropdown over the rest of the form.
+let justCleared = $state(false);
 
 const libraries = resource(() => client.libraries.list());
 
@@ -134,6 +137,14 @@ $effect(() => {
   }
 });
 
+$effect(() => {
+  if (value === undefined && sel !== "") {
+    sel = "";
+    input = "";
+    justCleared = true;
+  }
+});
+
 function pick(next: string) {
   const option = optionList.find((entry) => entry.key === next);
   if (option === undefined) return;
@@ -161,7 +172,14 @@ function pick(next: string) {
       input = event.currentTarget.value;
       open = true;
     }}
-    onfocus={() => (open = true)}
+    onmousedown={() => (justCleared = false)}
+    onfocus={() => {
+      if (justCleared) {
+        justCleared = false;
+        return;
+      }
+      open = true;
+    }}
   />
   <Combobox.Portal>
     <Combobox.Content
