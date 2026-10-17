@@ -5,23 +5,17 @@ import { goto, invalidateAll } from "$app/navigation";
 import { page } from "$app/state";
 import { client } from "$lib/api.ts";
 import { fromMbps, toMbps } from "$lib/bitrate.ts";
+import AccessPanel from "$lib/components/admin/AccessPanel.svelte";
 import AdminPage from "$lib/components/admin/AdminPage.svelte";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
 import FormRow from "$lib/components/admin/FormRow.svelte";
 import ListRow from "$lib/components/admin/ListRow.svelte";
-import SubjectRules from "$lib/components/admin/SubjectRules.svelte";
 import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 import { Badge } from "$lib/components/ui/badge/index.ts";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
-import * as Select from "$lib/components/ui/select/index.ts";
 import { Switch } from "$lib/components/ui/switch/index.ts";
 import { readFailure } from "$lib/errors.ts";
-import {
-  type Permission,
-  permissionLabels,
-  permissionNames,
-} from "$lib/permissions.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import type { PageProps } from "./$types";
 
@@ -31,11 +25,6 @@ const id = $derived(page.params.id ?? "");
 
 const access = resource(() => client.users.get({ id }));
 const groups = resource(() => client.groups.list());
-const rules = resource(() =>
-  data.me.admin
-    ? client.access.rulesForSubject({ subject: { type: "user", id } })
-    : Promise.resolve(undefined),
-);
 const sessions = resource(() => client.users.sessions({ id }));
 
 let loadedId = untrack(() => id);
@@ -44,13 +33,12 @@ $effect(() => {
   loadedId = id;
   resetRouteState();
   access.clear();
-  rules.clear();
   sessions.clear();
   const target = id;
   const generation = routeGeneration;
   void serial(target, async () => {
     if (!currentVisit(target, generation)) return;
-    await Promise.all([access.reload(), rules.reload(), sessions.reload()]);
+    await Promise.all([access.reload(), sessions.reload()]);
   });
 });
 
@@ -91,10 +79,6 @@ let leaveAdminsOpen = $state(false);
 let leaveConfirmed = $state(false);
 let leaveGroupId = $state("");
 
-let overrideSel = $state<Record<string, string>>({});
-let overrideBusy = $state<Record<string, boolean>>({});
-let overrideFailures = $state<Record<string, FailureShape>>({});
-
 let revoking = $state<Record<string, boolean>>({});
 let revokeFailures = $state<Record<string, FailureShape>>({});
 
@@ -129,9 +113,6 @@ function resetRouteState() {
   leaveAdminsOpen = false;
   leaveConfirmed = false;
   leaveGroupId = "";
-  overrideSel = {};
-  overrideBusy = {};
-  overrideFailures = {};
   revoking = {};
   revokeFailures = {};
 }
@@ -223,7 +204,6 @@ async function saveGroups(
           access.reload(),
           sessions.reload(),
           groups.reload(),
-          rules.reload(),
         ]);
       });
     }
@@ -272,58 +252,6 @@ async function leaveAdmins() {
 
 function revertLeave() {
   if (!leaveConfirmed) delete groupSel[leaveGroupId];
-}
-
-function overrideValue(permission: string): string {
-  const row = access.data?.overrides.find(
-    (entry) => entry.permission === permission,
-  );
-  if (!row) return "inherit";
-  return row.allowed ? "allow" : "deny";
-}
-
-const overrideOptions = [
-  { value: "inherit", label: "From groups" },
-  { value: "allow", label: "Allow" },
-  { value: "deny", label: "Deny" },
-];
-
-async function setOverride(permission: Permission, value: string) {
-  const target = id;
-  const generation = routeGeneration;
-  overrideSel[permission] = value;
-  overrideBusy[permission] = true;
-  delete overrideFailures[permission];
-  try {
-    const updated = await serial(target, () =>
-      client.users.setOverride({
-        id: target,
-        permission,
-        allowed: value === "allow" ? true : value === "deny" ? false : null,
-      }),
-    );
-    if (!currentVisit(target, generation)) return;
-    access.set(updated);
-    void serial(target, async () => {
-      if (!currentVisit(target, generation)) return;
-      await rules.reload();
-    });
-    delete overrideSel[permission];
-    toast.success(
-      value === "allow"
-        ? `${permissionLabels[permission]} allowed`
-        : value === "deny"
-          ? `${permissionLabels[permission]} denied`
-          : `${permissionLabels[permission]} now follows groups`,
-    );
-  } catch (error) {
-    if (currentVisit(target, generation)) {
-      overrideFailures[permission] = readFailure(error);
-      delete overrideSel[permission];
-    }
-  } finally {
-    if (currentVisit(target, generation)) overrideBusy[permission] = false;
-  }
 }
 
 async function revoke(sessionId: string) {
@@ -531,53 +459,16 @@ async function revoke(sessionId: string) {
   </FormGroup>
 
   <div id="permissions" class="scroll-mt-20">
-    <FormGroup
-      title="Permissions"
-      failure={Object.values(overrideFailures).at(-1) || undefined}
-      description="From groups follows this user's groups. Allow and Deny override them.{adminLocked
-        ? ' Only an admin can change this.'
-        : ''}"
-    >
-      {#each permissionNames as permission (permission)}
-        {@const value = overrideSel[permission] ?? overrideValue(permission)}
-        <FormRow
-          label={permissionLabels[permission]}
-          for="override-{permission}"
-          inline
-        >
-          <Select.Root
-            type="single"
-            {value}
-            onValueChange={(next) => setOverride(permission, next)}
-            disabled={overrideBusy[permission] === true ||
-              !access.data ||
-              adminLocked}
-          >
-            <Select.Trigger id="override-{permission}">
-              <Select.Value
-                >{overrideOptions.find((o) => o.value === value)
-                  ?.label}</Select.Value
-              >
-            </Select.Trigger>
-            <Select.Content>
-              {#each overrideOptions as option (option.value)}
-                <Select.Item value={option.value}>{option.label}</Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
-        </FormRow>
-      {/each}
-    </FormGroup>
+    {#if data.me.admin}
+      {#key id}
+        <AccessPanel subject={{ type: "user", id }} />
+      {/key}
+    {:else}
+      <FormGroup title="Access">
+        <ListRow title="Only an admin can change access rules." />
+      </FormGroup>
+    {/if}
   </div>
-
-  {#if data.me.admin}
-    <SubjectRules
-      rules={rules.data}
-      failure={rules.failure ?? undefined}
-      loading={rules.loading}
-      onretry={() => rules.reload()}
-    />
-  {/if}
 </AdminPage>
 
 <ConfirmDialog

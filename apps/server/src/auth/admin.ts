@@ -1,7 +1,6 @@
-import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import {
-  type Action,
   accessRules,
   actions,
   groups,
@@ -70,7 +69,9 @@ export async function listUsers(db: Database, actorId: string) {
   return db.select(userFields).from(users).orderBy(asc(users.username));
 }
 
-/** Lists every group for a caller holding users:manage. */
+const actionOrder = new Map(actions.map((action, index) => [action, index]));
+
+/** Lists every group with a summary of its Access rules for a caller holding users:manage. */
 export async function listGroups(db: Database, actorId: string) {
   await requirePermission(db, actorId, "users:manage", server);
   const rows = await db
@@ -80,26 +81,28 @@ export async function listGroups(db: Database, actorId: string) {
   const rules = await db
     .select()
     .from(accessRules)
-    .where(
-      and(
-        isNotNull(accessRules.groupId),
-        isNull(accessRules.libraryId),
-        isNull(accessRules.itemId),
-        eq(accessRules.allowed, true),
-      ),
-    );
-  return rows.map((group) => ({
-    ...group,
-    permissions:
-      group.builtIn && group.name === "admins"
-        ? [...actions]
-        : rules
-            .filter((rule) => rule.groupId === group.id)
-            .map((rule) => rule.action),
-  }));
+    .where(isNotNull(accessRules.groupId));
+  return rows.map((group) => {
+    const own = rules.filter((rule) => rule.groupId === group.id);
+    return {
+      ...group,
+      rules: {
+        server: own
+          .filter((rule) => rule.libraryId === null && rule.itemId === null)
+          .map((rule) => ({ action: rule.action, allowed: rule.allowed }))
+          .sort(
+            (a, b) =>
+              (actionOrder.get(a.action) ?? 0) -
+              (actionOrder.get(b.action) ?? 0),
+          ),
+        libraries: new Set(own.flatMap((rule) => rule.libraryId ?? [])).size,
+        items: new Set(own.flatMap((rule) => rule.itemId ?? [])).size,
+      },
+    };
+  });
 }
 
-/** Loads one user's groups, overrides, library access and settings without a caller check. */
+/** Loads one user's groups, library access and settings without a caller check. */
 export async function readUserAccess(
   db: Pick<Database, "select">,
   userId: string,
@@ -114,20 +117,6 @@ export async function readUserAccess(
     .from(userGroups)
     .where(eq(userGroups.userId, userId))
     .orderBy(asc(userGroups.groupId));
-  const overrides = await db
-    .select({
-      permission: accessRules.action,
-      allowed: accessRules.allowed,
-    })
-    .from(accessRules)
-    .where(
-      and(
-        eq(accessRules.userId, userId),
-        isNull(accessRules.libraryId),
-        isNull(accessRules.itemId),
-      ),
-    )
-    .orderBy(asc(accessRules.action));
   const access = await db
     .select({
       libraryId: sql<string>`${accessRules.libraryId}`,
@@ -153,7 +142,6 @@ export async function readUserAccess(
   return {
     user,
     groupIds: membershipRows.map((row) => row.groupId),
-    overrides,
     libraryAccess: access,
     settings: stored ?? {
       bitrateCapBps: null,
@@ -171,46 +159,6 @@ export async function getUserAccess(
 ) {
   await requirePermission(db, actorId, "users:manage", server);
   return readUserAccess(db, userId);
-}
-
-/** Replaces a custom group's permissions; the actor must be a built-in admin. */
-export async function setGroupPermissions(
-  db: Database,
-  actorId: string,
-  groupId: string,
-  input: readonly Action[],
-) {
-  await requireAdmin(db, actorId);
-  if (
-    input.some(
-      (permission) => !(actions as readonly string[]).includes(permission),
-    )
-  )
-    throw new AuthError("INVALID_INPUT");
-  const selected = [...new Set(input)];
-  return db.transaction(async (tx) => {
-    const [group] = await tx
-      .select(groupFields)
-      .from(groups)
-      .where(eq(groups.id, groupId))
-      .for("update");
-    if (!group) throw new AuthError("NOT_FOUND");
-    if (group.builtIn) throw new AuthError("INVALID_INPUT");
-    await tx
-      .delete(accessRules)
-      .where(
-        and(
-          eq(accessRules.groupId, groupId),
-          isNull(accessRules.libraryId),
-          isNull(accessRules.itemId),
-        ),
-      );
-    if (selected.length)
-      await tx
-        .insert(accessRules)
-        .values(selected.map((action) => ({ groupId, action, allowed: true })));
-    return { ...group, permissions: selected };
-  });
 }
 
 /** The largest cap the playback planner accepts, since it reads the column as a number. */

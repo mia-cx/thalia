@@ -3,7 +3,13 @@ import {
   actions,
   serverOnlyActions,
 } from "../../../server/src/db/schema/access.ts";
-import { objectActions, objectHref, type Rule, sourceHref } from "./access.ts";
+import {
+  groupSummary,
+  objectActions,
+  objectHref,
+  type Rule,
+  sourceHref,
+} from "./access.ts";
 
 const item = (
   kind: "movie" | "show" | "season" | "episode",
@@ -78,5 +84,80 @@ describe("sourceHref", () => {
       "/admin/libraries/lib-1",
     );
     expect(sourceHref(rule(item("show")))).toBe("/shows/item-1");
+  });
+});
+
+describe("groupSummary", () => {
+  const group = (
+    over: Partial<{
+      name: string;
+      builtIn: boolean;
+      server: { action: "view" | "play" | "download"; allowed: boolean }[];
+      libraries: number;
+      items: number;
+    }>,
+  ) =>
+    ({
+      id: "group-1",
+      name: over.name ?? "Family",
+      builtIn: over.builtIn ?? false,
+      rules: {
+        server: over.server ?? [],
+        libraries: over.libraries ?? 0,
+        items: over.items ?? 0,
+      },
+    }) as Parameters<typeof groupSummary>[0];
+
+  test("names the built-in admins Group", () => {
+    expect(groupSummary(group({ name: "admins", builtIn: true }))).toBe(
+      "Can do everything",
+    );
+  });
+
+  test("says No rules when the Group holds none", () => {
+    expect(groupSummary(group({}))).toBe("No rules");
+  });
+
+  test("joins server allows and object counts", () => {
+    expect(
+      groupSummary(
+        group({
+          server: [
+            { action: "view", allowed: true },
+            { action: "play", allowed: true },
+            { action: "download", allowed: true },
+          ],
+          libraries: 2,
+          items: 1,
+        }),
+      ),
+    ).toBe("View, Play, Download on the server · 2 Libraries · 1 Item");
+  });
+
+  test("marks a deny-only server", () => {
+    expect(
+      groupSummary(group({ server: [{ action: "download", allowed: false }] })),
+    ).toBe("Download denied on the server");
+  });
+
+  test("mixes allows and denies on the server", () => {
+    expect(
+      groupSummary(
+        group({
+          server: [
+            { action: "view", allowed: true },
+            { action: "download", allowed: false },
+          ],
+        }),
+      ),
+    ).toBe("View allowed, Download denied on the server");
+  });
+
+  test("pluralises singular counts", () => {
+    expect(groupSummary(group({ libraries: 1 }))).toBe("1 Library");
+    expect(groupSummary(group({ items: 1 }))).toBe("1 Item");
+    expect(groupSummary(group({ libraries: 2, items: 3 }))).toBe(
+      "2 Libraries · 3 Items",
+    );
   });
 });

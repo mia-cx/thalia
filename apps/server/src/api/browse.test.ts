@@ -828,4 +828,38 @@ describe.skipIf(!databaseUrl)("browse search", () => {
         await server.stop();
       }
     }));
+
+  test("search finds Seasons and Episodes with their Show when kinds say so", () =>
+    withDatabase(async (db, url) => {
+      await migrateDatabase(db);
+      const { token } = await seedViewer(db);
+      const library = await addLibrary(db, "Shows", "shows");
+      const seeded = await seedShow(db, library.id);
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const client = rpcClient(
+          `http://127.0.0.1:${server.apiServer?.port}`,
+          token,
+        );
+        const results = await client.items.search({
+          query: "Episode",
+          kinds: ["season", "episode"],
+        });
+        expect(results).toContainEqual(
+          expect.objectContaining({
+            kind: "episode",
+            title: "Episode 1",
+            show: expect.objectContaining({
+              id: seeded.show.id,
+              title: "Severance",
+            }),
+          }),
+        );
+        // The default kinds keep the Search page to Movies and Shows.
+        const fallback = await client.items.search({ query: "Episode" });
+        expect(fallback.map((item) => item.kind)).toEqual([]);
+      } finally {
+        await server.stop();
+      }
+    }));
 });

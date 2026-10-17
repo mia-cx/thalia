@@ -15,10 +15,10 @@
 
 ## Permissions and groups
 
-- Precedence: the union of a user's group permissions, then per-user overrides. Library access rows override the global view permission. An explicit deny wins a tie. Admins bypass every check.
-- Permissions are a flat set: view a library, play, manage libraries, manage metadata, manage subtitles, manage users, manage plugins, manage transcoding, manage server.
-- A Group is a named set of permissions. Built-in: admins, with everything, and users, with view and play on every library. Custom groups are admin-made.
-- A user has groups and optional per-user overrides. Per-user settings: bitrate cap, content-rating ceiling.
+- Access is decided by rules: an allow or deny of one Action by one user or Group on one object (the server, a Library, an Item or a Playlist). The most specific object in the Item's chain decides; on that object a user's rule beats their Groups' rules, and a deny wins between Groups. No rule means unset; an unset user rule follows the Groups. Admins bypass every check.
+- Actions are a flat set: view, play, download, edit metadata, edit subtitles, plus server-only manage libraries, manage users, manage plugins, manage transcoding and manage server.
+- A Group is a named set of users. Built-in: admins, with everything, and users, seeded with server view, play and download rules. Custom groups are admin-made.
+- A user has groups and rules of their own. Per-user settings: bitrate cap, content-rating ceiling.
 
 ## Artwork
 

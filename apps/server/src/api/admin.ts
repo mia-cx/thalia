@@ -6,14 +6,12 @@ import {
   listGroups,
   listUsers,
   readUserAccess,
-  setGroupPermissions,
   setLibraryAccess,
   writeUserSettings,
 } from "../auth/admin.ts";
 import {
   createGroup,
   requirePermission,
-  setPermissionOverride,
   setUserGroups,
 } from "../auth/permissions.ts";
 import { listSessions, revokeSession } from "../auth/sessions.ts";
@@ -41,7 +39,6 @@ import { fromHost, runApi } from "./errors.ts";
 import {
   AdminUser,
   Group,
-  PermissionName,
   ServerSettings,
   Session,
   UserAccess,
@@ -73,7 +70,6 @@ const toSession = (
 const toUserAccess = (access: Awaited<ReturnType<typeof getUserAccess>>) => ({
   user: toAdminUser(access.user),
   groupIds: access.groupIds,
-  overrides: access.overrides,
   libraryAccess: access.libraryAccess,
   settings: {
     bitrateCapBps:
@@ -242,32 +238,6 @@ export const userProcedures = {
         }),
       ),
     ),
-  setOverride: authenticatedMutation
-    .route({ method: "PUT", path: "/users/{id}/overrides/{permission}" })
-    .input(
-      Schema.standardSchemaV1(
-        Schema.Struct({
-          id: Schema.UUID,
-          permission: PermissionName,
-          allowed: Schema.NullOr(Schema.Boolean),
-        }),
-      ),
-    )
-    .output(accessOutput)
-    .handler(async ({ context, input }) =>
-      runApi(
-        fromHost(async () => {
-          await setPermissionOverride(
-            context.db,
-            context.caller.user.id,
-            input.id,
-            input.permission,
-            input.allowed,
-          );
-          return toUserAccess(await readUserAccess(context.db, input.id));
-        }),
-      ),
-    ),
   setSettings: authenticatedMutation
     .route({ method: "PUT", path: "/users/{id}/settings" })
     .input(
@@ -337,41 +307,22 @@ export const groupProcedures = {
     ),
   create: authenticatedMutation
     .route({ method: "POST", path: "/groups" })
-    .input(
-      Schema.standardSchemaV1(
-        Schema.Struct({
-          name: Schema.String,
-          permissions: Schema.Array(PermissionName),
-        }),
-      ),
-    )
+    .input(Schema.standardSchemaV1(Schema.Struct({ name: Schema.String })))
     .output(Schema.standardSchemaV1(Group))
     .handler(async ({ context, input }) =>
       runApi(
-        fromHost(() => createGroup(context.db, context.caller.user.id, input)),
-      ),
-    ),
-  setPermissions: authenticatedMutation
-    .route({ method: "PUT", path: "/groups/{id}/permissions" })
-    .input(
-      Schema.standardSchemaV1(
-        Schema.Struct({
-          id: Schema.UUID,
-          permissions: Schema.Array(PermissionName),
+        fromHost(async () => {
+          const group = await createGroup(context.db, context.caller.user.id, {
+            name: input.name,
+            permissions: [],
+          });
+          return {
+            id: group.id,
+            name: group.name,
+            builtIn: group.builtIn,
+            rules: { server: [], libraries: 0, items: 0 },
+          };
         }),
-      ),
-    )
-    .output(Schema.standardSchemaV1(Group))
-    .handler(async ({ context, input }) =>
-      runApi(
-        fromHost(() =>
-          setGroupPermissions(
-            context.db,
-            context.caller.user.id,
-            input.id,
-            input.permissions,
-          ),
-        ),
       ),
     ),
 };
