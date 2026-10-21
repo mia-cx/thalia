@@ -202,13 +202,13 @@ function span(seconds: number): string {
     : `${Math.floor(minutes / 60)}h ${rest}m`;
 }
 
-/** What a run changed, such as `12 new · 3 changed · 0 removed · 2 unmatched`. */
+/** What a run changed, such as `12 new · 3 changed · 0 removed · 2 unreadable`. */
 export function runChanges(run: ScanRun): string {
   return [
     `${runCount.format(run.added)} new`,
     `${runCount.format(run.changed)} changed`,
     `${runCount.format(run.removed)} removed`,
-    `${runCount.format(run.unmatched)} unmatched`,
+    `${runCount.format(run.unreadable)} unreadable`,
   ].join(" · ");
 }
 

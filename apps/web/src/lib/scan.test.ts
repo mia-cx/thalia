@@ -317,7 +317,7 @@ describe("scan run lines", () => {
     added: 12,
     changed: 3,
     removed: 0,
-    unmatched: 2,
+    unreadable: 2,
     currentFolder: "Heat (1995)",
     error: null,
     startedAt: "2026-10-21T10:00:00.000Z",
@@ -364,7 +364,7 @@ describe("scan run lines", () => {
 
   test("changes always name all four counts", () => {
     expect(runChanges(run)).toBe(
-      "12 new · 3 changed · 0 removed · 2 unmatched",
+      "12 new · 3 changed · 0 removed · 2 unreadable",
     );
   });
 });

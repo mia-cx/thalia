@@ -8,7 +8,7 @@ CREATE TABLE "scan_runs" (
 	"added" integer DEFAULT 0 NOT NULL,
 	"changed" integer DEFAULT 0 NOT NULL,
 	"removed" integer DEFAULT 0 NOT NULL,
-	"unmatched" integer DEFAULT 0 NOT NULL,
+	"unreadable" integer DEFAULT 0 NOT NULL,
 	"pending" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"current_folder" text,
 	"error" text,

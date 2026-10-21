@@ -563,7 +563,7 @@ export const ScanRun = Schema.Struct({
   added: Schema.Int,
   changed: Schema.Int,
   removed: Schema.Int,
-  unmatched: Schema.Int,
+  unreadable: Schema.Int,
   currentFolder: Schema.NullOr(Schema.String),
   error: Schema.NullOr(Schema.String),
   startedAt: Schema.String,

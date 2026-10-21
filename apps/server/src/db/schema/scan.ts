@@ -92,7 +92,7 @@ export const scanRuns = pgTable(
     changed: integer("changed").notNull().default(0),
     removed: integer("removed").notNull().default(0),
     /** Files the scan found but couldn't read as video. */
-    unmatched: integer("unmatched").notNull().default(0),
+    unreadable: integer("unreadable").notNull().default(0),
     /** Each unsettled folder job's id, mapped to the files the fan-out found in its folder. */
     pending: jsonb("pending")
       .$type<Record<string, number>>()

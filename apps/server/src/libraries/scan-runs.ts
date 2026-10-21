@@ -57,7 +57,7 @@ export async function startScanRun(
     added: 0,
     changed: 0,
     removed: 0,
-    unmatched: 0,
+    unreadable: 0,
     pending: {},
     currentFolder: null,
     error: null,
@@ -186,7 +186,7 @@ export async function countFolderScan(
           added: sql`${scanRuns.added} + ${added}`,
           changed: sql`${scanRuns.changed} + ${changed}`,
           removed: sql`${scanRuns.removed} + ${removed}`,
-          unmatched: sql`${scanRuns.unmatched} + ${after.skipped}`,
+          unreadable: sql`${scanRuns.unreadable} + ${after.skipped}`,
           pending: sql`${scanRuns.pending} - ${jobId}::text`,
         })
         .where(inArray(scanRuns.id, waiting));

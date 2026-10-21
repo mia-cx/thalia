@@ -85,7 +85,7 @@ describe.skipIf(!databaseUrl)("scan runs", () => {
             added: 2,
             changed: 0,
             removed: 0,
-            unmatched: 1,
+            unreadable: 1,
             currentFolder: null,
             error: null,
           },
@@ -104,7 +104,7 @@ describe.skipIf(!databaseUrl)("scan runs", () => {
           added: 1,
           changed: 1,
           removed: 1,
-          unmatched: 1,
+          unreadable: 1,
         });
         expect(
           new Date(run?.finishedAt ?? "").getTime() -
@@ -130,7 +130,7 @@ describe.skipIf(!databaseUrl)("scan runs", () => {
           .orderBy(events.id);
         expect(published.length).toBeLessThan(folders);
         expect(published.at(-1)?.payload).toMatchObject({
-          run: { state: "completed", checked: folders, unmatched: folders },
+          run: { state: "completed", checked: folders, unreadable: folders },
         });
       }),
     ));
