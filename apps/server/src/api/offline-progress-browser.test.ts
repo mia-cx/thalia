@@ -101,7 +101,8 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 ]),
               )})`,
             );
-            await page.send("Page.reload", {});
+            // A fresh load, so the wait below can't pass on the old page.
+            await page.goto(`${base}/downloads`);
             await page.waitFor(
               "document.querySelector('h1')?.textContent === 'Downloads'",
             );
