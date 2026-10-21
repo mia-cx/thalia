@@ -63,8 +63,9 @@ const start = resource(async () => {
   return { versionId: version.id, positionSeconds };
 });
 
+// Offline, Play opens the download rather than a server session.
 const href = (versionId: string, from?: number) =>
-  `/play/${detail.id}?version=${versionId}${from === undefined ? "" : `&t=${from}`}`;
+  `/play/${detail.id}?version=${versionId}${from === undefined ? "" : `&t=${from}`}${offline ? "&offline" : ""}`;
 
 // A failed read still offers Play; the player reports what went wrong.
 const fallback = $derived(

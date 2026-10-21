@@ -229,6 +229,12 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               `[...document.querySelectorAll('a')].find((a) => a.textContent.trim() === 'Play')?.getAttribute('href') ?? null`,
             );
             expect(play).toStartWith(`/play/${arrival}?version=`);
+            // Play opens the download, with the server still down.
+            await page.goto(`${base}${play}`);
+            await page.waitFor(
+              "document.querySelector('video')?.readyState >= 2",
+              30_000,
+            );
 
             await page.goto(`${base}/movies/${zodiac}`);
             await page.waitFor(

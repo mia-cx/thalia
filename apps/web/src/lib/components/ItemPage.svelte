@@ -387,7 +387,7 @@ function creditsAside(detail: ItemDetail) {
               <Button
                 variant="secondary"
                 size="icon"
-                href="/play/{detail.id}?version={version.id}"
+                href="/play/{detail.id}?version={version.id}{offline ? '&offline' : ''}"
                 aria-label="Play {version.label}"
               >
                 <PlayIcon />
