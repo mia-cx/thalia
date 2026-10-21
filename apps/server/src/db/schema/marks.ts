@@ -114,8 +114,9 @@ export const ratings = pgTable(
 );
 
 /**
- * Watch history: one row per playback session that passed its medium's
- * threshold. Kept indefinitely, so it has no key to the session it records.
+ * Watch history: one row per viewing that passed its medium's threshold. A
+ * viewing is a playback session and the sessions that continue it after a
+ * switch. Kept indefinitely, so it has no key to the sessions it records.
  */
 export const plays = pgTable(
   "plays",
@@ -127,6 +128,7 @@ export const plays = pgTable(
     itemId: uuid("item_id")
       .notNull()
       .references(() => items.id, owned),
+    /** The viewing's first session. */
     sessionId: uuid("session_id").notNull().unique(),
     playMethod: playMethod("play_method").notNull(),
     /** What a transcode converts, as `transcodeReasons` names it; empty otherwise. */

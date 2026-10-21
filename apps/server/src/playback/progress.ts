@@ -16,7 +16,7 @@ import {
   versions,
 } from "../db/schema/index.ts";
 import { emitPluginEvents } from "../plugins/events.ts";
-import { recordPlay } from "./history.ts";
+import { continueViewing, recordPlay } from "./history.ts";
 import { callerClient } from "./planning.ts";
 
 type Caller = Awaited<ReturnType<typeof authenticate>>;
@@ -453,6 +453,11 @@ export async function startPlayback(
       position,
       false,
       true,
+    );
+    await continueViewing(
+      tx,
+      { id: scope.sessionId, userId, itemId: scope.itemId },
+      position,
     );
     await addPlayed(tx, scope.sessionId, position);
     await tx

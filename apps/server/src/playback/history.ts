@@ -1,4 +1,14 @@
-import { and, desc, eq, gte, type SQLWrapper, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  isNotNull,
+  ne,
+  type SQLWrapper,
+  sql,
+} from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { Schema } from "effect";
 import { browseCardsById } from "../api/items.ts";
 import {
@@ -65,11 +75,58 @@ export async function writeWatchThresholds(
     });
 }
 
+/** How close in time and position a new session must start to the last one to continue its viewing. */
+const switchSeconds = 60;
+
 /**
- * Records a session in the watch history once it passes its medium's
+ * Joins a session that starts where the same user's last played session on
+ * the Item left off, seen within the last minute and within a minute of its
+ * position, to that session's viewing: a Version, audio or subtitle switch
+ * restarts the session but not the play. Starting over, or coming back
+ * later, starts a viewing of its own.
+ */
+export async function continueViewing(
+  tx: Tx,
+  session: { id: string; userId: string; itemId: string },
+  positionSeconds: number,
+) {
+  const [previous] = await tx
+    .select({
+      id: sessionRegistry.id,
+      firstSessionId: sessionRegistry.firstSessionId,
+      playedSeconds: sessionRegistry.playedSeconds,
+      continues: sql<boolean>`${sessionRegistry.lastSeenAt} >= clock_timestamp() - ${switchSeconds} * interval '1 second'
+        and abs(${sessionRegistry.reportedPosition} - ${positionSeconds}::float8) <= ${switchSeconds}`,
+    })
+    .from(sessionRegistry)
+    .where(
+      and(
+        eq(sessionRegistry.userId, session.userId),
+        eq(sessionRegistry.itemId, session.itemId),
+        ne(sessionRegistry.id, session.id),
+        isNotNull(sessionRegistry.reportedPosition),
+      ),
+    )
+    .orderBy(desc(sessionRegistry.lastSeenAt))
+    .limit(1);
+  if (!previous?.continues) return;
+  await tx
+    .update(sessionRegistry)
+    .set({
+      firstSessionId: previous.firstSessionId ?? previous.id,
+      playedSeconds: previous.playedSeconds,
+    })
+    .where(eq(sessionRegistry.id, session.id));
+}
+
+const firstSession = alias(sessionRegistry, "first_session");
+
+/**
+ * Records a viewing in the watch history once it passes its medium's
  * threshold, or once it plays to where the Item counts as watched, then
  * keeps its played time current. A percentage of an unknown runtime never
- * passes. The session id is unique, so a repeated report never adds a play.
+ * passes. A play is keyed by its viewing's first session, so neither a
+ * repeated report nor a switch adds one.
  */
 export async function recordPlay(
   tx: Tx,
@@ -82,11 +139,16 @@ export async function recordPlay(
       playedSeconds: sessionRegistry.playedSeconds,
       playMethod: sessionRegistry.playMethod,
       decision: sessionRegistry.decision,
-      createdAt: sessionRegistry.createdAt,
+      firstSessionId: sessionRegistry.firstSessionId,
+      startedAt:
+        sql`coalesce(${firstSession.createdAt}, ${sessionRegistry.createdAt})`.mapWith(
+          sessionRegistry.createdAt,
+        ),
       medium: libraries.medium,
     })
     .from(sessionRegistry)
     .innerJoin(libraries, eq(libraries.id, version.libraryId))
+    .leftJoin(firstSession, eq(firstSession.id, sessionRegistry.firstSessionId))
     .where(eq(sessionRegistry.id, session.id))
     .limit(1);
   if (row === undefined) return;
@@ -103,6 +165,7 @@ export async function recordPlay(
     playedSeconds: row.playedSeconds,
     updatedAt: sql`clock_timestamp()`,
   };
+  const viewingId = row.firstSessionId ?? session.id;
   if ((finished && row.playedSeconds > 0) || row.playedSeconds >= neededSeconds)
     await tx
       .insert(plays)
@@ -110,12 +173,12 @@ export async function recordPlay(
         ...current,
         userId: session.userId,
         itemId: session.itemId,
-        sessionId: session.id,
-        startedAt: row.createdAt,
+        sessionId: viewingId,
+        startedAt: row.startedAt,
       })
       .onConflictDoUpdate({ target: plays.sessionId, set: current });
   else
-    await tx.update(plays).set(current).where(eq(plays.sessionId, session.id));
+    await tx.update(plays).set(current).where(eq(plays.sessionId, viewingId));
 }
 
 const cursorPrefix = "h1.";

@@ -133,6 +133,107 @@ describe.skipIf(!databaseUrl)("watch history", () => {
       expect(recorded[0]?.playedSeconds).toBeCloseTo(210, 0);
     }));
 
+  test("a web switch mid-film continues its play instead of adding one", () =>
+    withDatabase(async (db) => {
+      const s = await seedBrowse(db);
+      // The player closes its session and reopens where it stopped, twice.
+      const first = await openSession(db, s.viewer.id, s.matrix.id);
+      await startPlayback(db, s.viewer.id, first, 0);
+      await elapse(db, first.sessionId, 90);
+      await stopPlayback(db, s.viewer.id, first, { positionSeconds: 90 });
+      const second = await openSession(db, s.viewer.id, s.matrix.id);
+      await startPlayback(db, s.viewer.id, second, 90);
+      await elapse(db, second.sessionId, 60);
+      await stopPlayback(db, s.viewer.id, second, { positionSeconds: 150 });
+      const third = await openSession(db, s.viewer.id, s.matrix.id);
+      await startPlayback(db, s.viewer.id, third, 150);
+      await elapse(db, third.sessionId, 60);
+      await stopPlayback(db, s.viewer.id, third, { positionSeconds: 210 });
+
+      const [opened] = await db
+        .select({ createdAt: sessionRegistry.createdAt })
+        .from(sessionRegistry)
+        .where(eq(sessionRegistry.id, first.sessionId));
+      const recorded = await db.select().from(plays);
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]).toMatchObject({
+        sessionId: first.sessionId,
+        startedAt: opened?.createdAt,
+      });
+      expect(recorded[0]?.playedSeconds).toBeCloseTo(210, 0);
+    }));
+
+  test("a Jellyfin stream switch continues its play instead of adding one", () =>
+    withDatabase(async (db) => {
+      const s = await seedBrowse(db);
+      const header =
+        'MediaBrowser Client="Jellyfin Web", Version="1", Device="Chrome", DeviceId="j1"';
+      const send = async (request: Request) => {
+        const response = await createJellyfinHandler(
+          db,
+          jellyfinRoutes(createArtworkHandler(db), createHlsHandler(db)),
+        )(request, "127.0.0.1");
+        if (response === undefined) throw new Error("Unrouted.");
+        return response;
+      };
+      const token = await jellyfinLogin(send, header);
+      const report = (path: string, sessionId: string, seconds: number) =>
+        send(
+          new Request(`http://thalia.test/Sessions/Playing${path}`, {
+            method: "POST",
+            headers: {
+              authorization: `${header}, Token="${token}"`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({
+              ItemId: toGuid(s.matrix.id),
+              PlaySessionId: toGuid(sessionId),
+              PositionTicks: seconds * 10_000_000,
+            }),
+          }),
+        );
+      const first = await openSession(db, s.viewer.id, s.matrix.id);
+      expect((await report("", first.sessionId, 0)).status).toBe(204);
+      await elapse(db, first.sessionId, 100);
+      expect((await report("/Progress", first.sessionId, 100)).status).toBe(
+        204,
+      );
+      // A new audio track brings a new PlaySessionId and no stop for the old one.
+      const second = await openSession(db, s.viewer.id, s.matrix.id);
+      expect((await report("/Progress", second.sessionId, 100)).status).toBe(
+        204,
+      );
+      await elapse(db, second.sessionId, 60);
+      expect((await report("/Progress", second.sessionId, 160)).status).toBe(
+        204,
+      );
+      const recorded = await db.select().from(plays);
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]?.playedSeconds).toBeCloseTo(160, 0);
+    }));
+
+  test("starting over, or resuming later, records another play", () =>
+    withDatabase(async (db) => {
+      const s = await seedBrowse(db);
+      const watch = async (from: number, seconds: number) => {
+        const scope = await openSession(db, s.viewer.id, s.matrix.id);
+        await startPlayback(db, s.viewer.id, scope, from);
+        await elapse(db, scope.sessionId, seconds);
+        await stopPlayback(db, s.viewer.id, scope, {
+          positionSeconds: from + seconds,
+        });
+      };
+      await watch(0, 180);
+      await watch(0, 180);
+      expect(await db.select().from(plays)).toHaveLength(2);
+
+      await db.update(sessionRegistry).set({
+        lastSeenAt: sql`${sessionRegistry.lastSeenAt} - interval '1 hour'`,
+      });
+      await watch(180, 180);
+      expect(await db.select().from(plays)).toHaveLength(3);
+    }));
+
   test("a percentage threshold counts against the runtime, and finishing always counts", () =>
     withDatabase(async (db, url) => {
       const s = await seedBrowse(db);

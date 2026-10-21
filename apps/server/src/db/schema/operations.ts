@@ -227,11 +227,13 @@ export const sessionRegistry = pgTable(
     credentialId: uuid("credential_id"),
     createdAt: instant("created_at").notNull().defaultNow(),
     lastSeenAt: instant("last_seen_at").notNull().defaultNow(),
-    /** Playback time the player's reports account for; seeks and pauses add nothing. */
+    /** Playback time the reports of its viewing account for; seeks and pauses add nothing. */
     playedSeconds: doublePrecision("played_seconds").notNull().default(0),
     /** The position and time of the last report, the baseline the next one adds to. */
     reportedPosition: doublePrecision("reported_position"),
     reportedAt: instant("reported_at"),
+    /** The first session of the viewing this one continues after a switch; null when it starts its own. */
+    firstSessionId: uuid("first_session_id"),
   },
   (table) => [
     check(
