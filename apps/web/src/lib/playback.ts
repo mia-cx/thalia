@@ -87,6 +87,27 @@ export function browserProfile(): ClientProfile {
 }
 
 /**
+ * The fMP4 codec string for a probed video codec and profile; an unknown
+ * profile takes the codec's first. Null for a codec the tables don't know.
+ */
+export function videoType(codec: string, profile: string | null) {
+  const profiles = videoCodecs[codec as keyof typeof videoCodecs];
+  if (profiles === undefined) return null;
+  return (
+    (profile === null
+      ? undefined
+      : profiles[profile as keyof typeof profiles]) ??
+    Object.values(profiles)[0] ??
+    null
+  );
+}
+
+/** The fMP4 codec string for a probed audio codec; null for one the tables don't know. */
+export function audioType(codec: string) {
+  return audioCodecs.find((entry) => entry.codec === codec)?.type ?? null;
+}
+
+/**
  * Builds the MSE MIME for a progressive stream's codecs; null when the plan
  * names a codec or profile the tables don't know.
  */
@@ -97,19 +118,9 @@ export function progressiveMime(
   } | null,
 ): string | null {
   if (output === null) return null;
-  const profiles = videoCodecs[output.video.codec as keyof typeof videoCodecs];
-  if (profiles === undefined) return null;
-  const video =
-    (output.video.profile === null
-      ? undefined
-      : profiles[output.video.profile as keyof typeof profiles]) ??
-    Object.values(profiles)[0];
-  if (video === undefined) return null;
-  const audio =
-    output.audio === null
-      ? null
-      : (audioCodecs.find(({ codec }) => codec === output.audio?.codec)?.type ??
-        null);
+  const video = videoType(output.video.codec, output.video.profile);
+  if (video === null) return null;
+  const audio = output.audio === null ? null : audioType(output.audio.codec);
   if (output.audio !== null && audio === null) return null;
   return `video/mp4; codecs="${[video, audio].filter((part) => part !== null).join(",")}"`;
 }

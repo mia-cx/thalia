@@ -47,4 +47,5 @@ export const downloads: Downloads = {
   pause: (versionId) => downloads_().pause(versionId),
   resume: (versionId) => downloads_().resume(versionId),
   remove: (versionId) => downloads_().remove(versionId),
+  file: (versionId) => downloads_().file(versionId),
 };

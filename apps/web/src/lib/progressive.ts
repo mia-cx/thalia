@@ -1,8 +1,18 @@
+/** One run of fMP4 bytes that starts near a source second. */
+export type FragmentRun = {
+  body: ReadableStream<Uint8Array>;
+  /** The source second the run's zero timestamp sits at. */
+  offset: number;
+};
+
 /** Options for attaching a progressive fMP4 stream to a video element through MSE. */
 export type ProgressiveOptions = {
-  /** The stream URL for a run starting at the given source second. */
-  streamUrl: (start: number) => string;
-  /** The stream's MIME, from the plan's output codecs. */
+  /**
+   * Opens a run starting at the given source second. It rejects when the run
+   * cannot start; a rejection after `signal` aborts is ignored.
+   */
+  openRun: (start: number, signal: AbortSignal) => Promise<FragmentRun>;
+  /** The stream's MIME, from its codecs. */
   mime: string;
   /** The Version's length; reported durations never pass it. */
   durationSeconds: number | null;
@@ -19,10 +29,63 @@ const reachSeconds = 5;
 // On a full buffer drop everything older than this far behind the position.
 const trimBehindSeconds = 10;
 
+// A queued transcoder is waited on for at most this long.
+const queuedGiveUpMs = 60_000;
+
 /**
- * Feeds a progressive fMP4 stream into a SourceBuffer in segments mode.
- * Position seeks restart the fetch at the target; the server's ffmpeg is
- * killed when the old request's connection closes.
+ * Opens runs of the server's progressive stream. A busy transcoder answers
+ * 503 SESSION_QUEUED with Retry-After: the same start is refetched until a
+ * minute has passed. The server reports where its first frame sits in the
+ * source; its ffmpeg is killed when the request's connection closes.
+ */
+export function fetchRuns(
+  streamUrl: (start: number) => string,
+): ProgressiveOptions["openRun"] {
+  return async (start, signal) => {
+    const queuedSince = Date.now();
+    for (;;) {
+      const response = await fetch(streamUrl(start), { signal });
+      if (
+        response.status === 503 &&
+        Date.now() - queuedSince <= queuedGiveUpMs
+      ) {
+        const retryAfter = Number(response.headers.get("retry-after"));
+        await response.body?.cancel().catch(() => {});
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(
+            resolve,
+            Number.isFinite(retryAfter) && retryAfter > 0
+              ? retryAfter * 1000
+              : 1000,
+          );
+          signal.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        signal.throwIfAborted();
+        continue;
+      }
+      if (response.body === null || !response.ok) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error(`The stream answered ${response.status}.`);
+      }
+      const offset = Number(response.headers.get("x-stream-offset"));
+      return {
+        body: response.body,
+        offset: Number.isFinite(offset) ? offset : start,
+      };
+    }
+  };
+}
+
+/**
+ * Feeds runs of fMP4 into a SourceBuffer in segments mode. A seek outside
+ * the buffer cancels the current run and opens one at the target.
  */
 export function attachProgressive(
   video: HTMLVideoElement,
@@ -138,63 +201,43 @@ export function attachProgressive(
       buffer.abort();
       if (updating) await nextUpdate();
     }
-    // A busy transcoder answers 503 SESSION_QUEUED with Retry-After: wait and
-    // refetch the same start until a minute has passed.
-    let queuedSince: number | null = null;
-    let response: Response;
-    for (;;) {
-      try {
-        response = await fetch(options.streamUrl(start), {
-          signal: current.signal,
-        });
-      } catch {
-        if (!current.signal.aborted && !closed.signal.aborted) fail();
-        return;
-      }
-      if (response.status !== 503) break;
-      const retryAfter = Number(response.headers.get("retry-after"));
-      await response.body?.cancel().catch(() => {});
-      if (queuedSince === null) queuedSince = Date.now();
-      if (Date.now() - queuedSince > 60_000) {
-        fail();
-        return;
-      }
-      await interruptible(
-        Number.isFinite(retryAfter) && retryAfter > 0
-          ? retryAfter * 1000
-          : 1000,
-        current,
-      );
-      if (current.signal.aborted || closed.signal.aborted) return;
-    }
-    if (response.body === null || !response.ok) {
-      fail();
-      return;
-    }
-    if (buffer !== undefined) {
-      // The server streams with timestamps relative to its first frame and
-      // reports where that frame sits in the source.
-      const offset = Number(response.headers.get("x-stream-offset"));
-      try {
-        buffer.timestampOffset = Number.isFinite(offset) ? offset : start;
-      } catch {
-        fail();
-        return;
-      }
-    }
-    const reader = response.body.getReader();
+    let run: FragmentRun;
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (current.signal.aborted || closed.signal.aborted) return;
-        if (!(await append(value, current))) return;
-        if (bufferedAhead() > highWaterSeconds) await waitWhileFull();
-      }
+      run = await options.openRun(start, current.signal);
     } catch {
       if (!current.signal.aborted && !closed.signal.aborted) fail();
       return;
     }
+    if (current.signal.aborted || closed.signal.aborted) {
+      await run.body.cancel().catch(() => {});
+      return;
+    }
+    if (buffer !== undefined) {
+      try {
+        buffer.timestampOffset = run.offset;
+      } catch {
+        fail();
+        return;
+      }
+    }
+    const reader = run.body.getReader();
+    const stopped = () => current.signal.aborted || closed.signal.aborted;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (stopped()) return;
+        if (!(await append(value, current))) return;
+        if (bufferedAhead() > highWaterSeconds) await waitWhileFull();
+      }
+    } catch {
+      if (!stopped()) fail();
+      return;
+    } finally {
+      // A superseded run stops producing; a fetch body is already aborted.
+      if (stopped()) void reader.cancel().catch(() => {});
+    }
+    if (stopped()) return;
     // The stream ended: natural end near the duration is fine, else an error.
     const end =
       options.durationSeconds !== null &&

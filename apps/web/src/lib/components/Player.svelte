@@ -12,18 +12,21 @@ import Volume1Icon from "@lucide/svelte/icons/volume-1";
 import Volume2Icon from "@lucide/svelte/icons/volume-2";
 import VolumeXIcon from "@lucide/svelte/icons/volume-x";
 import { onDestroy, untrack } from "svelte";
+import { get } from "svelte/store";
 import { afterNavigate, goto, replaceState } from "$app/navigation";
 import { page } from "$app/state";
 import { client } from "$lib/api.ts";
 import { createBoost } from "$lib/audio-boost.ts";
-import { episodeCode, itemHref } from "$lib/browse.ts";
+import { episodeCode, type ItemDetail, itemHref } from "$lib/browse.ts";
 import Failure from "$lib/components/Failure.svelte";
 import NextEpisodeCard from "$lib/components/NextEpisodeCard.svelte";
 import PlayerSettings from "$lib/components/PlayerSettings.svelte";
 import Scrubber from "$lib/components/Scrubber.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Slider from "$lib/components/ui/slider/index.ts";
+import { downloads } from "$lib/downloads/index.ts";
 import { carryStreams } from "$lib/next-episode.ts";
+import { playDownload } from "$lib/offline/session.ts";
 import { formatPosition, pickVersion } from "$lib/playback.ts";
 import { play, type StreamChoice } from "$lib/player.ts";
 import { playerPrefs } from "$lib/player-prefs.ts";
@@ -35,36 +38,105 @@ let {
   id,
   versionId,
   startAt,
+  offline = false,
 }: {
   id: string;
   /** The Version to play first; null or unknown plays the first. */
   versionId: string | null;
   /** Where to start, in seconds; null resumes. */
   startAt: number | null;
+  /** Plays the Version's download from this browser, without the server. */
+  offline?: boolean;
 } = $props();
+
+/** What the player needs of an Item before a session opens. */
+type Loaded = {
+  detail: {
+    id: string;
+    title: string;
+    /** The show and episode code under the title, for an Episode. */
+    context: string | null;
+    back: string;
+    versions: readonly Pick<
+      ItemDetail["versions"][number],
+      "id" | "label" | "bytes" | "durationSeconds" | "playable" | "streams"
+    >[];
+  };
+  progressVersionId: string | null;
+  next: Awaited<ReturnType<typeof client.playback.next>>;
+  autoplay: boolean;
+};
 
 // The Version choice is part of the load: a link that names no Version plays
 // the one the viewer's progress is on, so the session waits for both reads.
+async function loadOnline(): Promise<Loaded> {
+  const detail = await client.items.get({ id });
+  // A failed read still plays the first Version.
+  const progress = await client.playback
+    .getProgress({ itemId: detail.id })
+    .catch(() => null);
+  const next =
+    detail.kind === "episode"
+      ? await client.playback.next({ itemId: detail.id }).catch(() => null)
+      : null;
+  const account = await client.account.get().catch(() => null);
+  const autoplay = account?.autoplayNextEpisode ?? true;
+  return {
+    detail: {
+      id: detail.id,
+      title: detail.title,
+      context:
+        detail.kind === "episode" && detail.show !== null
+          ? [detail.show.title, episodeCode(detail)]
+              .filter((part) => part !== null)
+              .join(" · ")
+          : null,
+      back: itemHref(detail) ?? "/",
+      versions: detail.versions,
+    },
+    progressVersionId: progress?.versionId ?? null,
+    next,
+    autoplay,
+  };
+}
+
+/** The finished download of the Item reads like a detail with one Version; none when it's gone. */
+async function loadDownload(): Promise<Loaded> {
+  await downloads.restore();
+  const record = get(downloads).records.find(
+    (entry) =>
+      entry.itemId === id &&
+      entry.state === "complete" &&
+      (versionId === null || entry.versionId === versionId),
+  );
+  return {
+    detail: {
+      id,
+      title: record?.title ?? "",
+      context: null,
+      back: "/downloads",
+      versions:
+        record === undefined
+          ? []
+          : [
+              {
+                id: record.versionId,
+                label: record.title,
+                bytes: record.bytes,
+                durationSeconds: null,
+                playable: true,
+                streams: record.streams,
+              },
+            ],
+    },
+    progressVersionId: null,
+    next: null,
+    autoplay: false,
+  };
+}
+
 function loadItem() {
-  return resource(async () => {
-    const detail = await client.items.get({ id });
-    // A failed read still plays the first Version.
-    const progress = await client.playback
-      .getProgress({ itemId: detail.id })
-      .catch(() => null);
-    const next =
-      detail.kind === "episode"
-        ? await client.playback.next({ itemId: detail.id }).catch(() => null)
-        : null;
-    const account = await client.account.get().catch(() => null);
-    const autoplay = account?.autoplayNextEpisode ?? true;
-    return {
-      detail,
-      progressVersionId: progress?.versionId ?? null,
-      next,
-      autoplay,
-    };
-  });
+  return resource(() => (offline ? loadDownload() : loadOnline()));
 }
 let item = $state(loadItem());
 let loadedId = untrack(() => id);
@@ -105,14 +177,8 @@ const version = $derived(
     ? undefined
     : pickVersion(detail.versions, versionId, item.data?.progressVersionId),
 );
-const back = $derived(detail === undefined ? "/" : (itemHref(detail) ?? "/"));
-const context = $derived(
-  detail?.kind === "episode" && detail.show !== null
-    ? [detail.show.title, episodeCode(detail)]
-        .filter((part) => part !== null)
-        .join(" · ")
-    : null,
-);
+const back = $derived(detail?.back ?? (offline ? "/downloads" : "/"));
+const context = $derived(detail?.context ?? null);
 const shown = $derived(playerState?.controls ?? true);
 /** A notice replaced playback: only Settings and Full Screen stay usable. */
 const stopped = $derived(playerState?.notice !== undefined);
@@ -154,21 +220,35 @@ $effect(() => {
       },
       streams: carried,
       open: (request) =>
-        play({
-          video: media,
-          itemId: detailNow.id,
-          versionId: request.versionId,
-          durationSeconds:
-            detailNow.versions.find(
-              (version) => version.id === request.versionId,
-            )?.durationSeconds ?? null,
-          startAt: request.startAt,
-          streams: request.streams,
-          quality: request.quality,
-          paused: request.paused,
-          onNotice: request.onNotice,
-          onTracks: request.onTracks,
-        }),
+        offline
+          ? playDownload({
+              video: media,
+              streams:
+                detailNow.versions.find(
+                  (version) => version.id === request.versionId,
+                )?.streams ?? [],
+              file: () => downloads.file(request.versionId),
+              startAt: request.startAt,
+              paused: request.paused,
+              choice: request.streams,
+              onNotice: request.onNotice,
+              onTracks: request.onTracks,
+            })
+          : play({
+              video: media,
+              itemId: detailNow.id,
+              versionId: request.versionId,
+              durationSeconds:
+                detailNow.versions.find(
+                  (version) => version.id === request.versionId,
+                )?.durationSeconds ?? null,
+              startAt: request.startAt,
+              streams: request.streams,
+              quality: request.quality,
+              paused: request.paused,
+              onNotice: request.onNotice,
+              onTracks: request.onTracks,
+            }),
       prefs: playerPrefs,
       amplify,
     }),
@@ -448,7 +528,7 @@ const VolumeIcon = $derived(
       >
         <h2 class="text-headline">Nothing to play</h2>
         <p class="mt-1 text-subheadline text-label-secondary">
-          This has no Versions yet.
+          {offline ? "This isn't downloaded on this device." : "This has no Versions yet."}
         </p>
       </div>
     {:else if playerState?.notice}

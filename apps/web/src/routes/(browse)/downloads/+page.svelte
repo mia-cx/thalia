@@ -19,6 +19,11 @@ import {
   downloads,
   downloadsSupported,
 } from "$lib/downloads/index.ts";
+import {
+  browserDecodes,
+  offlineHref,
+  offlinePlan,
+} from "$lib/offline/playable.ts";
 
 const supported = downloadsSupported();
 const unavailable = $derived($downloads.unavailable);
@@ -37,8 +42,12 @@ function caption(record: DownloadRecord): string {
       ? formatBytes(record.written)
       : `${formatBytes(record.written)} of ${formatBytes(record.bytes)}`;
   switch (record.state) {
-    case "complete":
-      return formatBytes(record.bytes);
+    case "complete": {
+      const plan = offlinePlan(record.streams, browserDecodes);
+      return "reason" in plan
+        ? `${formatBytes(record.bytes)} · ${plan.reason}`
+        : formatBytes(record.bytes);
+    }
     case "downloading":
       return size;
     case "queued":
@@ -150,6 +159,24 @@ async function update(call: () => Promise<void>) {
                     () => downloads.remove(record.versionId),
                   )}
                 {:else}
+                  {#if !("reason" in offlinePlan(record.streams, browserDecodes))}
+                    <Tooltip.Root>
+                      <Tooltip.Trigger>
+                        {#snippet child({ props })}
+                          <Button
+                            {...props}
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label="Play"
+                            href={offlineHref(record)}
+                          >
+                            <PlayIcon />
+                          </Button>
+                        {/snippet}
+                      </Tooltip.Trigger>
+                      <Tooltip.Content>Play</Tooltip.Content>
+                    </Tooltip.Root>
+                  {/if}
                   {@render action(
                     "Delete download",
                     Trash2Icon,
