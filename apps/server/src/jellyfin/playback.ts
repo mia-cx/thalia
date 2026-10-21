@@ -183,15 +183,18 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
         path: "/Items/{id}/PlaybackInfo",
         handle: async (context) => {
           const target = await targetOf(context, context.params.id);
+          const versions = await listVersionViews(
+            context.db,
+            context.caller.user.id,
+            target.itemId,
+            target.libraryId,
+          );
+          // A hidden Item has no Version the caller may view, so it reads as absent.
+          if (versions.length === 0) throw new AuthError("NOT_FOUND");
           return json({
-            MediaSources: (
-              await listVersionViews(
-                context.db,
-                context.caller.user.id,
-                target.itemId,
-                target.libraryId,
-              )
-            ).map((version) => mediaSource(target.id, version)),
+            MediaSources: versions.map((version) =>
+              mediaSource(target.id, version),
+            ),
           });
         },
       },
