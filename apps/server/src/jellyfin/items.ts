@@ -12,7 +12,10 @@ import {
   viewableLibraries,
 } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
-import { checkPermission } from "../auth/permissions.ts";
+import {
+  checkPermission,
+  loadPermissionScope,
+} from "../auth/permissions.ts";
 import type { Database } from "../db/client.ts";
 import { nextUp } from "../mediums/shows.ts";
 import { continueWatching } from "../playback/marks.ts";
@@ -212,27 +215,21 @@ async function playableFields(
 /** Item views as BaseItemDtos; playable ones honour `fields` for Path and MediaSources. */
 export async function itemDtos(context: UserContext, views: ItemView[]) {
   const { db, caller, query } = context;
-  const [media, serverId, downloads] = await Promise.all([
+  const playable = views.filter((view) => playableKinds.has(view.kind));
+  // Item rules decide downloads as `/Items/{id}/Download` does.
+  const [media, serverId, downloadable] = await Promise.all([
     playableFields(db, caller.user.id, views, fieldsOf(query)),
     readServerId(db),
-    Promise.all(
-      [...new Set(views.map((view) => view.libraryId))].map(
-        async (id) =>
-          [
-            id,
-            await checkPermission(db, caller.user.id, "download", {
-              type: "library",
-              id,
-            }),
-          ] as const,
+    loadPermissionScope(db, caller.user.id).then((scope) =>
+      scope.itemIds(
+        "download",
+        playable.map((view) => view.id),
       ),
     ),
   ]);
-  const canDownload = new Map(downloads);
   return views.map((view) => ({
     ...baseItemDto(view, serverId),
-    CanDownload:
-      playableKinds.has(view.kind) && canDownload.get(view.libraryId) === true,
+    CanDownload: playableKinds.has(view.kind) && downloadable.has(view.id),
     ...media.get(itemGuid(view.id, view.libraryId)),
   }));
 }
