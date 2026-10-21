@@ -132,7 +132,8 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
       expect(series.Items[0]).toMatchObject({
         Type: "Series",
         IsFolder: true,
-        ChildCount: 2,
+        // Season 2 holds no Versions, so the count matches the Seasons listed.
+        ChildCount: 1,
       });
 
       const seasons = await get(

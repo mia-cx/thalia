@@ -1,8 +1,5 @@
-import { eq } from "drizzle-orm";
 import { Schema } from "effect";
-import { AuthError } from "../auth/errors.ts";
-import { requirePermission } from "../auth/permissions.ts";
-import { items } from "../db/schema/index.ts";
+import { requireVisibleItem } from "../auth/visibility.ts";
 import { createShowsMedium } from "../mediums/shows.ts";
 import {
   continueWatching as continueWatchingItems,
@@ -148,16 +145,8 @@ const item = authenticated
   .handler(async ({ context, input }) =>
     runApi(
       fromHost(async () => {
-        const [row] = await context.db
-          .select({ id: items.id })
-          .from(items)
-          .where(eq(items.id, input.id));
-        if (row === undefined) throw new AuthError("NOT_FOUND");
         const userId = context.caller.user.id;
-        await requirePermission(context.db, userId, "view", {
-          type: "item",
-          id: input.id,
-        });
+        await requireVisibleItem(context.db, userId, input.id);
         const shelves = await pluginShelves(
           context.db,
           userId,

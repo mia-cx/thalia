@@ -3,6 +3,7 @@ import { asc, desc, eq, gt, sql } from "drizzle-orm";
 import { Option, Schema } from "effect";
 import { server } from "../auth/access.ts";
 import { checkPermission } from "../auth/permissions.ts";
+import { loadVisibility } from "../auth/visibility.ts";
 import type { Database } from "../db/client.ts";
 import { events, sessionRegistry } from "../db/schema/index.ts";
 import type { Caller } from "./items.ts";
@@ -54,11 +55,14 @@ export async function canReceive(
   event: Event,
 ): Promise<boolean> {
   switch (event.kind) {
-    case "library.changed":
-      return checkPermission(db, caller.user.id, "view", {
-        type: "library",
-        id: event.libraryId,
-      });
+    case "library.changed": {
+      // A deleted Library's last event still reaches whoever may view it.
+      const visibility = await loadVisibility(db, caller.user.id);
+      const [row] = await db.execute<{ visible: boolean }>(
+        sql`select ${visibility.library(sql`${event.libraryId}::uuid`)} as visible`,
+      );
+      return row?.visible === true;
+    }
     case "job.progress":
       return checkPermission(db, caller.user.id, "server:manage", server);
     case "session.state":

@@ -16,10 +16,9 @@ import {
   checkPermission,
   loadPermissionScope,
   type PermissionScope,
-  requirePermission,
-  viewableLibraryIds,
 } from "../auth/permissions.ts";
 import type { authenticate } from "../auth/sessions.ts";
+import { loadVisibility } from "../auth/visibility.ts";
 import type { Database } from "../db/client.ts";
 import {
   artwork,
@@ -28,12 +27,13 @@ import {
   episodes,
   files,
   items,
+  libraries,
   progress,
   seasons,
   streams,
   versions,
 } from "../db/schema/index.ts";
-import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
+import { homeLibraryId } from "../libraries/membership.ts";
 import { ApiError, fromHost } from "./errors.ts";
 import {
   after,
@@ -206,18 +206,26 @@ export function listItemCards(
   input: ListItemsInput,
 ) {
   return Effect.gen(function* () {
-    // Without a library the list is scoped to every library the caller may view.
+    // Without a library the list holds everything the caller can see.
     const scope = yield* fromHost(async () => {
-      if (input.libraryId !== undefined) {
-        await requirePermission(db, caller.user.id, "view", {
-          type: "library",
-          id: input.libraryId,
-        });
-        return inLibraries([input.libraryId]);
-      }
-      const viewable = await viewableLibraryIds(db, caller.user.id);
-      if (viewable.length === 0) throw new AuthError("FORBIDDEN");
-      return inLibraries(viewable);
+      const visibility = await loadVisibility(db, caller.user.id);
+      const [library] = await db
+        .select({ id: libraries.id })
+        .from(libraries)
+        .where(
+          and(
+            input.libraryId === undefined
+              ? undefined
+              : eq(libraries.id, input.libraryId),
+            visibility.library(),
+          ),
+        )
+        .limit(1);
+      if (library === undefined) throw new AuthError("FORBIDDEN");
+      return visibility.item(
+        undefined,
+        input.libraryId === undefined ? undefined : [input.libraryId],
+      );
     });
     const limit = input.limit ?? defaultPageSize;
     const plan = sortPlan(input.sort, input.cursor);
@@ -306,85 +314,95 @@ export async function detailChildren(
   });
 }
 
-/** Reads one Item's detail after checking its inherited Access rules. */
+/**
+ * Reads one Item's detail after checking its inherited Access rules. A
+ * container the caller sees only for what it holds shows its title, artwork
+ * and visible children, without its overview, tags or credits.
+ */
 export function getItemDetail(db: Database, caller: Caller, id: string) {
   return Effect.gen(function* () {
+    const visibility = yield* fromHost(() =>
+      loadVisibility(db, caller.user.id),
+    );
     const [card] = yield* fromHost(() => browseCards(db, eq(items.id, id)));
     if (!card) return yield* new ApiError({ code: "NOT_FOUND" });
-    yield* fromHost(() =>
-      requirePermission(db, caller.user.id, "view", {
-        type: "item",
-        id,
-      }),
+    const [access] = yield* fromHost(() =>
+      db
+        .select({
+          visible: visibility.opens(),
+          viewable: visibility.viewable(),
+        })
+        .from(items)
+        .where(eq(items.id, id)),
     );
-    const [[detail], itemCredits, candidates, childCards, canDownload] =
-      yield* fromHost(() =>
-        Promise.all([
-          db.select(detailFields).from(items).where(eq(items.id, id)),
-          db
-            .select({
-              contributorId: contributors.id,
-              name: contributors.name,
-              role: credits.role,
-              character: credits.character,
-            })
-            .from(credits)
-            .innerJoin(contributors, eq(contributors.id, credits.contributorId))
-            .where(eq(credits.itemId, id))
-            .orderBy(
-              sql`${credits.role} <> 'actor'`,
-              asc(credits.role),
-              asc(credits.order),
-              asc(credits.id),
-            ),
-          db
-            .select({
-              id: versions.id,
-              itemId: versions.itemId,
-              libraryId: versions.libraryId,
-              label: versions.label,
-              format: versions.format,
-              durationSeconds: versions.durationSeconds,
-              bytes: versions.bytes,
-            })
-            .from(versions)
-            .where(
-              and(eq(versions.itemId, id), eq(versions.origin, "imported")),
-            )
-            .orderBy(asc(versions.label), asc(versions.id)),
-          browseCards(db, eq(items.parentId, id), [
-            sql`${ownSeason.seasonNumber} nulls last`,
-            sql`${episodes.episodeNumber} nulls last`,
-            asc(items.title),
-            asc(items.id),
-          ]),
-          checkPermission(db, caller.user.id, "download", {
-            type: "item",
-            id,
-          }),
+    if (!access?.visible) return yield* new ApiError({ code: "FORBIDDEN" });
+    const [
+      [detail],
+      itemCredits,
+      candidates,
+      childCards,
+      viewableChildren,
+      canDownload,
+    ] = yield* fromHost(() =>
+      Promise.all([
+        db.select(detailFields).from(items).where(eq(items.id, id)),
+        db
+          .select({
+            contributorId: contributors.id,
+            name: contributors.name,
+            role: credits.role,
+            character: credits.character,
+          })
+          .from(credits)
+          .innerJoin(contributors, eq(contributors.id, credits.contributorId))
+          .where(eq(credits.itemId, id))
+          .orderBy(
+            sql`${credits.role} <> 'actor'`,
+            asc(credits.role),
+            asc(credits.order),
+            asc(credits.id),
+          ),
+        db
+          .select({
+            id: versions.id,
+            itemId: versions.itemId,
+            libraryId: versions.libraryId,
+            label: versions.label,
+            format: versions.format,
+            durationSeconds: versions.durationSeconds,
+            bytes: versions.bytes,
+          })
+          .from(versions)
+          .where(and(eq(versions.itemId, id), eq(versions.origin, "imported")))
+          .orderBy(asc(versions.label), asc(versions.id)),
+        browseCards(db, and(eq(items.parentId, id), visibility.item()), [
+          sql`${ownSeason.seasonNumber} nulls last`,
+          sql`${episodes.episodeNumber} nulls last`,
+          asc(items.title),
+          asc(items.id),
         ]),
-      );
+        db
+          .select({ id: items.id })
+          .from(items)
+          .where(and(eq(items.parentId, id), visibility.viewable())),
+        checkPermission(db, caller.user.id, "download", {
+          type: "item",
+          id,
+        }),
+      ]),
+    );
     if (!detail) return yield* new ApiError({ code: "NOT_FOUND" });
     const permissions = yield* fromHost(() =>
       loadPermissionScope(db, caller.user.id),
     );
-    const [visibleVersions, visibleChildren] = yield* fromHost(() =>
-      Promise.all([
-        permissions.versionIds("view", candidates),
-        permissions.itemIds(
-          "view",
-          childCards.map((child) => child.id),
-        ),
-      ]),
+    const visibleVersions = yield* fromHost(() =>
+      permissions.versionIds("view", candidates),
     );
     const itemVersions = candidates.filter((version) =>
       visibleVersions.has(version.id),
     );
     const playableVersions = yield* fromHost(() =>
       permissions.versionIds("play", itemVersions),
-    );
-    const children = childCards.filter((child) =>
-      visibleChildren.has(child.id),
     );
     const versionIds = itemVersions.map((version) => version.id);
     const [versionFiles, versionStreams] = yield* fromHost(() =>
@@ -430,12 +448,15 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
       streamsOf.set(stream.versionId, list);
     }
     const enriched = yield* fromHost(() =>
-      detailChildren(db, caller.user.id, permissions, children),
+      detailChildren(db, caller.user.id, permissions, childCards),
     );
     return {
       ...card,
       ...detail,
-      credits: itemCredits,
+      ...(access.viewable
+        ? {}
+        : { overview: null, contentRating: null, genres: [], tags: [] }),
+      credits: access.viewable ? itemCredits : [],
       canDownload,
       // JSON has no bigint; a byte count stays exact below 2^53.
       versions: itemVersions.map(({ itemId: _itemId, ...version }) => ({
@@ -451,7 +472,11 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
           }),
         ),
       })),
-      children: enriched,
+      children: enriched.map((child) =>
+        viewableChildren.some(({ id }) => id === child.id)
+          ? child
+          : { ...child, overview: null },
+      ),
     };
   });
 }
@@ -472,17 +497,16 @@ export function searchItems(
   kinds: readonly Schema.Schema.Type<typeof ItemKind>[] = ["movie", "show"],
 ) {
   return Effect.gen(function* () {
-    const viewable = yield* fromHost(() =>
-      viewableLibraryIds(db, caller.user.id),
+    const visibility = yield* fromHost(() =>
+      loadVisibility(db, caller.user.id),
     );
-    if (viewable.length === 0) return [];
     // Match on the Item's own title only: matching the Show title would bypass
     // the title trigram index.
     return yield* fromHost(() =>
       browseCards(
         db,
         and(
-          inLibraries(viewable),
+          visibility.item(),
           inArray(items.kind, [...kinds]),
           sql`(${items.title} % ${query} or ${query} <% ${items.title})`,
         ),
