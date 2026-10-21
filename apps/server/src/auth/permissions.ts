@@ -12,7 +12,12 @@ import {
   users,
   versions,
 } from "../db/schema/index.ts";
-import { type AccessObject, resolveAccess, server } from "./access.ts";
+import {
+  type AccessObject,
+  type Decision,
+  resolveAccess,
+  server,
+} from "./access.ts";
 import { AuthError, postgresCode } from "./errors.ts";
 
 type Queryable = Pick<Database, "select">;
@@ -235,21 +240,29 @@ export async function requireVersionPermission(
     throw new AuthError("FORBIDDEN");
 }
 
-/** Checks an enabled user's Action on the given object through Access rules. */
-export async function checkPermission(
+/** Why a check was decided: the admins bypass, a disabled (or missing) account, or the resolver's Decision. */
+export type Explanation =
+  | Decision
+  | { allowed: true; reason: "admin"; rule: null }
+  | { allowed: false; reason: "disabled"; rule: null };
+
+/** Decides a user's Action on the object; checkPermission and the admin explain view share this answer. */
+export async function explainPermission(
   db: Queryable,
   userId: string,
   action: Action,
   object: AccessObject,
-): Promise<boolean> {
+): Promise<Explanation> {
   if (
     (serverOnlyActions as readonly Action[]).includes(action) &&
     object.type !== "server"
   )
     throw new Error("Server-only Actions require the server object.");
-  if (!(await enabledUser(db, userId))) return false;
+  if (!(await enabledUser(db, userId)))
+    return { allowed: false, reason: "disabled", rule: null };
   const memberGroups = await memberships(db, userId);
-  if (memberGroups.some((g) => g.builtIn && g.name === "admins")) return true;
+  if (memberGroups.some((g) => g.builtIn && g.name === "admins"))
+    return { allowed: true, reason: "admin", rule: null };
   const groupIds = memberGroups.map((g) => g.id);
   const chain: AccessObject[] =
     object.type === "server" ? [server] : [object, server];
@@ -260,7 +273,17 @@ export async function checkPermission(
           rules: await callerRules(db, userId, groupIds),
         }
       : { chain, rules: await callerRules(db, userId, groupIds, chain) };
-  return resolveAccess({ ...loaded, action, userId, groupIds }).allowed;
+  return resolveAccess({ ...loaded, action, userId, groupIds });
+}
+
+/** Checks an enabled user's Action on the given object through Access rules. */
+export async function checkPermission(
+  db: Queryable,
+  userId: string,
+  action: Action,
+  object: AccessObject,
+): Promise<boolean> {
+  return (await explainPermission(db, userId, action, object)).allowed;
 }
 
 /** Loads the caller's rules once and resolves each Library in memory. */

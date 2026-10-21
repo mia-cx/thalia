@@ -157,6 +157,7 @@ async function remove(rule: Rule) {
       object: object !== undefined ? object : objectKey(rule),
       action: rule.action,
     });
+    explained = undefined;
     await rules.reload();
     toast.success("Rule removed");
     await tick();
@@ -210,6 +211,7 @@ async function addRule(event: SubmitEvent) {
     });
     subjectSel = "";
     objectSel = undefined;
+    explained = undefined;
     await rules.reload();
     toast.success("Rule added");
     await tick();
@@ -222,6 +224,74 @@ async function addRule(event: SubmitEvent) {
     addFailure = readFailure(error);
   } finally {
     addBusy = false;
+  }
+}
+
+// Explaining a check needs a user: the fixed subject, or one picked on an object.
+const canCheck = $derived(object !== undefined || subject?.type === "user");
+let checkUserSel = $state("");
+let checkObjectSel = $state<PickedObject | undefined>(undefined);
+let checkActionSel = $state<Rule["action"]>("view");
+let checkBusy = $state(false);
+let checkFailure = $state<FailureShape | undefined>(undefined);
+let explained = $state<
+  | {
+      key: string;
+      result: Awaited<ReturnType<typeof client.access.explain>>;
+    }
+  | undefined
+>(undefined);
+
+const checkActions = $derived(
+  object === undefined && checkObjectSel?.type === "server"
+    ? permissionNames
+    : objectActions,
+);
+
+$effect(() => {
+  if (!checkActions.includes(checkActionSel)) checkActionSel = "view";
+});
+
+const checkUserLabel = $derived.by(() => {
+  const user = (users.data ?? []).find((user) => user.id === checkUserSel);
+  return user && `${user.displayName} (@${user.username})`;
+});
+
+const checkInput = $derived.by(() => {
+  const userId = object !== undefined ? checkUserSel : subject?.id;
+  const target =
+    object ??
+    (checkObjectSel === undefined
+      ? undefined
+      : checkObjectSel.type === "server"
+        ? ({ type: "server" } as const)
+        : ({ type: checkObjectSel.type, id: checkObjectSel.id } as const));
+  if (!userId || target === undefined) return undefined;
+  return { userId, object: target, action: checkActionSel };
+});
+
+// A result shows only while the form still holds the check it answers.
+const explanation = $derived(
+  explained !== undefined && explained.key === JSON.stringify(checkInput)
+    ? explained.result
+    : undefined,
+);
+
+async function check(event: SubmitEvent) {
+  event.preventDefault();
+  const input = checkInput;
+  if (input === undefined) return;
+  checkBusy = true;
+  checkFailure = undefined;
+  try {
+    explained = {
+      key: JSON.stringify(input),
+      result: await client.access.explain(input),
+    };
+  } catch (error) {
+    checkFailure = readFailure(error);
+  } finally {
+    checkBusy = false;
   }
 }
 
@@ -243,7 +313,7 @@ const subjectGroups = $derived.by(() => {
 });
 </script>
 
-{#snippet ruleBadge(rule: Rule)}
+{#snippet ruleBadge(rule: { allowed: boolean })}
   {#if rule.allowed}
     <Badge variant="outline">Allowed</Badge>
   {:else}
@@ -491,6 +561,100 @@ const subjectGroups = $derived.by(() => {
           {@render ruleBadge(rule)}
         </ListRow>
       {/each}
+    </FormGroup>
+  {/if}
+
+  {#if canCheck}
+    <FormGroup title="Check access" onsubmit={check} failure={checkFailure}>
+      {#if object !== undefined}
+        <FormRow label="User" for="access-check-user" inline>
+          <Select.Root
+            type="single"
+            value={checkUserSel}
+            onValueChange={(next) => (checkUserSel = next)}
+          >
+            <Select.Trigger id="access-check-user">
+              <Select.Value>{checkUserLabel ?? "Pick a user"}</Select.Value>
+            </Select.Trigger>
+            <Select.Content>
+              {#each users.data ?? [] as user (user.id)}
+                <Select.Item
+                  value={user.id}
+                  label="{user.displayName} (@{user.username})"
+                  >{user.displayName}
+                  <span class="text-label-secondary">@{user.username}</span
+                  ></Select.Item
+                >
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </FormRow>
+      {:else}
+        <FormRow label="Server, library or item" for="access-check-object" inline>
+          <ObjectPicker id="access-check-object" bind:value={checkObjectSel} />
+        </FormRow>
+      {/if}
+      <FormRow label="Action" for="access-check-action" inline>
+        <Select.Root
+          type="single"
+          value={checkActionSel}
+          onValueChange={(next) => (checkActionSel = next as Rule["action"])}
+        >
+          <Select.Trigger id="access-check-action">
+            <Select.Value>{permissionLabels[checkActionSel]}</Select.Value>
+          </Select.Trigger>
+          <Select.Content>
+            {#each checkActions as action (action)}
+              <Select.Item value={action} label={permissionLabels[action]}
+                >{permissionLabels[action]}</Select.Item
+              >
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </FormRow>
+      <div
+        role="status"
+        class={explanation &&
+          "relative *:rounded-t-none! before:absolute before:inset-x-4 before:top-0 before:z-10 before:h-px before:bg-separator"}
+      >
+        {#if explanation}
+          {@const rule = explanation.rule}
+          {#if explanation.reason === "rule" && rule}
+            <ListRow
+              href={sourceHref(rule) ?? undefined}
+              title={rule.subject.name}
+              caption={inheritedCaption(rule, permissionLabels[rule.action])}
+            >
+              {@render ruleBadge(explanation)}
+            </ListRow>
+          {:else if explanation.reason === "view"}
+            <ListRow
+              href={rule ? (sourceHref(rule) ?? undefined) : undefined}
+              title="Needs View"
+              caption={rule
+                ? `Denied for ${rule.subject.name} · from ${source(rule)}`
+                : "No rule allows View"}
+            >
+              {@render ruleBadge(explanation)}
+            </ListRow>
+          {:else}
+            <ListRow
+              title={explanation.reason === "admin"
+                ? "Admins can do everything"
+                : explanation.reason === "disabled"
+                  ? "Account disabled"
+                  : "No rule matched"}
+            >
+              {@render ruleBadge(explanation)}
+            </ListRow>
+          {/if}
+        {/if}
+      </div>
+      {#snippet actions()}
+        <Button type="submit" disabled={checkBusy || checkInput === undefined}
+          >Check</Button
+        >
+      {/snippet}
     </FormGroup>
   {/if}
 </div>
