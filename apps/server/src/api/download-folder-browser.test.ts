@@ -110,18 +110,11 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await page.goto(`${base}/movies/${itemId}`);
             await page.waitFor(byLabel("Download"), 30_000);
             await page.eval(clickLabel("Download"));
-            // Stay until the finished file has moved into the folder.
-            const deadline = Date.now() + 30_000;
-            while (
-              (await page.eval<Record<string, number>>(listing("disk")))[
-                "Arrival (2016).mkv"
-              ] !== size
-            ) {
-              if (Date.now() > deadline)
-                throw new Error("The download never reached the folder.");
-              await Bun.sleep(150);
-            }
-            await page.goto(`${base}/downloads`);
+            // Keep the document alive while the copy and index writes finish.
+            await page.eval(
+              `document.querySelector('a[href="/downloads"]')?.click()`,
+            );
+            await page.waitFor(byLabel("Move to browser storage"), 30_000);
             await page.waitFor(hasText("In disk"), 30_000);
             expect(
               await page.eval<Record<string, number>>(listing("disk")),
