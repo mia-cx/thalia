@@ -21,6 +21,7 @@ function record(
     etag: null,
     subtitles: [],
     detail,
+    fileName: null,
   };
 }
 
