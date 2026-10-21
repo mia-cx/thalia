@@ -7,6 +7,7 @@ import {
   listFolders,
   previewFolder,
 } from "../libraries/folders.ts";
+import { latestScanRuns } from "../libraries/scan-runs.ts";
 import {
   createLibrary,
   deleteLibrary,
@@ -48,6 +49,7 @@ import {
   PageSize,
   PreviewExamples,
   ScanPreview,
+  ScanRun,
   ScanStatus,
   ViewableLibrary,
 } from "./schema.ts";
@@ -190,6 +192,13 @@ const scanStatus = authenticated
         ),
       ),
     ),
+  );
+
+const scanRuns = authenticated
+  .route({ method: "GET", path: "/libraries/scan-runs" })
+  .output(Schema.standardSchemaV1(Schema.Array(ScanRun)))
+  .handler(async ({ context }) =>
+    runApi(fromHost(() => latestScanRuns(context.db, context.caller.user.id))),
   );
 
 const policyOutput = Schema.standardSchemaV1(
@@ -367,6 +376,7 @@ export const libraryProcedures = {
   delete: remove,
   scan,
   scanStatus,
+  scanRuns,
   stats,
   summary,
   metadataGaps,

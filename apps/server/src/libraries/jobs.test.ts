@@ -884,7 +884,10 @@ describe.skipIf(!databaseUrl)("library scan jobs", () => {
         const claimed = await queue.claim();
         if (!claimed) throw new Error("Root job was not claimed.");
         await registry.run(claimed);
-        const published = await db.select().from(events);
+        const published = await db
+          .select()
+          .from(events)
+          .where(eq(events.kind, "library.changed"));
         expect(published).toMatchObject([
           {
             kind: "library.changed",

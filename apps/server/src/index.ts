@@ -12,6 +12,7 @@ import { createJobRegistry, jobRegistry } from "./jobs/registry.ts";
 import { startJobWorker } from "./jobs/worker.ts";
 import { registerLibraryJobs } from "./libraries/jobs.ts";
 import { createLibraryRepair, type RepairOptions } from "./libraries/repair.ts";
+import { reconcileScanRuns } from "./libraries/scan-runs.ts";
 import {
   type ChangeDebouncerOptions,
   createChangeDebouncer,
@@ -353,6 +354,8 @@ export async function startThalia(
         registerStoreJobs(database.db, runtimeRegistry, {
           signal: storeShutdown.signal,
         });
+      // A scan run whose jobs all ended while no worker ran settles now.
+      await reconcileScanRuns(database.db);
       worker = await startJobWorker(database.db, runtimeRegistry, {
         ...workerOptions,
         onError:
