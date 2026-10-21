@@ -137,10 +137,14 @@ export function attachProgressive(
       void interruptible(1_000, current).then(done);
     });
 
-  const nextUpdate = () =>
-    new Promise<void>((resolve) =>
-      buffer?.addEventListener("updateend", () => resolve(), { once: true }),
-    );
+  // Waits out the buffer's current update. An `updateend` an aborted update
+  // left queued must not count, or the next append lands mid-update.
+  const settled = async () => {
+    while (buffer?.updating)
+      await new Promise<void>((resolve) =>
+        buffer?.addEventListener("updateend", () => resolve(), { once: true }),
+      );
+  };
 
   const waitWhileFull = async () => {
     while (bufferedAhead() > lowWaterSeconds && !closed.signal.aborted) {
@@ -161,7 +165,7 @@ export function attachProgressive(
     for (;;) {
       try {
         buffer.appendBuffer(chunk as BufferSource);
-        await nextUpdate();
+        await settled();
         return true;
       } catch (error) {
         if (
@@ -176,7 +180,7 @@ export function attachProgressive(
       const end = Math.max(0, video.currentTime - trimBehindSeconds);
       if (end > 0) {
         buffer.remove(0, end);
-        await nextUpdate();
+        await settled();
         continue;
       }
       await waitForProgress(current);
@@ -197,9 +201,8 @@ export function attachProgressive(
     // Drop a half-appended segment before the new run's first bytes; abort
     // works whenever the source is open, not only mid-update.
     if (buffer !== undefined && mediaSource.readyState === "open") {
-      const updating = buffer.updating;
       buffer.abort();
-      if (updating) await nextUpdate();
+      await settled();
     }
     let run: FragmentRun;
     try {
