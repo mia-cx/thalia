@@ -351,7 +351,7 @@ describe.skipIf(browser === undefined)("offline playback", () => {
   test("a forced SubRip cue at the very start shows", async () => {
     await openDownload(page, base, fixtures.early);
     await page.waitFor(`${activeCues}.length > 0`, 10_000);
-    expect(await page.eval<{ text: string }[]>(activeCues)).toEqual([
+    expect(await page.eval<{ text: string; start: number }[]>(activeCues)).toEqual([
       { text: "Fixture", start: expect.closeTo(0.5, 1) },
     ]);
   }, 60_000);
@@ -388,7 +388,7 @@ describe.skipIf(browser === undefined)("offline playback", () => {
     await chooseSubtitles(page, "English (3)");
     await page.eval(`${video}.currentTime = 5`);
     await page.waitFor(`${activeCues}.length > 0`, 30_000);
-    expect(await page.eval<{ text: string }[]>(activeCues)).toEqual([
+    expect(await page.eval<{ text: string; start: number }[]>(activeCues)).toEqual([
       { text: "Stored", start: 1 },
     ]);
   }, 60_000);
