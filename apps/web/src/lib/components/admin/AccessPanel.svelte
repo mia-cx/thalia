@@ -394,7 +394,13 @@ const subjectGroups = $derived.by(() => {
     </FormGroup>
   {/if}
 
-  <FormGroup title="Add a rule" onsubmit={addRule} failure={addFailure}>
+  <!-- The first rules read resizes the group above, so a picker opened before it settles would shift under the pointer. -->
+  <FormGroup
+    title="Add a rule"
+    onsubmit={addRule}
+    loading={rules.data === undefined && !rules.failure ? 3 : undefined}
+    failure={addFailure}
+  >
     {#if object !== undefined}
       <FormRow label="User or group" for="access-subject" inline>
         <Select.Root

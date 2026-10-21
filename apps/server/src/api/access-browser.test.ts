@@ -300,6 +300,16 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           const page = await openPage();
           try {
             await signIn(page, base, token, "/admin/groups");
+            // A slow initial read must not leave a picker under a shrinking skeleton.
+            const initialRules = Promise.withResolvers<string>();
+            page.on("Fetch.requestPaused", (event: { requestId: string }) =>
+              initialRules.resolve(event.requestId),
+            );
+            await page.send("Fetch.enable", {
+              patterns: [
+                { urlPattern: "*rulesForSubject*", requestStage: "Response" },
+              ],
+            });
             await page.eval(fill("addName", "Family"));
             await page.eval(
               "[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Create group')?.click()",
@@ -307,6 +317,17 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await page.waitFor(
               "location.pathname.startsWith('/admin/groups/')",
             );
+            const requestId = await initialRules.promise;
+            await page.waitFor(
+              "[...document.querySelectorAll('h2')].some(h => h.textContent.trim() === 'Add a rule')",
+            );
+            expect(
+              await page.eval<boolean>(
+                "document.querySelector('#access-object') === null",
+              ),
+            ).toBe(true);
+            await page.send("Fetch.continueRequest", { requestId });
+            await page.send("Fetch.disable");
             await page.waitFor(
               "document.querySelector('#access-object') !== null",
             );
@@ -314,6 +335,11 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             // A Library object offers only the object Actions.
             await typeObject(page, "Shows");
             await pick(page, "Shows");
+            expect(
+              await page.eval<boolean>(
+                "[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add rule')?.disabled",
+              ),
+            ).toBe(false);
             await click(page, "#access-action");
             expect(await optionLabels(page)).not.toContain("Manage server");
             await pick(page, "View");
