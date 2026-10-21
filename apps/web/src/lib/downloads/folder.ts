@@ -40,18 +40,44 @@ async function exists(
   }
 }
 
-/** `name`, or `name (2)` and on, whichever the folder doesn't hold yet. */
+function splitName(name: string): [stem: string, extension: string] {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+}
+
+/**
+ * A download's file as the folder names it: the media is `fileName`, and a
+ * saved subtitle (`<versionId>.en.srt`) sits beside it as `Arrival (2016).en.srt`,
+ * where media players find it.
+ */
+export function folderName(
+  versionId: string,
+  fileName: string,
+  name: string,
+): string {
+  if (name === versionId) return fileName;
+  return `${splitName(fileName)[0]}${name.slice(versionId.length)}`;
+}
+
+/**
+ * `name`, or `name (2)` and on, whichever the folder holds neither under
+ * nor with any of `sidecars` beside, such as `.en.srt`.
+ */
 export async function freeName(
   folder: FileSystemDirectoryHandle,
   name: string,
+  sidecars: readonly string[] = [],
 ): Promise<string> {
-  const dot = name.lastIndexOf(".");
-  const [stem, extension] =
-    dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
-  let candidate = name;
-  for (let n = 2; await exists(folder, candidate); n++)
-    candidate = `${stem} (${n})${extension}`;
-  return candidate;
+  const [stem, extension] = splitName(name);
+  for (let n = 1; ; n++) {
+    const base = n === 1 ? stem : `${stem} (${n})`;
+    const taken = await Promise.all(
+      [extension, ...sidecars].map((suffix) =>
+        exists(folder, `${base}${suffix}`),
+      ),
+    );
+    if (!taken.includes(true)) return `${base}${extension}`;
+  }
 }
 
 /**

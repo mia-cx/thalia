@@ -4,6 +4,7 @@ import { artworkFolder, offlineArtwork } from "./artwork.ts";
 import {
   copyInto,
   fileNameFor,
+  folderName,
   freeName,
   readManifest,
   writeManifest,
@@ -498,23 +499,30 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     );
   }
 
-  /** A download's file, from the linked folder or browser storage; saved subtitles stay in browser storage. */
+  /** A download's file, the media or a saved subtitle, from the linked folder or browser storage. */
   async function file(name: string): Promise<File> {
     await restore();
-    const fileName =
-      records.find((entry) => entry.versionId === name)?.fileName ?? null;
-    if (fileName === null)
+    const record = records.find(
+      (entry) =>
+        entry.versionId === name ||
+        entry.subtitles.some((track) => track.name === name),
+    );
+    const fileName = record?.fileName ?? null;
+    if (record === undefined || fileName === null)
       return (await (await directory()).getFileHandle(name)).getFile();
     const folder = await deps.folder?.();
     if (folder === undefined)
       throw new Error("The download folder needs access.");
-    return (await folder.getFileHandle(fileName)).getFile();
+    return (
+      await folder.getFileHandle(folderName(record.versionId, fileName, name))
+    ).getFile();
   }
 
   /**
-   * Copies a finished download's file to the other place, records the new
-   * place, then deletes the old copy, under its Version lock so no transfer
-   * or other move touches it meanwhile. A failed copy keeps the original.
+   * Copies a finished download's file and saved subtitles to the other
+   * place, records the new place, then deletes the old copies, under its
+   * Version lock so no transfer or other move touches it meanwhile. A failed
+   * copy keeps the originals.
    */
   async function move(versionId: string, to: "folder" | "browser") {
     await restore();
@@ -532,27 +540,41 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     const dir = await directory();
     moving.add(versionId);
     notify();
+    // The media and its saved subtitles move together.
+    const names = [versionId, ...record.subtitles.map((track) => track.name)];
     try {
       await locked(fileLock(versionId), async () => {
-        if (to === "folder") {
-          const name = await freeName(folder, fileNameFor(record));
-          await copyInto(
-            await (await dir.getFileHandle(versionId)).getFile(),
+        const fileName =
+          record.fileName ??
+          (await freeName(
             folder,
-            name,
-          );
-          await setFileName(versionId, name);
-          await dir.removeEntry(versionId);
-        } else {
-          const name = record.fileName ?? "";
-          await copyInto(
-            await (await folder.getFileHandle(name)).getFile(),
-            dir,
-            versionId,
-          );
-          await setFileName(versionId, null);
-          await folder.removeEntry(name);
+            fileNameFor(record),
+            names.slice(1).map((name) => name.slice(versionId.length)),
+          ));
+        const [source, target] =
+          to === "folder" ? [dir, folder] : [folder, dir];
+        const moves = names.map((name): [from: string, into: string] => {
+          const inFolder = folderName(versionId, fileName, name);
+          return to === "folder" ? [name, inFolder] : [inFolder, name];
+        });
+        const copied: string[] = [];
+        try {
+          for (const [from, into] of moves) {
+            await copyInto(
+              await (await source.getFileHandle(from)).getFile(),
+              target,
+              into,
+            );
+            copied.push(into);
+          }
+        } catch (error) {
+          // A failed copy keeps the originals and leaves no partial set.
+          for (const name of copied)
+            await target.removeEntry(name).catch(() => {});
+          throw error;
         }
+        await setFileName(versionId, to === "folder" ? fileName : null);
+        for (const [from] of moves) await source.removeEntry(from);
       });
     } finally {
       moving.delete(versionId);
@@ -929,12 +951,14 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     if (place === undefined)
       throw new Error("The download folder needs access.");
     const [removed] = records.splice(index, 1);
-    try {
-      await place.removeEntry(fileName ?? versionId);
-    } catch {}
-    for (const track of removed?.subtitles ?? []) {
+    for (const name of [
+      versionId,
+      ...(removed?.subtitles.map((track) => track.name) ?? []),
+    ]) {
       try {
-        await (await directory()).removeEntry(track.name);
+        await place.removeEntry(
+          fileName === null ? name : folderName(versionId, fileName, name),
+        );
       } catch {}
     }
     notify();

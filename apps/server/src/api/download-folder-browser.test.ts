@@ -11,6 +11,7 @@ import { startThalia } from "../index.ts";
 import { scanDirectory } from "../libraries/scan.ts";
 import { createLibrary } from "../libraries/service.ts";
 import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
+import { writeSubtitle } from "../subtitles/store.ts";
 import { browser, openPage, signIn, webBuild } from "./browser-testing.ts";
 
 const byLabel = (label: string) =>
@@ -21,6 +22,11 @@ const clickText = (text: string) =>
   `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === ${JSON.stringify(text)})?.click()`;
 const hasText = (text: string) =>
   `document.querySelector('main')?.innerText.includes(${JSON.stringify(text)})`;
+const video = "document.querySelector('video')";
+/** The text of the cues showing now. */
+const activeCues = `[...${video}.textTracks]
+  .filter((track) => track.mode === "showing")
+  .flatMap((track) => [...(track.activeCues ?? [])].map((cue) => cue.text))`;
 /** Names and sizes of the files in an OPFS folder. */
 const listing = (folder: string) => `(async () => {
   const root = await navigator.storage.getDirectory();
@@ -78,6 +84,8 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               durationSeconds: 2,
               frameRate: 25,
               gopSeconds: 1,
+              // No embedded forced track to show over the stored one.
+              subtitles: [],
             });
             const size = Bun.file(movie).size;
             const library = await createLibrary(db, admin.id, {
@@ -94,6 +102,15 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const versionId = scanned.versionIds[0];
             if (itemId === null || versionId === undefined)
               throw new Error("Expected one Item and Version.");
+            // Forced, so it shows without a pick from the menu.
+            await writeSubtitle(
+              db,
+              itemId,
+              { language: "en", format: "srt", forced: true },
+              // Past the 2 s movie, so it still shows once playback ends.
+              "1\n00:00:00,000 --> 00:00:10,000\nKept\n",
+            );
+            const subtitle = "Arrival (2016).en.forced.srt";
 
             const picker = await page.send(
               "Page.addScriptToEvaluateOnNewDocument",
@@ -120,6 +137,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               await page.eval<Record<string, number>>(listing("disk")),
             ).toEqual({
               "Arrival (2016).mkv": size,
+              [subtitle]: expect.any(Number),
             });
             expect(
               await page.eval<Record<string, number>>(listing("downloads")),
@@ -142,6 +160,13 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await page.goto(`${base}/movies/${itemId}`);
             await page.waitFor("document.title === 'Arrival · Thalia'", 30_000);
 
+            // It plays from the folder, its subtitle with it.
+            await page.goto(`${base}/downloads`);
+            await page.waitFor(byLabel("Play"), 30_000);
+            await page.eval(clickLabel("Play"));
+            await page.waitFor(`${video}?.readyState >= 2`, 30_000);
+            await page.waitFor(`${activeCues}.includes("Kept")`, 30_000);
+
             await page.goto(`${base}/downloads`);
             await page.waitFor(byLabel("Move to browser storage"), 30_000);
             await page.eval(clickLabel("Move to browser storage"));
@@ -153,6 +178,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               await page.eval<Record<string, number>>(listing("downloads")),
             ).toMatchObject({
               [versionId]: size,
+              [`${versionId}.en.forced.srt`]: expect.any(Number),
             });
 
             // Browsers without the picker don't offer a folder.

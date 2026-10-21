@@ -1014,6 +1014,52 @@ describe("downloads in a folder on disk", () => {
     expect(manifestOf(folder)).toEqual([]);
   });
 
+  test("a saved subtitle moves with its download, beside it in the folder, and back", async () => {
+    const root = new FakeDir();
+    const folder = new FakeDir();
+    // The user's own file, which the download must not overwrite.
+    const theirs = new TextEncoder().encode("theirs");
+    folder.files.set("Arrival (2016).en.srt", theirs);
+    const srt = "1\n00:00:00,000 --> 00:00:01,000\nHello\n";
+    const media = fakeFetch(bytes).transport;
+    const store = createDownloads({
+      root: async () => root as unknown as FileSystemDirectoryHandle,
+      open: (id) => openFake(root, id),
+      fetch: (async (url: string, init?: RequestInit) =>
+        url.endsWith("/en.srt")
+          ? new Response(srt)
+          : media(url, init)) as typeof fetch,
+      storage: fakeStorage().storage,
+      folder: async () => folder as unknown as FileSystemDirectoryHandle,
+    });
+    const name = `${movie.versionId}.en.srt`;
+    await store.start({
+      ...movie,
+      subtitles: [
+        {
+          language: "en",
+          format: "srt",
+          forced: false,
+          hearingImpaired: false,
+          url: `/api/subtitles/${movie.itemId}/en.srt`,
+        },
+      ],
+    });
+    await waitFor(() => get(store).records[0]?.fileName !== null);
+
+    expect(get(store).records[0]?.fileName).toBe("Arrival (2016) (2).mkv");
+    expect(
+      new TextDecoder().decode(folder.files.get("Arrival (2016) (2).en.srt")),
+    ).toBe(srt);
+    expect(folder.files.get("Arrival (2016).en.srt")).toBe(theirs);
+    expect(root.dirs.get("downloads")?.files.has(name)).toBe(false);
+    expect(await (await store.file(name)).text()).toBe(srt);
+
+    await store.move(movie.versionId, "browser");
+    expect(folder.files.has("Arrival (2016) (2).en.srt")).toBe(false);
+    expect(await (await store.file(name)).text()).toBe(srt);
+  });
+
   test("a later session whose index already lists the folder's downloads rewrites nothing", async () => {
     const root = new FakeDir();
     const folder = new FakeDir();
