@@ -89,27 +89,59 @@ describe.skipIf(!databaseUrl || browser === undefined)("web downloads", () => {
 
           await signIn(page, base, token, `/movies/${itemId}`);
           await page.waitFor(byLabel("Download"), 30_000);
-          // Slow enough that the file is still flowing when the page reloads.
-          await page.send("Network.emulateNetworkConditions", {
+          // Slow only the media: a reload must not throttle the app shell or
+          // the service worker's first cache fill behind this transfer.
+          await page.send("Network.emulateNetworkConditionsByRule", {
             offline: false,
-            latency: 0,
-            downloadThroughput: 20_000,
-            uploadThroughput: 1_000_000,
+            matchedNetworkConditions: [
+              {
+                urlPattern: `${base}/api/items/${itemId}/versions/${versionId}/download`,
+                latency: 0,
+                downloadThroughput: 20_000,
+                uploadThroughput: 1_000_000,
+              },
+            ],
           });
+          // getFile().size can include unflushed bytes. Observe the real OPFS
+          // worker's flush acknowledgement before terminating it with reload.
+          await page.eval(`(() => {
+            let written = 0;
+            window.downloadFlushed = false;
+            const send = Worker.prototype.postMessage;
+            Worker.prototype.postMessage = function(message, ...args) {
+              if (message.versionId === ${JSON.stringify(versionId)}) {
+                if (message.operation === 'write') written = message.at + message.bytes.byteLength;
+                if (message.operation === 'flush' && written > 0) {
+                  const reply = ({data}) => {
+                    if (data.id !== message.id) return;
+                    this.removeEventListener('message', reply);
+                    if (!data.error) window.downloadFlushed = true;
+                  };
+                  this.addEventListener('message', reply);
+                }
+              }
+              return send.call(this, message, ...args);
+            };
+          })()`);
           await page.eval(clickLabel("Download"));
           await page.waitFor(byLabelPrefix("Downloading"), 30_000);
-          // The two-second flush must land before killing the dedicated worker.
-          await Bun.sleep(2500);
-          await page.waitFor(`(async () => {
-            const root = await navigator.storage.getDirectory();
-            const dir = await root.getDirectoryHandle("downloads");
-            return (await (await dir.getFileHandle(${JSON.stringify(versionId)})).getFile()).size > 0;
-          })()`);
+          // Wait for durable bytes before killing the dedicated worker.
+          await page.waitFor("window.downloadFlushed === true");
+          // readyState can still describe the outgoing document after reload.
+          // This marker exists only in the new document.
+          await page.send("Page.addScriptToEvaluateOnNewDocument", {
+            source: "window.downloadReloaded = true",
+          });
           await page.send("Page.reload", { ignoreCache: true });
-          await page.waitFor("document.readyState === 'complete'");
+          await page.waitFor(
+            "window.downloadReloaded === true && document.readyState === 'complete'",
+          );
 
           await page.goto(`${base}/downloads`);
-          await page.waitFor(byLabel("Resume download"), 30_000);
+          await page.waitFor(
+            `location.pathname === '/downloads' && (${byLabel("Resume download")})`,
+            30_000,
+          );
           const restoredSize = await page.eval<number>(`(async () => {
             const root = await navigator.storage.getDirectory();
             const dir = await root.getDirectoryHandle("downloads");
@@ -123,15 +155,21 @@ describe.skipIf(!databaseUrl || browser === undefined)("web downloads", () => {
             if (request.url.endsWith(`/versions/${versionId}/download`))
               ranges.push(request.headers.Range ?? request.headers.range ?? "");
           });
-          await page.send("Network.emulateNetworkConditions", {
+          await page.send("Network.emulateNetworkConditionsByRule", {
             offline: false,
-            latency: 0,
-            downloadThroughput: -1,
-            uploadThroughput: -1,
+            matchedNetworkConditions: [],
           });
           await page.eval(clickLabel("Resume download"));
           await page.waitFor(byLabel("Delete download"), 60_000);
           expect(ranges).toContain(`bytes=${restoredSize}-`);
+
+          // Completion renders before its asynchronous index write settles.
+          await page.waitFor(`(async () => {
+            const root = await navigator.storage.getDirectory();
+            const dir = await root.getDirectoryHandle("downloads");
+            const index = await (await dir.getFileHandle("index.json")).getFile();
+            return JSON.parse(await index.text()).some(record => record.versionId === ${JSON.stringify(versionId)} && record.state === 'complete');
+          })()`);
 
           const opfs = await page.eval<{ hash: string; index: string }>(
             `(async () => {

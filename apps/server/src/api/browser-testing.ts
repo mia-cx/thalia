@@ -87,11 +87,17 @@ export class Page {
     await this.send("Page.navigate", { url });
     await this.waitFor("document.readyState === 'complete'");
   }
+  /** Waits for a synchronous or asynchronous browser predicate to become truthy. */
   async waitFor(expression: string, timeoutMs = 20_000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
-        if (await this.eval<boolean>(`Boolean(${expression})`)) return;
+        if (
+          await this.eval<boolean>(
+            `(async () => Boolean(await (${expression})))()`,
+          )
+        )
+          return;
       } catch {}
       await Bun.sleep(150);
     }

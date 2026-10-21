@@ -563,25 +563,30 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 "document.querySelectorAll('[data-slot=dialog-content] a').length === 24",
               );
 
-              // Fail the Show more request; hold whatever comes after.
-              const held: { requestId: string }[] = [];
-              let failedOnce = false;
-              await page.send("Fetch.enable", {
-                patterns: [
-                  { urlPattern: "*metadataGapItems*", requestStage: "Request" },
-                ],
-              });
-              page.on("Fetch.requestPaused", (p: { requestId: string }) => {
-                if (!failedOnce) {
-                  failedOnce = true;
-                  void page.send("Fetch.failRequest", {
-                    requestId: p.requestId,
-                    errorReason: "Failed",
+              // Inject at fetch so the failure always reaches the page,
+              // independently of browser interception and worker ownership.
+              // The next real request stays gated until Try again is queued.
+              await page.eval(`(() => {
+                const fetch = window.fetch;
+                let failed = false;
+                window.gapReconcileHeld = false;
+                window.fetch = async (input, init) => {
+                  const url = input instanceof Request ? input.url : String(input);
+                  if (!url.includes('metadataGapItems')) return fetch(input, init);
+                  if (!failed) {
+                    failed = true;
+                    throw new TypeError('Injected Show more network failure.');
+                  }
+                  window.gapReconcileHeld = true;
+                  await new Promise(resolve => {
+                    window.releaseGapReconcile = () => {
+                      window.fetch = fetch;
+                      resolve();
+                    };
                   });
-                  return;
-                }
-                held.push({ requestId: p.requestId });
-              });
+                  return fetch(input, init);
+                };
+              })()`);
               await page.eval(clickButton("Show more"));
               await page.waitFor(
                 "[...document.querySelectorAll('[data-slot=dialog-content] button')].some(b => b.textContent.trim() === 'Try again')",
@@ -592,16 +597,14 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 kind: "library.changed",
                 libraryId: library.id,
               });
-              await waitForHeld(held);
+              await page.waitFor("window.gapReconcileHeld === true");
               await page.eval(
                 clickButton(
                   "Try again",
                   "document.querySelector('[data-slot=dialog-content]')",
                 ),
               );
-              for (const { requestId } of held)
-                await page.send("Fetch.continueRequest", { requestId });
-              await page.send("Fetch.disable");
+              await page.eval("window.releaseGapReconcile()");
 
               // The reconcile lands all 25; the queued retry sees the null
               // cursor and does not append anything.
