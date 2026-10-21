@@ -37,6 +37,9 @@
       "dependencies": {
         "@internationalized/date": "3.12.4",
         "@lucide/svelte": "1.48.0",
+        "@mediabunny/aac-encoder": "1.62.0",
+        "@mediabunny/ac3": "1.62.0",
+        "@mediabunny/dts": "1.62.0",
         "@orpc/client": "1.15.0",
         "bits-ui": "2.19.3",
         "clsx": "2.1.1",
@@ -169,6 +172,12 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@lucide/svelte": ["@lucide/svelte@1.48.0", "", { "peerDependencies": { "svelte": "^5" } }, "sha512-bLimVDjehxu3fpu9XEUpqEkBk2sJAHAT2sVcLHhlM70EdNsXuj9ZnYENWv5xgw3+05h4i5TirAxTiTgnZZf8gw=="],
+
+    "@mediabunny/aac-encoder": ["@mediabunny/aac-encoder@1.62.0", "", { "peerDependencies": { "mediabunny": "^1.0.0" } }, "sha512-BtGaX3GVGgfQzbqeuqeKAOvHF2lhV70FO3T2orAr4Lr6YklRBOaggfRsKEp93cd6Y7DQab9GFYAuURa1DksCYw=="],
+
+    "@mediabunny/ac3": ["@mediabunny/ac3@1.62.0", "", { "peerDependencies": { "mediabunny": "^1.0.0" } }, "sha512-9EyY1hsZFd5iYlhQVMH+YlFx3aLbZki/YN/ynCKOokMHTJ7X78slPPU1sMS4orgajYK0i24341r2z8Z8r3iUhg=="],
+
+    "@mediabunny/dts": ["@mediabunny/dts@1.62.0", "", { "peerDependencies": { "mediabunny": "^1.0.0" } }, "sha512-xXbF05aRTPeg8Iz4yf9xwXTqgRakEggO5j7i1b9k9O39BjZOaiCjH8ar9uK9bbkUev1cwTQVyYsr5IxQnVOaNA=="],
 
     "@orpc/client": ["@orpc/client@1.15.0", "", { "dependencies": { "@orpc/shared": "1.15.0", "@orpc/standard-server": "1.15.0", "@orpc/standard-server-fetch": "1.15.0", "@orpc/standard-server-peer": "1.15.0" } }, "sha512-Qt0FdPSGySdQwy83iUWOq+Iqhw2gM9qHtyxfBbcw1mwOz1s4O2BwUFA3ymVTLIRRNYRgPrQLaBZhp8CacqeePg=="],
 

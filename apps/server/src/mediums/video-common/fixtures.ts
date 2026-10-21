@@ -17,8 +17,10 @@ export interface VideoFixtureOptions {
   videoCodec?: "h264" | "hevc";
   /** Tags a 10-bit HEVC video with this transfer function; needs videoCodec "hevc". */
   hdr?: "hdr10" | "hlg";
-  audioCodec?: "aac" | "ac3" | "flac" | "truehd";
+  audioCodec?: "aac" | "ac3" | "dts" | "flac" | "truehd";
   audioChannels?: 2 | 6;
+  /** The first audio Stream carries a 440 Hz tone from this second on, silent before; default silent throughout. */
+  toneFrom?: number;
   /** Adds a second audio Stream, Japanese stereo AAC carrying a 440 Hz tone; the first stays silent. */
   toneAudio?: boolean;
   /** Subtitle Streams in order, each showing "Fixture" for `subtitleTime`; default one SRT. */
@@ -153,12 +155,14 @@ export async function createVideoFixture(
     audioCodec = "aac",
     audioChannels = 2,
     toneAudio = false,
+    toneFrom,
     subtitles = ["srt"],
     subtitleTime = { start: 0, end: 0.8 },
   } = options;
   if (hdr !== undefined && videoCodec !== "hevc") {
     throw new Error("An HDR fixture needs HEVC video.");
   }
+  const layout = audioChannels === 6 ? "5.1" : "stereo";
   const source =
     pattern === "testsrc2"
       ? `testsrc2=s=${width}x${height}:r=${frameRate}:d=${durationSeconds}`
@@ -277,7 +281,9 @@ export async function createVideoFixture(
         "-f",
         "lavfi",
         "-i",
-        `anullsrc=r=48000:cl=${audioChannels === 6 ? "5.1" : "stereo"}`,
+        toneFrom === undefined
+          ? `anullsrc=r=48000:cl=${layout}`
+          : `aevalsrc=exprs='if(gte(t,${toneFrom}),0.5*sin(2*PI*440*t),0)':s=48000:c=${layout}`,
         ...tone.input,
         ...subtitleFiles.flatMap(({ format, path: subtitlePath }) => [
           "-f",
@@ -306,9 +312,11 @@ export async function createVideoFixture(
         String(durationSeconds),
         ...(videoCodec === "hevc" ? hevc : h264),
         "-c:a",
-        audioCodec,
-        // ffmpeg's TrueHD encoder is still marked experimental.
-        ...(audioCodec === "truehd" ? ["-strict", "experimental"] : []),
+        audioCodec === "dts" ? "dca" : audioCodec,
+        // ffmpeg's TrueHD and DTS encoders are still marked experimental.
+        ...(audioCodec === "truehd" || audioCodec === "dts"
+          ? ["-strict", "experimental"]
+          : []),
         ...tone.encode,
         ...subtitleFiles.flatMap(({ format }, index) => [
           `-c:s:${index}`,
