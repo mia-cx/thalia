@@ -24,7 +24,7 @@ import PlayerSettings from "$lib/components/PlayerSettings.svelte";
 import Scrubber from "$lib/components/Scrubber.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Slider from "$lib/components/ui/slider/index.ts";
-import { downloads } from "$lib/downloads/index.ts";
+import { type DownloadRecord, downloads } from "$lib/downloads/index.ts";
 import { carryStreams } from "$lib/next-episode.ts";
 import { playDownload } from "$lib/offline/session.ts";
 import { formatPosition, pickVersion } from "$lib/playback.ts";
@@ -65,6 +65,8 @@ type Loaded = {
   progressVersionId: string | null;
   next: Awaited<ReturnType<typeof client.playback.next>>;
   autoplay: boolean;
+  /** The download an offline player plays. */
+  download?: DownloadRecord;
 };
 
 // The Version choice is part of the load: a link that names no Version plays
@@ -132,6 +134,7 @@ async function loadDownload(): Promise<Loaded> {
     progressVersionId: null,
     next: null,
     autoplay: false,
+    download: record,
   };
 }
 
@@ -220,14 +223,11 @@ $effect(() => {
       },
       streams: carried,
       open: (request) =>
-        offline
+        itemData.download !== undefined
           ? playDownload({
               video: media,
-              streams:
-                detailNow.versions.find(
-                  (version) => version.id === request.versionId,
-                )?.streams ?? [],
-              file: () => downloads.file(request.versionId),
+              record: itemData.download,
+              file: downloads.file,
               startAt: request.startAt,
               paused: request.paused,
               choice: request.streams,
@@ -845,5 +845,14 @@ const VolumeIcon = $derived(
     :global(video::-webkit-media-text-track-container) {
     transform: translateY(calc(-1 * var(--controls-height, 0px)));
     transition: transform var(--duration-fast) ease-out;
+  }
+
+  /* An offline ASS track draws on JASSUB's canvas; it clears the controls too. */
+  .player :global(canvas.JASSUB) {
+    transition: translate var(--duration-fast) ease-out;
+  }
+
+  .player[data-controls="shown"] :global(canvas.JASSUB) {
+    translate: 0 calc(-1 * var(--controls-height, 0px));
   }
 </style>

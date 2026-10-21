@@ -1,4 +1,4 @@
-import type { DownloadStream } from "../downloads/index.ts";
+import type { DownloadRecord } from "../downloads/index.ts";
 import {
   cannotPlay,
   type PlannedTracks,
@@ -8,14 +8,18 @@ import {
 } from "../player.ts";
 import { attachProgressive } from "../progressive.ts";
 import { browserDecodes, offlinePlan } from "./playable.ts";
+import type { SubtitleSource } from "./subtitles.ts";
 
 /** One offline playback attempt: a download's File on a video element. */
 export type DownloadPlayback = {
   video: HTMLVideoElement;
-  /** The download's probed Streams, from its record. */
-  streams: readonly DownloadStream[];
-  /** Reads the downloaded File. */
-  file: () => Promise<Blob>;
+  /** The download to play. */
+  record: Pick<
+    DownloadRecord,
+    "versionId" | "container" | "streams" | "subtitles"
+  >;
+  /** Reads one of the download's files: the media by Version id, a subtitle by name. */
+  file: (name: string) => Promise<Blob>;
   /** Where to start, in seconds; null starts at the beginning. */
   startAt: number | null;
   /** Starts loaded but paused, so a paused viewer stays paused across a switch. */
@@ -25,46 +29,101 @@ export type DownloadPlayback = {
   onTracks: (tracks: PlannedTracks) => void;
 };
 
-/** The tracks menu of a download: its Streams and the ones playing. */
-function downloadTracks(
-  streams: readonly DownloadStream[],
-  audioStreamIndex: number | null,
-): PlannedTracks {
-  return {
-    audioStreams: streams
-      .filter((stream) => stream.kind === "audio")
-      .map(({ index, codec, channels, language, title }) => ({
-        index,
-        codec,
-        channels,
-        language,
-        title,
-      })),
-    subtitleStreams: [],
-    audioStreamIndex,
-    subtitleStreamIndex: null,
-    creditsStartSeconds: null,
-    quality: { original: null, rungs: [], storedVariantIds: [] },
-  };
+type SubtitleOption = PlannedTracks["subtitleStreams"][number] & {
+  source: (file: DownloadPlayback["file"]) => Promise<SubtitleSource>;
+};
+
+// Embedded subtitle codecs drawn offline, by the probe's names.
+const textCodecs = new Set(["subrip", "ass", "ssa", "webvtt"]);
+
+/**
+ * The subtitles a download offers: its Matroska text and ASS tracks, then
+ * the stored files saved with it, numbered past every embedded Stream.
+ */
+function subtitleOptions(record: DownloadPlayback["record"]): SubtitleOption[] {
+  const embedded = record.streams.filter(
+    (stream) => stream.kind === "subtitle",
+  );
+  const matroska = record.container?.match(/mkv|matroska|webm/) != null;
+  const next =
+    Math.max(-1, ...record.streams.map((stream) => stream.index)) + 1;
+  return [
+    ...embedded.flatMap((stream, position) =>
+      matroska && textCodecs.has(stream.codec)
+        ? [
+            {
+              index: stream.index,
+              codec: stream.codec,
+              language: stream.language,
+              title: stream.title,
+              forced: stream.forced,
+              source: async (file: DownloadPlayback["file"]) => ({
+                kind: "embedded" as const,
+                file: await file(record.versionId),
+                position,
+              }),
+            },
+          ]
+        : [],
+    ),
+    ...record.subtitles.map((track, offset) => ({
+      index: next + offset,
+      codec: track.format,
+      language: track.language,
+      title: null,
+      forced: track.forced,
+      source: async (file: DownloadPlayback["file"]) => ({
+        kind: "file" as const,
+        file: await file(track.name),
+        format: track.format,
+      }),
+    })),
+  ];
 }
 
 /**
  * Plays a download from browser storage with no server: the File is remuxed
- * to fragmented MP4 in the page and fed through Media Source Extensions. A
- * download this browser can't play reports why instead.
+ * to fragmented MP4 in the page and fed through Media Source Extensions, and
+ * the chosen subtitles are drawn over it. A download this browser can't play
+ * reports why instead.
  */
 export function playDownload(options: DownloadPlayback): {
   close(): Promise<void>;
 } {
-  const { video, streams, onNotice } = options;
+  const { video, record, onNotice } = options;
+  const { streams } = record;
   const events = new AbortController();
   let closing = false;
   let progressive: { close(): void } | undefined;
-  let release: (() => void) | undefined;
+  const releases: (() => void)[] = [];
 
   const refuse = (message: string) => {
     if (!closing) onNotice({ title: cannotPlay, message, retry: false });
   };
+
+  const subtitles = subtitleOptions(record);
+  // Unless the viewer chose, a forced track shows and others wait to be asked.
+  const shownSubtitle =
+    options.choice.subtitleStreamIndex === undefined
+      ? subtitles.find((option) => option.forced)
+      : subtitles.find(
+          (option) => option.index === options.choice.subtitleStreamIndex,
+        );
+
+  async function showSubtitle() {
+    if (shownSubtitle === undefined) return;
+    try {
+      const source = await shownSubtitle.source(options.file);
+      const { showSubtitles } = await import("./subtitles.ts");
+      if (closing) return;
+      const shown = await showSubtitles(video, source);
+      if (closing) shown.close();
+      else releases.push(() => shown.close());
+    } catch (error) {
+      // Playback goes on without them.
+      console.error(error);
+    }
+  }
 
   async function open() {
     const plan = offlinePlan(
@@ -73,9 +132,22 @@ export function playDownload(options: DownloadPlayback): {
       options.choice.audioStreamIndex,
     );
     const asked = options.choice.audioStreamIndex ?? null;
-    options.onTracks(
-      downloadTracks(streams, "reason" in plan ? asked : plan.audioStreamIndex),
-    );
+    options.onTracks({
+      audioStreams: streams
+        .filter((stream) => stream.kind === "audio")
+        .map(({ index, codec, channels, language, title }) => ({
+          index,
+          codec,
+          channels,
+          language,
+          title,
+        })),
+      subtitleStreams: subtitles.map(({ source: _, ...option }) => option),
+      audioStreamIndex: "reason" in plan ? asked : plan.audioStreamIndex,
+      subtitleStreamIndex: shownSubtitle?.index ?? null,
+      creditsStartSeconds: null,
+      quality: { original: null, rungs: [], storedVariantIds: [] },
+    });
     if ("reason" in plan) {
       refuse(`${plan.reason}.`);
       return;
@@ -89,8 +161,8 @@ export function playDownload(options: DownloadPlayback): {
             .findIndex((stream) => stream.index === plan.audioStreamIndex);
     // Mediabunny loads only when a download plays.
     const { openRemux } = await import("./remux.ts");
-    const remux = await openRemux(await options.file());
-    release = () => remux.dispose();
+    const remux = await openRemux(await options.file(record.versionId));
+    releases.push(() => remux.dispose());
     if (closing) return;
     const mime = await remux.mime(audio);
     if (closing) return;
@@ -108,6 +180,7 @@ export function playDownload(options: DownloadPlayback): {
       startAt: options.startAt ?? 0,
       onError: () => onNotice(stalled),
     });
+    void showSubtitle();
     if (!options.paused)
       void video.play().catch(() => {
         // The browser refused autoplay; the controls stay ready for a click.
@@ -120,7 +193,7 @@ export function playDownload(options: DownloadPlayback): {
   });
 
   return {
-    /** Stops the remux and releases the video element. Safe to call twice. */
+    /** Stops the remux and subtitles and releases the video element. Safe to call twice. */
     async close() {
       if (closing) return;
       closing = true;
@@ -129,7 +202,7 @@ export function playDownload(options: DownloadPlayback): {
       video.removeAttribute("src");
       video.load();
       await opened;
-      release?.();
+      for (const release of releases) release();
     },
   };
 }

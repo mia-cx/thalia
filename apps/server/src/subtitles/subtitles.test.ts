@@ -330,6 +330,16 @@ describe.skipIf(!databaseUrl)("stored subtitle tracks", () => {
           expect(planned.subtitles).toEqual([
             { language: "nl", format: "srt", url },
           ]);
+          // A download saves the same tracks, so the detail lists them too.
+          expect((await client.items.get({ id: itemId })).subtitles).toEqual([
+            {
+              language: "nl",
+              format: "srt",
+              forced: false,
+              hearingImpaired: false,
+              url,
+            },
+          ]);
 
           const served = await fetch(`${base}${url}`, {
             headers: { authorization: `Bearer ${token}` },

@@ -21,8 +21,10 @@ export interface VideoFixtureOptions {
   audioChannels?: 2 | 6;
   /** Adds a second audio Stream, Japanese stereo AAC carrying a 440 Hz tone; the first stays silent. */
   toneAudio?: boolean;
-  /** Subtitle Streams in order, each showing "Fixture" from 0 to 0.8 s; default one SRT. */
+  /** Subtitle Streams in order, each showing "Fixture" for `subtitleTime`; default one SRT. */
   subtitles?: readonly ("srt" | "ass" | "pgs")[];
+  /** When the subtitles show; default 0 to 0.8 s. */
+  subtitleTime?: SubtitleTime;
 }
 
 /** Where the PGS fixture draws its white box, in video pixels. */
@@ -59,8 +61,12 @@ const pgsSegment = (seconds: number, type: number, body: number[]) => {
   ];
 };
 
-/** Builds a `.sup` that shows a white box from 0 to 0.8 s; ffmpeg has no PGS encoder. */
-function pgsFixture(width: number, height: number) {
+/** When the fixture's subtitles show, in seconds. */
+type SubtitleTime = { start: number; end: number };
+
+/** Builds a `.sup` that shows a white box for `time`; ffmpeg has no PGS encoder. */
+function pgsFixture(width: number, height: number, time: SubtitleTime) {
+  const { start, end } = time;
   const box = pgsFixtureBox(width, height);
   const video = [...u16(width), ...u16(height), 0x10];
   const window = [0, ...u16(box.x), ...u16(box.y), ...u16(box.width)];
@@ -71,7 +77,7 @@ function pgsFixture(width: number, height: number) {
   const objectLength = rle.length + 4;
   return new Uint8Array([
     // Epoch start: composition, window, palette, object, end.
-    ...pgsSegment(0, 0x16, [
+    ...pgsSegment(start, 0x16, [
       ...video,
       ...u16(0),
       0x80,
@@ -84,9 +90,9 @@ function pgsFixture(width: number, height: number) {
       ...u16(box.x),
       ...u16(box.y),
     ]),
-    ...pgsSegment(0, 0x17, [1, ...window]),
-    ...pgsSegment(0, 0x14, [0, 0, 1, 235, 128, 128, 255]),
-    ...pgsSegment(0, 0x15, [
+    ...pgsSegment(start, 0x17, [1, ...window]),
+    ...pgsSegment(start, 0x14, [0, 0, 1, 235, 128, 128, 255]),
+    ...pgsSegment(start, 0x15, [
       ...u16(0),
       0,
       0xc0,
@@ -96,27 +102,38 @@ function pgsFixture(width: number, height: number) {
       ...u16(box.height),
       ...rle,
     ]),
-    ...pgsSegment(0, 0x80, []),
+    ...pgsSegment(start, 0x80, []),
     // An empty composition clears the screen.
-    ...pgsSegment(0.8, 0x16, [...video, ...u16(1), 0, 0, 0, 0]),
-    ...pgsSegment(0.8, 0x17, [1, ...window]),
-    ...pgsSegment(0.8, 0x80, []),
+    ...pgsSegment(end, 0x16, [...video, ...u16(1), 0, 0, 0, 0]),
+    ...pgsSegment(end, 0x17, [1, ...window]),
+    ...pgsSegment(end, 0x80, []),
   ]);
 }
 
-const assFixture = [
-  "[Script Info]",
-  "ScriptType: v4.00+",
-  "",
-  "[V4+ Styles]",
-  "Format: Name, Fontname, Fontsize, PrimaryColour, Bold, Italic, Alignment, MarginL, MarginR, MarginV",
-  "Style: Default,Sans,20,&H00FFFFFF,0,0,2,10,10,10",
-  "",
-  "[Events]",
-  "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-  "Dialogue: 0,0:00:00.00,0:00:00.80,Default,,0,0,0,,{\\i1}Fixture{\\i0}",
-  "",
-].join("\n");
+// h:mm:ss.cc for ASS, hh:mm:ss,mmm for SubRip.
+const clock = (seconds: number, fraction: 2 | 3, hourDigits: 1 | 2) => {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  const whole = Math.floor(rest);
+  const part = Math.round((rest - whole) * 10 ** fraction);
+  return `${String(hours).padStart(hourDigits, "0")}:${String(minutes).padStart(2, "0")}:${String(whole).padStart(2, "0")}${fraction === 2 ? "." : ","}${String(part).padStart(fraction, "0")}`;
+};
+
+const assFixture = ({ start, end }: SubtitleTime) =>
+  [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    "",
+    "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, Bold, Italic, Alignment, MarginL, MarginR, MarginV",
+    "Style: Default,Sans,20,&H00FFFFFF,0,0,2,10,10,10",
+    "",
+    "[Events]",
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    `Dialogue: 0,${clock(start, 2, 1)},${clock(end, 2, 1)},Default,,0,0,0,,{\\i1}Fixture{\\i0}`,
+    "",
+  ].join("\n");
 
 /** Generate a short real MKV with video, silent audio and subtitles; h264, stereo AAC and one SRT by default. */
 export async function createVideoFixture(
@@ -137,6 +154,7 @@ export async function createVideoFixture(
     audioChannels = 2,
     toneAudio = false,
     subtitles = ["srt"],
+    subtitleTime = { start: 0, end: 0.8 },
   } = options;
   if (hdr !== undefined && videoCodec !== "hevc") {
     throw new Error("An HDR fixture needs HEVC video.");
@@ -202,10 +220,10 @@ export async function createVideoFixture(
     await writeFile(
       subtitlePath,
       format === "pgs"
-        ? pgsFixture(width, height)
+        ? pgsFixture(width, height, subtitleTime)
         : format === "ass"
-          ? assFixture
-          : "1\n00:00:00,000 --> 00:00:00,800\nFixture\n",
+          ? assFixture(subtitleTime)
+          : `1\n${clock(subtitleTime.start, 3, 2)} --> ${clock(subtitleTime.end, 3, 2)}\nFixture\n`,
     );
   }
   const chapterList =

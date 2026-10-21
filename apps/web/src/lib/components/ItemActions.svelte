@@ -173,6 +173,7 @@ async function downloadItem() {
       bytes: downloadVersion.bytes,
       container: downloadVersion.container,
       streams: [...downloadVersion.streams],
+      subtitles: detail.subtitles,
     });
   } catch {
     toast.error("Couldn't start the download");

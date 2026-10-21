@@ -19,8 +19,16 @@ export type DownloadRecord = {
   state: DownloadState;
   /** The server's ETag at the last response, or null for records written before it existed. */
   etag: string | null;
+  /** The Item's stored subtitle files saved next to the media, each under `name`. */
+  subtitles: DownloadSubtitle[];
 };
-export type DownloadInput = Omit<DownloadRecord, "written" | "state" | "etag">;
+/** A stored subtitle file of the Item, as the item detail lists it. */
+export type ItemSubtitle = ItemDetail["subtitles"][number];
+export type DownloadSubtitle = Omit<ItemSubtitle, "url"> & { name: string };
+export type DownloadInput = Omit<
+  DownloadRecord,
+  "written" | "state" | "etag" | "subtitles"
+> & { subtitles?: readonly ItemSubtitle[] };
 export type DownloadsSnapshot = {
   ready: boolean;
   /** OPFS refused or threw: downloads are unusable here. */
@@ -57,8 +65,11 @@ export type Downloads = Readable<DownloadsSnapshot> & {
   pause(versionId: string): Promise<void>;
   resume(versionId: string): Promise<void>;
   remove(versionId: string): Promise<void>;
-  /** A Version's downloaded bytes as a File read in place, with no copy. */
-  file(versionId: string): Promise<File>;
+  /**
+   * A download's file read in place, with no copy: the media by its Version
+   * id, a saved subtitle by its `name`.
+   */
+  file(name: string): Promise<File>;
 };
 
 const flushBytes = 8 * 1024 * 1024;
@@ -183,6 +194,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
         .map((entry) => ({
           ...entry,
           etag: typeof entry.etag === "string" ? entry.etag : null,
+          subtitles: Array.isArray(entry.subtitles) ? entry.subtitles : [],
         }));
     } catch {
       return [];
@@ -331,14 +343,47 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
         persisted = false;
       }
     }
+    if (records.some((record) => record.versionId === input.versionId)) return;
+    const subtitles = await saveSubtitles(input);
     let added = false;
     await updateIndex((stored) => {
       if (stored.some((record) => record.versionId === input.versionId))
         return stored;
       added = true;
-      return [...stored, { ...input, written: 0, state: "queued", etag: null }];
+      return [
+        ...stored,
+        { ...input, subtitles, written: 0, state: "queued", etag: null },
+      ];
     });
     if (added) void pump();
+  }
+
+  /**
+   * Saves the Item's stored subtitle files next to the media as
+   * `<versionId>.<track name>`. A file that fails to save is left out of
+   * the record; the media downloads regardless.
+   */
+  async function saveSubtitles(
+    input: DownloadInput,
+  ): Promise<DownloadSubtitle[]> {
+    const saved: DownloadSubtitle[] = [];
+    for (const { url, ...track } of input.subtitles ?? []) {
+      const name = `${input.versionId}.${url.slice(url.lastIndexOf("/") + 1)}`;
+      try {
+        const response = await deps.fetch(url, { credentials: "same-origin" });
+        if (!response.ok) continue;
+        const handle = await (await directory()).getFileHandle(name, {
+          create: true,
+        });
+        const writable = await handle.createWritable();
+        await writable.write(await response.blob());
+        await writable.close();
+        saved.push({ ...track, name });
+      } catch (error) {
+        console.error(error);
+      }
+    }
+    return saved;
   }
 
   function pump(): Promise<void> {
@@ -623,10 +668,15 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     // The index may have changed while the transfer's `done` was awaited.
     const index = find();
     if (index < 0) return;
-    records.splice(index, 1);
-    try {
-      await (await directory()).removeEntry(versionId);
-    } catch {}
+    const [removed] = records.splice(index, 1);
+    for (const name of [
+      versionId,
+      ...(removed?.subtitles.map((track) => track.name) ?? []),
+    ]) {
+      try {
+        await (await directory()).removeEntry(name);
+      } catch {}
+    }
     notify();
     await updateIndex((stored) =>
       stored.filter((entry) => entry.versionId !== versionId),
@@ -635,8 +685,8 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     notify();
   }
 
-  async function file(versionId: string): Promise<File> {
-    return (await (await directory()).getFileHandle(versionId)).getFile();
+  async function file(name: string): Promise<File> {
+    return (await (await directory()).getFileHandle(name)).getFile();
   }
 
   return {

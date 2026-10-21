@@ -90,6 +90,16 @@ export const ItemDetail = Schema.Struct({
   ),
   /** Whether the caller may download this Item's files. */
   canDownload: Schema.Boolean,
+  /** Subtitle files stored next to the Item, served at `url`. */
+  subtitles: Schema.Array(
+    Schema.Struct({
+      language: Schema.String,
+      format: Schema.Literal("srt", "ass", "vtt"),
+      forced: Schema.Boolean,
+      hearingImpaired: Schema.Boolean,
+      url: Schema.String,
+    }),
+  ),
   versions: Schema.Array(
     Schema.Struct({
       id: Schema.UUID,

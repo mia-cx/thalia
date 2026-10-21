@@ -581,12 +581,52 @@ describe("downloads store", () => {
     const snapshot = get(restored);
     expect(snapshot.ready).toBe(true);
     expect(snapshot.records).toEqual([
-      { ...input, written: 16, state: "paused", etag: null },
+      { ...input, written: 16, state: "paused", etag: null, subtitles: [] },
     ]);
     await restored.resume(input.versionId);
     await waitFor(() => get(restored).records[0]?.state === "complete");
     expect(resumed.calls[0]?.range).toBe("bytes=16-");
     expect(fileOf(root)).toEqual(bytes);
+  });
+
+  test("the Item's stored subtitles save with the download and delete with it", async () => {
+    const root = new FakeDir();
+    const media = fakeFetch(bytes).transport;
+    const srt = "1\n00:00:00,000 --> 00:00:01,000\nHello\n";
+    const transport = (async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/en.srt")) return new Response(srt);
+      if (url.endsWith("/fr.ass")) return new Response(null, { status: 404 });
+      return media(url, init);
+    }) as typeof fetch;
+    const store = makeStore(root, transport, fakeStorage().storage);
+    const track = { forced: false, hearingImpaired: false };
+    await store.start({
+      ...input,
+      subtitles: [
+        {
+          ...track,
+          language: "en",
+          format: "srt",
+          url: `/api/subtitles/${input.itemId}/en.srt`,
+        },
+        {
+          ...track,
+          language: "fr",
+          format: "ass",
+          url: `/api/subtitles/${input.itemId}/fr.ass`,
+        },
+      ],
+    });
+    await waitFor(() => get(store).records[0]?.state === "complete");
+    const name = `${input.versionId}.en.srt`;
+    expect(get(store).records[0]?.subtitles).toEqual([
+      { ...track, language: "en", format: "srt", name },
+    ]);
+    expect(await (await store.file(name)).text()).toBe(srt);
+    await store.remove(input.versionId);
+    expect([...(root.dirs.get("downloads")?.files.keys() ?? [])]).toEqual([
+      "index.json",
+    ]);
   });
 
   test("a refused persist still completes and is asked once across starts", async () => {
@@ -711,7 +751,7 @@ describe("downloads store", () => {
     const snapshot = get(store);
     expect(snapshot.ready).toBe(true);
     expect(snapshot.records).toEqual([
-      { ...input, written: 8, state: "paused", etag: null },
+      { ...input, written: 8, state: "paused", etag: null, subtitles: [] },
     ]);
   });
 
