@@ -8,6 +8,7 @@ class FakeMedia extends EventTarget {
   duration = Number.NaN;
   paused = true;
   ended = false;
+  readyState = 0;
   volume = 1;
   muted = false;
   playbackRate = 1;
@@ -270,6 +271,21 @@ describe("player state", () => {
       { start: 0, end: 20 },
       { start: 40, end: 60 },
     ]);
+  });
+
+  test("a stall that clears without `playing` ends the spinner once time moves", () => {
+    const { media, state, play } = setup();
+    play();
+    media.fire("playing");
+    media.fire("waiting");
+    // Still stalled: time updates without data ready keep the spinner.
+    media.readyState = 2;
+    media.fire("timeupdate");
+    expect(state().buffering).toBe(true);
+    media.readyState = 4;
+    media.currentTime = 5;
+    media.fire("timeupdate");
+    expect(state().buffering).toBe(false);
   });
 
   test("an audio choice reopens at the position with the Stream and paused kept", async () => {
