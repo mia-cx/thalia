@@ -164,9 +164,9 @@ export function playDownload(options: DownloadPlayback): {
     const remux = await openRemux(await options.file(record.versionId));
     releases.push(() => remux.dispose());
     if (closing) return;
-    const mime = await remux.mime(audio);
+    const prepared = await remux.prepare(audio, plan.convert);
     if (closing) return;
-    if (!browserDecodes(mime)) {
+    if (!browserDecodes(prepared.mime)) {
       refuse("This browser can't play this download.");
       return;
     }
@@ -174,8 +174,8 @@ export function playDownload(options: DownloadPlayback): {
       signal: events.signal,
     });
     progressive = attachProgressive(video, {
-      openRun: async (start) => ({ body: remux.run(start, audio), offset: 0 }),
-      mime,
+      openRun: async (start) => ({ body: prepared.run(start), offset: 0 }),
+      mime: prepared.mime,
       durationSeconds: remux.durationSeconds,
       startAt: options.startAt ?? 0,
       onError: () => onNotice(stalled),

@@ -45,14 +45,29 @@ const fixture = (
   saved,
 });
 
-// Shown from here, far enough in that reaching it needs a seek past the buffer.
+// Shown or heard from here, far enough in that reaching it needs a seek past the buffer.
 const cueSeconds = 200;
+const toneSeconds = 200;
 
 const fixtures = {
   mkv: fixture("long.mkv", { durationSeconds: longSeconds }),
   mp4: fixture("short.mp4", { durationSeconds: 4 }),
   hevc: fixture("hevc.mkv", { durationSeconds: 4, videoCodec: "hevc" }),
-  ac3: fixture("ac3.mkv", { durationSeconds: 4, audioCodec: "ac3" }),
+  // Silent until the tone, so its onset shows where audio sits against video.
+  ac3: fixture("ac3.mkv", {
+    durationSeconds: longSeconds,
+    pattern: "color",
+    audioCodec: "ac3",
+    audioChannels: 6,
+    toneFrom: toneSeconds,
+  }),
+  dts: fixture("dts.mkv", {
+    durationSeconds: 4,
+    audioCodec: "dts",
+    audioChannels: 6,
+    toneFrom: 0,
+  }),
+  truehd: fixture("truehd.mkv", { durationSeconds: 4, audioCodec: "truehd" }),
   // Black frames, so drawn subtitles are the only bright pixels. The SubRip
   // track is Dutch and forced, the ASS track English.
   early: fixture("early.mkv", {
@@ -93,6 +108,33 @@ async function openDownload(page: Page, base: string, entry: Fixture) {
       ?.click();
   })()`);
   await page.waitFor(`!${video}.paused && ${video}.currentTime > 0.5`, 30_000);
+}
+
+/**
+ * Listens to the playing video's audio; `window.heardAt` becomes the
+ * video's position when sound first plays, null until then.
+ */
+async function listen(page: Page) {
+  await page.eval(`(async () => {
+    window.heardAt = null;
+    const media = ${video};
+    const stream = media.captureStream();
+    while (stream.getAudioTracks().length === 0)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    const context = new AudioContext();
+    await context.resume();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 512;
+    context.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    const sample = () => {
+      analyser.getFloatTimeDomainData(samples);
+      const loudest = samples.reduce((peak, value) => Math.max(peak, Math.abs(value)), 0);
+      if (loudest > 0.1) window.heardAt = media.currentTime;
+      else setTimeout(sample, 5);
+    };
+    sample();
+  })()`);
 }
 
 const noticeText = `document.querySelector('[role="alert"]')?.innerText ?? ''`;
@@ -343,13 +385,36 @@ describe.skipIf(browser === undefined)("offline playback", () => {
     );
   }, 60_000);
 
-  test("a download whose only audio the browser can't play says so", async () => {
+  test("an AC-3-only download plays with sound, in sync after a seek past the buffer", async () => {
+    await openDownload(page, base, fixtures.ac3);
+    await listen(page);
+    await page.eval(`${video}.currentTime = ${toneSeconds - 1.5}`);
+    await page.waitFor("window.heardAt !== null", 30_000);
+    // The tone starts with the video's second 200, not seconds off. Native
+    // AAC measures 0.12 s early here too: the listener hears ahead of
+    // currentTime.
+    expect(await page.eval<number>("window.heardAt")).toBeGreaterThan(
+      toneSeconds - 0.3,
+    );
+    expect(await page.eval<number>("window.heardAt")).toBeLessThan(
+      toneSeconds + 0.3,
+    );
+  }, 60_000);
+
+  test("a DTS-only download plays with sound", async () => {
+    await openDownload(page, base, fixtures.dts);
+    await listen(page);
+    await page.waitFor("window.heardAt !== null", 30_000);
+    expect(await page.eval<string>(noticeText)).toBe("");
+  }, 60_000);
+
+  test("a TrueHD-only download asks for a server copy", async () => {
     await page.goto(
-      `${base}/play/${fixtures.ac3.itemId}?version=${fixtures.ac3.versionId}&offline`,
+      `${base}/play/${fixtures.truehd.itemId}?version=${fixtures.truehd.versionId}&offline`,
     );
     await page.waitFor(noticeText, 30_000);
     expect(await page.eval<string>(noticeText)).toContain(
-      "Needs audio conversion.",
+      "Needs a server copy.",
     );
   }, 60_000);
 

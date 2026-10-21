@@ -1,6 +1,10 @@
 import {
   ALL_FORMATS,
+  type AudioSample,
+  AudioSampleSink,
+  AudioSampleSource,
   BlobSource,
+  canEncodeAudio,
   EncodedAudioPacketSource,
   type EncodedPacket,
   EncodedPacketSink,
@@ -11,26 +15,37 @@ import {
   Mp4OutputFormat,
   NullTarget,
   Output,
+  QUALITY_HIGH,
 } from "mediabunny";
+import { browserDecodes, type Conversion, pickConversion } from "./playable.ts";
 
-/** A downloaded File opened for remuxing to fragmented MP4. */
-export type Remux = {
-  durationSeconds: number;
-  /** The MSE MIME of a run playing the audio track at `audio` among the File's audio tracks. */
-  mime(audio: number | null): Promise<string>;
+/** Runs of one video and audio choice: their MSE MIME, and a run from any second. */
+export type Prepared = {
+  mime: string;
   /**
    * Remuxes from the last keyframe at or before `start` to the end, keeping
    * the source's timestamps. The stream makes one fragment per pull, so
    * nothing is read ahead of the reader; cancelling it stops the remux.
    */
-  run(start: number, audio: number | null): ReadableStream<Uint8Array>;
+  run(start: number): ReadableStream<Uint8Array>;
+};
+
+/** A downloaded File opened for remuxing to fragmented MP4. */
+export type Remux = {
+  durationSeconds: number;
+  /**
+   * Readies runs with the audio track at `audio` among the File's audio
+   * tracks, or none for null. `convert` decodes it in software and encodes
+   * AAC or Opus while playing, for audio the browser can't play.
+   */
+  prepare(audio: number | null, convert: boolean): Promise<Prepared>;
   /** Releases the File. */
   dispose(): void;
 };
 
 /**
- * One track's packets into the output: `peek` reads the next timestamp
- * without consuming it, `write` adds that packet.
+ * One track into the output: `peek` reads the next timestamp without
+ * consuming it, `write` adds that packet or sample.
  */
 type Feed = {
   peek(): Promise<number | null>;
@@ -38,36 +53,61 @@ type Feed = {
   stop(): Promise<void>;
 };
 
-/** Feeds `sink`'s packets from `first` on; `add` is told which packet is the first. */
-function packetFeed(
-  sink: EncodedPacketSink,
-  first: Promise<EncodedPacket | null>,
-  add: (packet: EncodedPacket, first: boolean) => Promise<void>,
+/** Feeds what `open` yields once it opens, as `add` takes it; `add` is told which is first. */
+function feed<T extends { timestamp: number }>(
+  open: () => Promise<AsyncGenerator<T, void> | null>,
+  add: (item: T, first: boolean) => Promise<void>,
 ): Feed {
-  let packets: AsyncGenerator<EncodedPacket, void> | undefined;
-  let next: IteratorResult<EncodedPacket, void> | undefined;
+  let items: AsyncGenerator<T, void> | null | undefined;
+  let next: IteratorResult<T, void> | undefined;
   let started = false;
   return {
     async peek() {
-      if (packets === undefined) {
-        const from = await first;
-        if (from === null) return null;
-        packets = sink.packets(from);
-      }
-      next ??= await packets.next();
+      items ??= await open();
+      if (items === null) return null;
+      next ??= await items.next();
       return next.done ? null : next.value.timestamp;
     },
     async write() {
       if (next === undefined || next.done) return;
-      const packet = next.value;
+      const item = next.value;
       next = undefined;
-      await add(packet, !started);
+      await add(item, !started);
       started = true;
     },
     async stop() {
-      await packets?.return();
+      await items?.return();
     },
   };
+}
+
+/**
+ * Readies software decoding of `track` and picks what to encode it as.
+ * Without a native AAC encoder, Mediabunny's WebAssembly one stands in.
+ */
+async function prepareConversion(track: InputAudioTrack): Promise<Conversion> {
+  if (!(await track.canDecode())) {
+    const codec = await track.getCodec();
+    if (codec === "ac3" || codec === "eac3")
+      (await import("@mediabunny/ac3")).registerAc3Decoder();
+    else if (codec === "dts")
+      (await import("@mediabunny/dts")).registerDtsDecoder();
+    if (!(await track.canDecode()))
+      throw new Error("This browser can't decode the audio.");
+  }
+  if (!(await canEncodeAudio("aac")))
+    (await import("@mediabunny/aac-encoder")).registerAacEncoder();
+  const conversion = await pickConversion(
+    {
+      numberOfChannels: await track.getNumberOfChannels(),
+      sampleRate: await track.getSampleRate(),
+    },
+    browserDecodes,
+    canEncodeAudio,
+  );
+  if (conversion === null)
+    throw new Error("This browser can't encode audio to play.");
+  return conversion;
 }
 
 /** Opens `file` with its own index (Matroska cues, MP4 sample tables) for remuxing. */
@@ -81,23 +121,24 @@ export async function openRemux(file: Blob): Promise<Remux> {
     if (video === null) throw new Error("The download has no video track.");
     const audioTracks = await input.getAudioTracks();
     const durationSeconds = await input.computeDuration();
-    const audioAt = (audio: number | null) => {
-      if (audio === null) return null;
-      const track = audioTracks[audio];
-      if (track === undefined) throw new Error("No such audio track.");
-      return track;
-    };
     return {
       durationSeconds,
-      async mime(audio) {
-        const track = audioAt(audio);
+      async prepare(position, convert) {
+        const audio = position === null ? null : audioTracks[position];
+        if (audio === undefined) throw new Error("No such audio track.");
+        const conversion =
+          audio !== null && convert ? await prepareConversion(audio) : null;
         const codecs = [
           await video.getCodecParameterString(),
-          track === null ? null : await track.getCodecParameterString(),
+          audio === null
+            ? null
+            : (conversion?.type ?? (await audio.getCodecParameterString())),
         ].filter((codec) => codec !== null);
-        return `video/mp4; codecs="${codecs.join(",")}"`;
+        return {
+          mime: `video/mp4; codecs="${codecs.join(",")}"`,
+          run: (start) => remuxRun(video, audio, conversion, start),
+        };
       },
-      run: (start, audio) => remuxRun(video, audioAt(audio), start),
       dispose: () => input.dispose(),
     };
   } catch (error) {
@@ -109,6 +150,7 @@ export async function openRemux(file: Blob): Promise<Remux> {
 function remuxRun(
   video: InputVideoTrack,
   audio: InputAudioTrack | null,
+  conversion: Conversion | null,
   start: number,
 ): ReadableStream<Uint8Array> {
   const chunks: Uint8Array[] = [];
@@ -141,45 +183,82 @@ function remuxRun(
           packet ?? videoSink.getFirstKeyPacket({ verifyKeyPackets: true }),
       );
     feeds.push(
-      packetFeed(videoSink, key, async (packet, first) =>
-        videoSource.add(
-          packet,
-          first
-            ? { decoderConfig: (await video.getDecoderConfig()) ?? undefined }
-            : undefined,
-        ),
+      feed(
+        async () => {
+          const from = await key;
+          return from === null ? null : videoSink.packets(from);
+        },
+        async (packet: EncodedPacket, first) =>
+          videoSource.add(
+            packet,
+            first
+              ? { decoderConfig: (await video.getDecoderConfig()) ?? undefined }
+              : undefined,
+          ),
       ),
     );
-    if (audio !== null) {
+    if (audio !== null && conversion !== null) {
+      const audioSource = new AudioSampleSource({
+        codec: conversion.codec,
+        bitrate: QUALITY_HIGH,
+        transform: {
+          numberOfChannels: conversion.numberOfChannels,
+          sampleRate: conversion.sampleRate,
+        },
+      });
+      output.addAudioTrack(audioSource);
+      const sink = new AudioSampleSink(audio);
+      // Audio starts at the keyframe, so the two stay in sync.
+      feeds.push(
+        feed(
+          async () => {
+            const from = await key;
+            return from === null ? null : sink.samples(from.timestamp);
+          },
+          async (sample: AudioSample) => {
+            try {
+              await audioSource.add(sample);
+            } finally {
+              sample.close();
+            }
+          },
+        ),
+      );
+    } else if (audio !== null) {
       const audioCodec = await audio.getCodec();
       if (audioCodec === null) throw new Error("Unknown audio codec.");
       const audioSource = new EncodedAudioPacketSource(audioCodec);
       output.addAudioTrack(audioSource);
-      const audioSink = new EncodedPacketSink(audio);
-      // Audio starts at the keyframe, so the two stay in sync.
-      const from = key.then(async (packet) =>
-        packet === null
-          ? null
-          : ((await audioSink.getPacket(packet.timestamp)) ??
-            (await audioSink.getFirstPacket())),
-      );
+      const sink = new EncodedPacketSink(audio);
       feeds.push(
-        packetFeed(audioSink, from, async (packet, first) =>
-          audioSource.add(
-            packet,
-            first
-              ? { decoderConfig: (await audio.getDecoderConfig()) ?? undefined }
-              : undefined,
-          ),
+        feed(
+          async () => {
+            const from = await key;
+            if (from === null) return null;
+            const first =
+              (await sink.getPacket(from.timestamp)) ??
+              (await sink.getFirstPacket());
+            return first === null ? null : sink.packets(first);
+          },
+          async (packet: EncodedPacket, first) =>
+            audioSource.add(
+              packet,
+              first
+                ? {
+                    decoderConfig:
+                      (await audio.getDecoderConfig()) ?? undefined,
+                  }
+                : undefined,
+            ),
         ),
       );
     }
     await output.start();
   }
 
-  /** Writes the earliest pending packet, or finalizes once every feed ran dry. */
+  /** Writes the earliest pending packet or sample, or finalizes once every feed ran dry. */
   async function step() {
-    const times = await Promise.all(feeds.map((feed) => feed.peek()));
+    const times = await Promise.all(feeds.map((entry) => entry.peek()));
     let earliest: number | undefined;
     for (const [index, time] of times.entries()) {
       if (time === null) continue;
@@ -204,7 +283,7 @@ function remuxRun(
         else controller.enqueue(chunk);
       },
       async cancel() {
-        await Promise.all(feeds.map((feed) => feed.stop()));
+        await Promise.all(feeds.map((entry) => entry.stop()));
         if (!finished) await output.cancel();
       },
     },

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DownloadStream } from "../downloads/index.ts";
-import { offlinePlan } from "./playable.ts";
+import { offlinePlan, pickConversion } from "./playable.ts";
 
 const stream = (
   index: number,
@@ -27,27 +27,26 @@ const chrome = (mime: string) =>
   ["avc1.640028", "av01.0.08M.08", "mp4a.40.2", "opus", "flac", "mp4a.6B"].some(
     (type) => mime.includes(`"${type}"`),
   );
-
 describe("offline plan", () => {
   test.each([
     {
       why: "H.264 with AAC plays as is",
       streams: [stream(0, "video", "h264", "high"), stream(1, "audio", "aac")],
-      expected: { audioStreamIndex: 1 },
+      expected: { audioStreamIndex: 1, convert: false },
     },
     {
-      why: "the first audio Stream that plays wins over an earlier one that doesn't",
+      why: "the first audio Stream that plays wins over an earlier one to convert",
       streams: [
         stream(0, "video", "h264", "high"),
         stream(1, "audio", "ac3"),
         stream(2, "audio", "aac"),
       ],
-      expected: { audioStreamIndex: 2 },
+      expected: { audioStreamIndex: 2, convert: false },
     },
     {
       why: "no audio plays the video alone",
       streams: [stream(0, "video", "av1", "main")],
-      expected: { audioStreamIndex: null },
+      expected: { audioStreamIndex: null, convert: false },
     },
     {
       why: "a codec the browser lacks is named",
@@ -58,9 +57,9 @@ describe("offline plan", () => {
       expected: { reason: "This browser can't play HEVC" },
     },
     {
-      why: "Dolby audio alone needs converting",
+      why: "Dolby audio alone is converted",
       streams: [stream(0, "video", "h264", "high"), stream(1, "audio", "eac3")],
-      expected: { reason: "Needs audio conversion" },
+      expected: { audioStreamIndex: 1, convert: true },
     },
     {
       why: "TrueHD alone has no decoder in any browser",
@@ -79,16 +78,60 @@ describe("offline plan", () => {
     expect(offlinePlan(streams, chrome)).toEqual(expected);
   });
 
-  test("an asked audio Stream plays when it can and is refused when it can't", () => {
+  test("an asked audio Stream plays natively or converted", () => {
     const streams = [
       stream(0, "video", "h264", "high"),
       stream(1, "audio", "aac"),
       stream(2, "audio", "opus"),
       stream(3, "audio", "dts"),
     ];
-    expect(offlinePlan(streams, chrome, 2)).toEqual({ audioStreamIndex: 2 });
-    expect(offlinePlan(streams, chrome, 3)).toEqual({
-      reason: "Needs audio conversion",
+    expect(offlinePlan(streams, chrome, 2)).toEqual({
+      audioStreamIndex: 2,
+      convert: false,
     });
+    expect(offlinePlan(streams, chrome, 3)).toEqual({
+      audioStreamIndex: 3,
+      convert: true,
+    });
+  });
+});
+
+describe("audio conversion", () => {
+  const decodesBoth = () => true;
+  test.each([
+    {
+      why: "5.1 stays 5.1 where an AAC encoder takes six channels",
+      encodes: async () => true,
+      expected: { codec: "aac", numberOfChannels: 6, sampleRate: 44_100 },
+    },
+    {
+      why: "5.1 stays 5.1 in Opus, at 48 kHz, where only Opus takes six channels",
+      encodes: async (codec: string) => codec === "opus",
+      expected: { codec: "opus", numberOfChannels: 6, sampleRate: 48_000 },
+    },
+    {
+      why: "5.1 downmixes to stereo where no encoder takes six channels",
+      encodes: async (_: string, options: { numberOfChannels: number }) =>
+        options.numberOfChannels === 2,
+      expected: { codec: "aac", numberOfChannels: 2, sampleRate: 44_100 },
+    },
+  ])("$why", async ({ encodes, expected }) => {
+    expect(
+      await pickConversion(
+        { numberOfChannels: 6, sampleRate: 44_100 },
+        decodesBoth,
+        encodes,
+      ),
+    ).toMatchObject(expected);
+  });
+
+  test("nothing fits where the browser plays neither AAC nor Opus", async () => {
+    expect(
+      await pickConversion(
+        { numberOfChannels: 2, sampleRate: 48_000 },
+        () => false,
+        async () => true,
+      ),
+    ).toBeNull();
   });
 });

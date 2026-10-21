@@ -12,6 +12,9 @@
   "dependencies": {
     "@internationalized/date": "3.12.4",
     "@lucide/svelte": "1.48.0",
+    "@mediabunny/aac-encoder": "1.62.0",
+    "@mediabunny/ac3": "1.62.0",
+    "@mediabunny/dts": "1.62.0",
     "@orpc/client": "1.15.0",
     "bits-ui": "2.19.3",
     "clsx": "2.1.1",
