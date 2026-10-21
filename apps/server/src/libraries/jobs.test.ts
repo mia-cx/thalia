@@ -1297,30 +1297,59 @@ describe.skipIf(!databaseUrl)("keyframe-index jobs", () => {
       });
     }));
 
-  test("a slow read under a short lease completes through the worker", () =>
+  test("a blocked index read renews its lease through the worker", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
       await withTempRoot(async (root) => {
-        const { job } = await scannedMovie(db, root);
+        await scannedMovie(db, root);
+        const [queued] = await listJobs(db, { type: "keyframe-index" });
+        if (queued === undefined) throw new Error("Expected an index job.");
+        const reading = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const errors: unknown[] = [];
         const registry = createJobRegistry();
         registry.register("keyframe-index", (payload) =>
           runKeyframeIndexJob(db, payload, async (absolute) => {
-            await Bun.sleep(1_000);
+            reading.resolve();
+            await release.promise;
             return readKeyframeIndex(absolute);
           }),
         );
         const worker = await startJobWorker(db, registry, {
           pollIntervalMs: 50,
-          queueOptions: { leaseMs: 300, renewMs: 100 },
-          onError: () => {},
+          queueOptions: { renewMs: 20 },
+          onError: (error) => errors.push(error),
         });
         try {
-          const queued = await createJobQueue(db).enqueue(job);
+          await reading.promise;
+          const running = await waitForJobState(db, queued.id, "running");
+          // Observe a renewal while the real read is blocked. A 300 ms lease
+          // and a one-second sleep tested CI scheduling as much as renewal.
+          const deadline = Date.now() + 5_000;
+          let renewed = running;
+          while (
+            renewed.leaseExpiresAt.getTime() <=
+              running.leaseExpiresAt.getTime() &&
+            Date.now() < deadline
+          ) {
+            await Bun.sleep(10);
+            renewed =
+              (await listJobs(db, { type: "keyframe-index" })).find(
+                (job) => job.id === queued.id,
+              ) ?? renewed;
+          }
+          expect(renewed.leaseExpiresAt.getTime()).toBeGreaterThan(
+            running.leaseExpiresAt.getTime(),
+          );
+          release.resolve();
           const done = await waitForJobState(db, queued.id, "completed");
+          expect(done.attempts).toBe(1);
           expect(done.error).toBeNull();
           const [after] = await db.select().from(versions);
           expect(after?.lazyIndexPending).toBe(false);
+          expect(errors).toEqual([]);
         } finally {
+          release.resolve();
           await worker.stop();
         }
       });
