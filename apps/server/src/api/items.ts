@@ -34,6 +34,8 @@ import {
   versions,
 } from "../db/schema/index.ts";
 import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
+import { subtitleUrl } from "../subtitles/http.ts";
+import { listSubtitles } from "../subtitles/store.ts";
 import { ApiError, fromHost } from "./errors.ts";
 import {
   after,
@@ -432,11 +434,24 @@ export function getItemDetail(db: Database, caller: Caller, id: string) {
     const enriched = yield* fromHost(() =>
       detailChildren(db, caller.user.id, permissions, children),
     );
+    // Stored tracks are a side list: unreadable subtitle folders leave it empty.
+    const storedSubtitles = yield* fromHost(() =>
+      itemVersions.length === 0
+        ? Promise.resolve([])
+        : listSubtitles(db, id).catch(() => []),
+    );
     return {
       ...card,
       ...detail,
       credits: itemCredits,
       canDownload,
+      subtitles: storedSubtitles.map((track) => ({
+        language: track.language,
+        format: track.format,
+        forced: track.forced === true,
+        hearingImpaired: track.hearingImpaired === true,
+        url: subtitleUrl(id, track),
+      })),
       // JSON has no bigint; a byte count stays exact below 2^53.
       versions: itemVersions.map(({ itemId: _itemId, ...version }) => ({
         ...version,
