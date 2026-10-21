@@ -1,10 +1,19 @@
+import { get } from "svelte/store";
+import type { ItemDetail } from "../browse.ts";
 import { downloadFiles } from "./file-client.ts";
+import { downloadedDetail } from "./library.ts";
 import {
   createDownloads,
   type DownloadInput,
   type Downloads,
+  downloadsSupported,
 } from "./store.ts";
 
+export {
+  type DownloadedItem,
+  type DownloadedShow,
+  groupDownloads,
+} from "./library.ts";
 export {
   type DownloadInput,
   type DownloadRecord,
@@ -37,6 +46,15 @@ function downloads_(): Downloads {
           : new BroadcastChannel("thalia-downloads"),
     });
   return instance;
+}
+
+/** The saved detail of this browser's finished download of `itemId`, for its page to open offline. */
+export async function offlineDetail(
+  itemId: string,
+): Promise<ItemDetail | undefined> {
+  if (!downloadsSupported()) return undefined;
+  await downloads.restore();
+  return downloadedDetail(get(downloads).records, itemId);
 }
 
 /** The browser's download queue. */

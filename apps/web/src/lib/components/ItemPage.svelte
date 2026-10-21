@@ -1,8 +1,9 @@
 <script lang="ts">
 import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
 import PlayIcon from "@lucide/svelte/icons/play";
+import WifiOffIcon from "@lucide/svelte/icons/wifi-off";
 import { page } from "$app/state";
-import { client } from "$lib/api.ts";
+import { client, ServerUnreachable } from "$lib/api.ts";
 import {
   episodeCode,
   fallbackHue,
@@ -10,10 +11,12 @@ import {
   formatDuration,
   type ItemDetail,
   landscapeArtwork,
+  seasonLabel,
   upNextEpisode,
 } from "$lib/browse.ts";
 import AmbientBackdrop from "$lib/components/AmbientBackdrop.svelte";
 import AccessPanel from "$lib/components/admin/AccessPanel.svelte";
+import EmptyState from "$lib/components/admin/EmptyState.svelte";
 import CreditRow from "$lib/components/CreditRow.svelte";
 import DetailBar from "$lib/components/DetailBar.svelte";
 import EpisodeCard from "$lib/components/EpisodeCard.svelte";
@@ -27,11 +30,27 @@ import StoreRequest from "$lib/components/StoreRequest.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.ts";
 import { Skeleton } from "$lib/components/ui/skeleton/index.ts";
+import { offlineDetail } from "$lib/downloads/index.ts";
 import { resource } from "$lib/resource.svelte.ts";
 
 const { id }: { id: string } = $props();
 
-const item = resource(() => client.items.get({ id }));
+// Without the server, a downloaded Item opens from the details its download
+// saved; anything else says it needs the connection.
+let offline = $state(false);
+const item = resource(async () => {
+  try {
+    const detail = await client.items.get({ id });
+    offline = false;
+    return detail;
+  } catch (error) {
+    if (!(error instanceof ServerUnreachable)) throw error;
+    const saved = await offlineDetail(id);
+    if (saved === undefined) throw error;
+    offline = true;
+    return saved;
+  }
+});
 
 // A Show's Season details load once the Show arrives, for the up next pill
 // and the episode shelf. An Episode's parent Season loads for the More shelf.
@@ -59,9 +78,6 @@ let chosen = $state<string | undefined>(undefined);
 
 const count = (n: number, one: string, many: string) =>
   `${n} ${n === 1 ? one : many}`;
-
-const seasonLabel = (seasonNumber: number | null) =>
-  seasonNumber === 0 ? "Specials" : `Season ${seasonNumber}`;
 
 /** A Show's Seasons in order, Specials last. */
 const orderedSeasons = (detail: ItemDetail) =>
@@ -136,7 +152,16 @@ function creditsAside(detail: ItemDetail) {
   {hero}
 />
 
-{#if item.failure}
+{#if item.failure?.code === "UNREACHABLE"}
+  <div class="pt-5">
+    <EmptyState icon={WifiOffIcon} title="Not available offline">
+      <p class="text-subheadline text-label-secondary">
+        Thalia can't reach its server, so only downloads open.
+      </p>
+      <Button variant="secondary" href="/downloads">Go to Downloads</Button>
+    </EmptyState>
+  </div>
+{:else if item.failure}
   <div class="pt-5"><Failure failure={item.failure} /></div>
 {:else if item.data === undefined}
   <div class="bleed -mt-14" aria-hidden="true">
@@ -229,7 +254,7 @@ function creditsAside(detail: ItemDetail) {
         <FormatBadges versions={detail.versions} />
       </p>
       <div class="mt-2">
-        <ItemActions {detail} {episodes} reload={item.reload} />
+        <ItemActions {detail} {episodes} {offline} reload={item.reload} />
       </div>
     </Hero>
   </div>
@@ -370,13 +395,15 @@ function creditsAside(detail: ItemDetail) {
             </li>
           {/each}
         </ul>
-        <StoreRequest {detail} />
+        {#if !offline}
+          <StoreRequest {detail} />
+        {/if}
       </section>
     {/if}
 
     <CreditRow credits={detail.credits} />
 
-    {#if page.data.me?.admin}
+    {#if page.data.me?.admin && !offline}
       <div class="flex max-w-3xl flex-col gap-8">
         <AccessPanel
           object={{ type: "item", id: detail.id }}

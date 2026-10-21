@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { get } from "svelte/store";
 import { createDownloads, type DownloadFile } from "./store.ts";
+import { itemDetail } from "./testing.ts";
 
 // An in-memory OPFS stand-in at the FileSystemDirectoryHandle boundary:
 // writables stage bytes that swap into the file only on close().
@@ -253,6 +254,7 @@ const input = {
   bytes: bytes.length,
   container: "mp4",
   streams: [],
+  detail: null,
 };
 
 function makeStore(
@@ -554,6 +556,57 @@ describe("downloads store", () => {
     expect(get(complete).storage?.downloads).toBe(0);
   });
 
+  test("a download keeps its artwork until no download draws it", async () => {
+    const root = new FakeDir();
+    const file = fakeFetch(bytes);
+    const artworkRequests: string[] = [];
+    const transport = (async (url: string, init?: RequestInit) => {
+      if (!url.startsWith("/api/artwork/")) return file.transport(url, init);
+      artworkRequests.push(url);
+      return new Response(`bytes of ${url.split("?")[0]}`);
+    }) as unknown as typeof fetch;
+    const { storage } = fakeStorage();
+    const store = makeStore(root, transport, storage);
+    const show = {
+      id: "show",
+      title: "Severance",
+      posterArtworkId: "show-poster",
+      backdropArtworkId: null,
+      logoArtworkId: null,
+    };
+    const first = {
+      ...input,
+      detail: itemDetail({ kind: "episode", show, thumbArtworkId: "thumb-1" }),
+    };
+    const second = {
+      ...input,
+      versionId: "01900000-0000-7000-8000-000000000003",
+      detail: itemDetail({ kind: "episode", show, thumbArtworkId: "thumb-2" }),
+    };
+    await store.start(first);
+    await store.start(second);
+    await waitFor(() =>
+      get(store).records.every((record) => record.state === "complete"),
+    );
+    const saved = () =>
+      [
+        ...(root.dirs.get("downloads")?.dirs.get("artwork")?.files.keys() ??
+          []),
+      ].sort();
+    expect(saved()).toEqual(["show-poster", "thumb-1", "thumb-2"]);
+    // The shared Show poster is fetched once.
+    expect(artworkRequests).toEqual([
+      "/api/artwork/show-poster?width=480",
+      "/api/artwork/thumb-1?width=1920",
+      "/api/artwork/thumb-2?width=1920",
+    ]);
+
+    await store.remove(first.versionId);
+    expect(saved()).toEqual(["show-poster", "thumb-2"]);
+    await store.remove(second.versionId);
+    expect(saved()).toEqual([]);
+  });
+
   test("restore picks a mid-download record up as paused and resume finishes it", async () => {
     const root = new FakeDir();
     const gate = deferred();
@@ -627,6 +680,20 @@ describe("downloads store", () => {
     expect([...(root.dirs.get("downloads")?.files.keys() ?? [])]).toEqual([
       "index.json",
     ]);
+  });
+
+  test("restore finishes a record whose whole file landed before its index entry did", async () => {
+    const root = new FakeDir();
+    await seedIndex(
+      root,
+      [{ ...input, written: 0, state: "downloading", etag: null }],
+      bytes,
+    );
+    const { transport, calls } = fakeFetch(bytes);
+    const store = makeStore(root, transport, fakeStorage().storage);
+    await store.restore();
+    expect(get(store).records[0]?.state).toBe("complete");
+    expect(calls).toEqual([]);
   });
 
   test("a refused persist still completes and is asked once across starts", async () => {

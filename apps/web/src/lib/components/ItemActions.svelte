@@ -35,12 +35,15 @@ const {
   detail,
   reload,
   episodes = detail.children,
+  offline = false,
 }: {
   detail: ItemDetail;
   /** Reloads the page's detail resource, after a refresh job ends. */
   reload: () => void;
   /** The Episodes the up next pill chooses from; defaults to the Item's children. */
   episodes?: readonly DetailChild[];
+  /** The detail came from a download without the server: only Play and the download's state remain. */
+  offline?: boolean;
 } = $props();
 
 const admin = $derived(page.data.me?.admin === true);
@@ -174,6 +177,7 @@ async function downloadItem() {
       container: downloadVersion.container,
       streams: [...downloadVersion.streams],
       subtitles: detail.subtitles,
+      detail: $state.snapshot(detail),
     });
   } catch {
     toast.error("Couldn't start the download");
@@ -250,82 +254,84 @@ onDestroy(() => refreshAbort?.abort());
     </Button>
   {/if}
 
-  <Tooltip.Root>
-    <Tooltip.Trigger>
-      {#snippet child({ props })}
-        <Button
-          {...props}
-          variant="glass"
-          size="icon-lg"
-          class="size-11"
-          onclick={toggleFavourite}
-          aria-label="Favourite"
-          aria-pressed={favoured}
-        >
-          <HeartIcon fill={favoured ? "currentColor" : "none"} />
-        </Button>
-      {/snippet}
-    </Tooltip.Trigger>
-    <Tooltip.Content
-      >{favoured ? "Remove from favourites" : "Add to favourites"}</Tooltip.Content
-    >
-  </Tooltip.Root>
-
-  <Popover.Root bind:open={ratingOpen}>
-    <Popover.Trigger>
-      {#snippet child({ props })}
-        <Button
-          {...props}
-          variant="glass"
-          size="icon-lg"
-          class="size-11 {rated ? 'text-tint' : ''}"
-          aria-label={rated ? `Rated ${stars} of 5` : "Rate"}
-        >
-          <StarIcon fill={rated ? "currentColor" : "none"} />
-        </Button>
-      {/snippet}
-    </Popover.Trigger>
-    <Popover.Content class="w-auto p-3">
-      <div
-        role="radiogroup"
-        aria-label="Rating"
-        tabindex="-1"
-        class="flex items-center gap-1"
-        onkeydown={moveStars}
-      >
-        {#each [1, 2, 3, 4, 5] as n (n)}
-          <button
-            type="button"
-            role="radio"
-            aria-checked={stars === n}
-            aria-label="{n} {n === 1 ? 'star' : 'stars'}"
-            data-star={n}
-            tabindex={n === tabStop ? 0 : -1}
-            onfocus={() => (focusStar = n)}
-            class="rounded-xs p-0.5 text-label-secondary outline-none hover:text-label focus-visible:text-label"
-            onmouseenter={() => (hovered = n)}
-            onmouseleave={() => (hovered = 0)}
-            onclick={() => pick(n)}
-          >
-            <StarIcon
-              class="size-6"
-              fill={n <= preview ? "currentColor" : "none"}
-            />
-          </button>
-        {/each}
-        {#if rated}
+  {#if !offline}
+    <Tooltip.Root>
+      <Tooltip.Trigger>
+        {#snippet child({ props })}
           <Button
-            variant="ghost"
-            size="sm"
-            class="ms-2"
-            onclick={clearRating}
+            {...props}
+            variant="glass"
+            size="icon-lg"
+            class="size-11"
+            onclick={toggleFavourite}
+            aria-label="Favourite"
+            aria-pressed={favoured}
           >
-            Clear rating
+            <HeartIcon fill={favoured ? "currentColor" : "none"} />
           </Button>
-        {/if}
-      </div>
-    </Popover.Content>
-  </Popover.Root>
+        {/snippet}
+      </Tooltip.Trigger>
+      <Tooltip.Content
+        >{favoured ? "Remove from favourites" : "Add to favourites"}</Tooltip.Content
+      >
+    </Tooltip.Root>
+
+    <Popover.Root bind:open={ratingOpen}>
+      <Popover.Trigger>
+        {#snippet child({ props })}
+          <Button
+            {...props}
+            variant="glass"
+            size="icon-lg"
+            class="size-11 {rated ? 'text-tint' : ''}"
+            aria-label={rated ? `Rated ${stars} of 5` : "Rate"}
+          >
+            <StarIcon fill={rated ? "currentColor" : "none"} />
+          </Button>
+        {/snippet}
+      </Popover.Trigger>
+      <Popover.Content class="w-auto p-3">
+        <div
+          role="radiogroup"
+          aria-label="Rating"
+          tabindex="-1"
+          class="flex items-center gap-1"
+          onkeydown={moveStars}
+        >
+          {#each [1, 2, 3, 4, 5] as n (n)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={stars === n}
+              aria-label="{n} {n === 1 ? 'star' : 'stars'}"
+              data-star={n}
+              tabindex={n === tabStop ? 0 : -1}
+              onfocus={() => (focusStar = n)}
+              class="rounded-xs p-0.5 text-label-secondary outline-none hover:text-label focus-visible:text-label"
+              onmouseenter={() => (hovered = n)}
+              onmouseleave={() => (hovered = 0)}
+              onclick={() => pick(n)}
+            >
+              <StarIcon
+                class="size-6"
+                fill={n <= preview ? "currentColor" : "none"}
+              />
+            </button>
+          {/each}
+          {#if rated}
+            <Button
+              variant="ghost"
+              size="sm"
+              class="ms-2"
+              onclick={clearRating}
+            >
+              Clear rating
+            </Button>
+          {/if}
+        </div>
+      </Popover.Content>
+    </Popover.Root>
+  {/if}
 
   {#if downloadable}
     {@const dl = downloadLabel(downloadRecord)}
@@ -365,7 +371,7 @@ onDestroy(() => refreshAbort?.abort());
     </Tooltip.Root>
   {/if}
 
-  {#if admin}
+  {#if admin && !offline}
     <DropdownMenu.Root>
       <DropdownMenu.Trigger>
         {#snippet child({ props })}

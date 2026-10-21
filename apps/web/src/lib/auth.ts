@@ -1,5 +1,6 @@
 import { reachServer } from "./api.ts";
 import { AuthRouteError, type FailureCode } from "./errors.ts";
+import { forgetSession } from "./session.ts";
 
 /** The extra arguments every auth wrapper accepts for tests. */
 export type AuthOptions = {
@@ -133,9 +134,15 @@ export function signIn(
   }>("/api/auth/login", { ...input, ...deviceInfo() }, options);
 }
 
-/** Revokes the current session and clears its cookie. */
-export function signOut(options: AuthOptions = {}) {
-  return postJson<{ ok: true }>("/api/auth/logout", undefined, options);
+/** Revokes the current session, clears its cookie and forgets the caller kept for offline use. */
+export async function signOut(options: AuthOptions = {}) {
+  const result = await postJson<{ ok: true }>(
+    "/api/auth/logout",
+    undefined,
+    options,
+  );
+  forgetSession();
+  return result;
 }
 
 /** The screen-ready sentence explaining the username rules. */
