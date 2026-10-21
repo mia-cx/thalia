@@ -91,7 +91,12 @@ export class Page {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
-        if (await this.eval<boolean>(`Boolean(${expression})`)) return;
+        if (
+          await this.eval<boolean>(
+            `Promise.resolve(${expression}).then(Boolean)`,
+          )
+        )
+          return;
       } catch {}
       await Bun.sleep(150);
     }

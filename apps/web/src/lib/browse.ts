@@ -127,6 +127,11 @@ export function episodeCode(card: BrowseCard): string | null {
   return `S${card.seasonNumber}, E${card.episodeNumber}${end}`;
 }
 
+/** A Season's name from its number: `Season 2`, or `Specials` for Season 0. */
+export function seasonLabel(seasonNumber: number | null): string {
+  return seasonNumber === 0 ? "Specials" : `Season ${seasonNumber}`;
+}
+
 /** A card's full name on one line: the Show and code before an Episode, the year after a Movie. */
 export function cardLabel(card: ItemCard | BrowseCard): string {
   if ("show" in card) {

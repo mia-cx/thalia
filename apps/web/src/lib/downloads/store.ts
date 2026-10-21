@@ -1,5 +1,6 @@
 import { type Readable, writable } from "svelte/store";
 import type { ItemDetail } from "../browse.ts";
+import { artworkFolder, offlineArtwork } from "./artwork.ts";
 
 export type DownloadState =
   | "queued"
@@ -21,6 +22,8 @@ export type DownloadRecord = {
   etag: string | null;
   /** The Item's stored subtitle files saved next to the media, each under `name`. */
   subtitles: DownloadSubtitle[];
+  /** The Item as its page showed it at download time, which offline pages draw from; null on older records. */
+  detail: ItemDetail | null;
 };
 /** A stored subtitle file of the Item, as the item detail lists it. */
 export type ItemSubtitle = ItemDetail["subtitles"][number];
@@ -195,6 +198,10 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           ...entry,
           etag: typeof entry.etag === "string" ? entry.etag : null,
           subtitles: Array.isArray(entry.subtitles) ? entry.subtitles : [],
+          detail:
+            typeof entry.detail === "object" && entry.detail !== null
+              ? entry.detail
+              : null,
         }));
     } catch {
       return [];
@@ -234,21 +241,78 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
   }
 
   /**
-   * Applies `change` to the stored index under the lock, writes it back, then
-   * announces the change so other tabs resync.
+   * Applies `change` to the stored index under the lock, writes it back, runs
+   * `after` on the result while still holding the lock, then announces the
+   * change so other tabs resync.
    */
   function updateIndex(
     change: (stored: DownloadRecord[]) => DownloadRecord[],
+    after?: (next: DownloadRecord[]) => Promise<void>,
   ): Promise<void> {
     indexChain = indexChain.then(() =>
       locked(indexLock, async () => {
         const next = change(await readIndex());
         await writeIndex(next);
+        await after?.(next);
         sync(next);
         deps.channel?.postMessage({ type: "changed" } satisfies ChannelMessage);
       }).catch(() => {}),
     );
     return indexChain;
+  }
+
+  /**
+   * Saves the artwork a record's offline pages draw, skipping what an earlier
+   * attempt or a sibling Episode already saved. Missing artwork never fails
+   * a download: its pages fall back to the title's colour.
+   */
+  async function saveArtwork(
+    record: DownloadRecord,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (record.detail === null) return;
+    const folder = await artworkFolder(await directory(), true);
+    for (const { id, url } of offlineArtwork(record.detail)) {
+      if (signal.aborted) return;
+      try {
+        await folder.getFileHandle(id);
+        continue;
+      } catch {}
+      try {
+        const response = await deps.fetch(url, {
+          signal,
+          credentials: "same-origin",
+        });
+        if (!response.ok) continue;
+        const bytes = await response.arrayBuffer();
+        // A writable lands its bytes only on close, so a cut-off save leaves no file.
+        const writable = await (
+          await folder.getFileHandle(id, { create: true })
+        ).createWritable();
+        await writable.write(bytes);
+        await writable.close();
+      } catch {}
+    }
+  }
+
+  /** Deletes a removed record's artwork that no remaining record draws. */
+  async function dropArtwork(
+    removed: DownloadRecord,
+    remaining: DownloadRecord[],
+  ): Promise<void> {
+    if (removed.detail === null) return;
+    const kept = new Set(
+      remaining.flatMap((record) =>
+        record.detail === null
+          ? []
+          : offlineArtwork(record.detail).map((art) => art.id),
+      ),
+    );
+    try {
+      const folder = await artworkFolder(await directory());
+      for (const { id } of offlineArtwork(removed.detail))
+        if (!kept.has(id)) await folder.removeEntry(id).catch(() => {});
+    } catch {}
   }
 
   async function refreshEstimate() {
@@ -318,8 +382,13 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           } catch {
             record.written = 0;
           }
+          // A page closed right after the last byte can leave the index a
+          // step behind: a whole file on disk is a finished download.
           if (record.state === "queued" || record.state === "downloading")
-            record.state = "paused";
+            record.state =
+              record.bytes > 0 && record.written === record.bytes
+                ? "complete"
+                : "paused";
           records.push({ ...record });
         }
         try {
@@ -467,6 +536,7 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           credentials: "same-origin",
         });
       try {
+        await saveArtwork(record, entry.controller.signal);
         offset = await file.size();
         flushed = offset;
         record.written = offset;
@@ -678,8 +748,13 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       } catch {}
     }
     notify();
-    await updateIndex((stored) =>
-      stored.filter((entry) => entry.versionId !== versionId),
+    // Under the index lock, so a sibling Episode starting in another tab
+    // either keeps the shared artwork or saves it again after.
+    await updateIndex(
+      (stored) => stored.filter((entry) => entry.versionId !== versionId),
+      async (remaining) => {
+        if (removed !== undefined) await dropArtwork(removed, remaining);
+      },
     );
     await refreshEstimate();
     notify();

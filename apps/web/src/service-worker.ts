@@ -4,8 +4,10 @@
 /// <reference lib="webworker" />
 
 // Caches the app shell so Thalia opens without its server. API calls and
-// media never pass through here: the worker answers only shell requests.
+// media never pass through here: the worker answers shell requests, and
+// artwork the server can't send from what downloads saved in OPFS.
 
+import { savedArtwork } from "$lib/downloads/artwork.ts";
 import { build, files, prerendered, version } from "$service-worker";
 
 const worker = self as unknown as ServiceWorkerGlobalScope;
@@ -61,11 +63,34 @@ async function asset(request: Request): Promise<Response> {
   return cached ?? fetch(request);
 }
 
+const artworkPath = "/api/artwork/";
+
+/** The server's artwork when it answers, else a download's saved copy at any width. */
+async function artwork(request: Request, id: string): Promise<Response> {
+  let response: Response | undefined;
+  try {
+    response = await fetch(request);
+    if (response.status < 500) return response;
+  } catch {
+    // Offline or refused: try the saved copy.
+  }
+  const file = await navigator.storage.getDirectory().then(
+    (root) => savedArtwork(root, id),
+    () => undefined,
+  );
+  if (file !== undefined) return new Response(file);
+  return response ?? Response.error();
+}
+
 worker.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== worker.location.origin) return;
+  if (url.pathname.startsWith(artworkPath)) {
+    event.respondWith(artwork(request, url.pathname.slice(artworkPath.length)));
+    return;
+  }
   if (serverPaths.some((prefix) => url.pathname.startsWith(prefix))) return;
   if (request.mode === "navigate") {
     event.respondWith(navigate(request));
