@@ -136,6 +136,11 @@ async function chooseSubtitles(page: Page, name: string) {
   await page.eval(`${video}.pause()`);
   await page.waitFor(`document.querySelector('[data-controls="shown"]')`);
   await click(page, find("button", `element.ariaLabel === "Settings"`));
+  // bits-ui remounts the menu's focus scope as its opening frame ends, which
+  // sends focus to the trigger and back; a key pressed before that goes astray.
+  await page.waitFor(
+    `document.activeElement?.closest("[role=menu]:not([data-starting-style])")`,
+  );
   await press(
     page,
     find("[role=menuitem]", `element.ariaLabel?.startsWith("Subtitles,")`),
