@@ -123,10 +123,14 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             }
             await page.goto(`${base}/downloads`);
             await page.waitFor(hasText("In disk"), 30_000);
-            expect(await page.eval(listing("disk"))).toEqual({
+            expect(
+              await page.eval<Record<string, number>>(listing("disk")),
+            ).toEqual({
               "Arrival (2016).mkv": size,
             });
-            expect(await page.eval(listing("downloads"))).toEqual({
+            expect(
+              await page.eval<Record<string, number>>(listing("downloads")),
+            ).toEqual({
               "index.json": expect.any(Number),
             });
 
@@ -147,8 +151,12 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await page.waitFor(byLabel("Move to browser storage"), 30_000);
             await page.eval(clickLabel("Move to browser storage"));
             await page.waitFor(byLabel("Move to folder"), 30_000);
-            expect(await page.eval(listing("disk"))).toEqual({});
-            expect(await page.eval(listing("downloads"))).toMatchObject({
+            expect(
+              await page.eval<Record<string, number>>(listing("disk")),
+            ).toEqual({});
+            expect(
+              await page.eval<Record<string, number>>(listing("downloads")),
+            ).toMatchObject({
               [versionId]: size,
             });
 
@@ -161,10 +169,10 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             });
             await page.send("Page.reload", {});
             // The usage row and the folder row render together.
-            await page.waitFor(hasText("available"), 30_000);
-            expect(
-              await page.eval<string>("document.body.innerText"),
-            ).not.toContain("Download folder");
+            await page.waitFor(
+              `${hasText("available")} && !${hasText("Download folder")}`,
+              30_000,
+            );
           } finally {
             await page.close();
             await server?.stop();
