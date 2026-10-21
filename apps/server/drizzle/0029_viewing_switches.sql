@@ -1,0 +1,1 @@
+ALTER TABLE "session_registry" ADD COLUMN "first_session_id" uuid;

@@ -2,6 +2,7 @@
 import ActivityIcon from "@lucide/svelte/icons/activity";
 import CirclePlayIcon from "@lucide/svelte/icons/circle-play";
 import GaugeIcon from "@lucide/svelte/icons/gauge";
+import HistoryIcon from "@lucide/svelte/icons/history";
 import LibraryIcon from "@lucide/svelte/icons/library";
 import PuzzleIcon from "@lucide/svelte/icons/puzzle";
 import SearchIcon from "@lucide/svelte/icons/search";
@@ -40,6 +41,7 @@ const icons = {
   settings: SettingsIcon,
   "user-round": UserRoundIcon,
   "circle-play": CirclePlayIcon,
+  history: HistoryIcon,
 } satisfies Record<AdminIcon, Component>;
 
 const current = $derived(currentSection(page.url));

@@ -36,6 +36,10 @@ const serverDefaults = {
   bitrateCapBps: null,
   allowCpu4k: false,
   idleWindow: defaultIdleWindow,
+  watchThresholds: {
+    movies: { unit: "minutes", value: 2 },
+    shows: { unit: "minutes", value: 2 },
+  } as const,
   artworkStore: describeArtworkStore(artworkStoreConfig()),
 };
 

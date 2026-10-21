@@ -23,6 +23,10 @@ import {
 } from "../metadata/artwork-backends.ts";
 import { metadataProviders } from "../metadata/providers.ts";
 import {
+  readWatchThresholds,
+  writeWatchThresholds,
+} from "../playback/history.ts";
+import {
   readPlaybackSettings,
   writePlaybackSettings,
 } from "../playback/settings.ts";
@@ -43,6 +47,7 @@ import {
   Session,
   UserAccess,
   UserAccount,
+  WatchThresholds,
 } from "./schema.ts";
 
 function instant(value: Date): string;
@@ -104,6 +109,7 @@ async function readServerSettings(db: Database, plugins: PluginRuntime) {
     ),
     ...(await readPlaybackSettings(db)),
     idleWindow: (await readStoreSettings(db)).idleWindow,
+    watchThresholds: await readWatchThresholds(db),
     artworkStore: describeArtworkStore(artworkStoreConfig()),
   };
 }
@@ -361,6 +367,7 @@ export const settingsProcedures = {
             ),
           ),
           idleWindow: Schema.optional(IdleWindow),
+          watchThresholds: Schema.optional(Schema.partial(WatchThresholds)),
         }),
       ),
     )
@@ -370,7 +377,13 @@ export const settingsProcedures = {
         fromHost(async () => {
           const { db } = context;
           const actorId = context.caller.user.id;
-          const { bitrateCapBps, allowCpu4k, idleWindow, ...auth } = input;
+          const {
+            bitrateCapBps,
+            allowCpu4k,
+            idleWindow,
+            watchThresholds,
+            ...auth
+          } = input;
           await writeAuthSettings(db, actorId, auth);
           if (bitrateCapBps !== undefined || allowCpu4k !== undefined)
             await writePlaybackSettings(db, actorId, {
@@ -379,6 +392,8 @@ export const settingsProcedures = {
             });
           if (idleWindow !== undefined)
             await setIdleWindow(db, actorId, idleWindow);
+          if (watchThresholds !== undefined)
+            await writeWatchThresholds(db, actorId, watchThresholds);
           return readServerSettings(db, context.plugins);
         }),
       ),

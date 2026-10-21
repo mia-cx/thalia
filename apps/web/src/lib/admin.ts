@@ -10,7 +10,8 @@ export type AdminIcon =
   | "puzzle"
   | "settings"
   | "user-round"
-  | "circle-play";
+  | "circle-play"
+  | "history";
 
 /** One admin section: sidebar row, phone list row and search target. */
 export type AdminSection = {
@@ -92,6 +93,8 @@ export const adminSectionGroups: readonly (readonly AdminSection[])[] = [
       keywords: [
         "proxies",
         "bitrate",
+        "watch history",
+        "threshold",
         "store window",
         "artwork",
         "provider keys",
@@ -119,6 +122,13 @@ export const personalSections: readonly AdminSection[] = [
     label: "Playback",
     icon: "circle-play",
     keywords: ["direct stream", "quality", "autoplay", "next episode"],
+  },
+  {
+    id: "history",
+    href: "/settings/history",
+    label: "History",
+    icon: "history",
+    keywords: ["watch history", "watched", "plays", "recently watched"],
   },
 ];
 
