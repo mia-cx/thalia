@@ -12,11 +12,8 @@ import {
   sql,
 } from "drizzle-orm";
 import { alias, type PgSelect } from "drizzle-orm/pg-core";
-import {
-  checkPermission,
-  permittedVersionIds,
-  viewableLibraryIds,
-} from "../auth/permissions.ts";
+import { permittedVersionIds } from "../auth/permissions.ts";
+import { loadVisibility, type Visibility } from "../auth/visibility.ts";
 import type { Database } from "../db/client.ts";
 import {
   artwork,
@@ -38,7 +35,7 @@ import {
   streams,
   versions,
 } from "../db/schema/index.ts";
-import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
+import { homeLibraryId } from "../libraries/membership.ts";
 import { listSubtitles, type StoredSubtitle } from "../subtitles/store.ts";
 
 type ItemKind = (typeof items.kind.enumValues)[number];
@@ -125,7 +122,7 @@ function streamLanguages(
       and ${inArray(streams.language, [...languages])})`;
 }
 
-const viewFields = {
+const viewFields = (visibility: Visibility) => ({
   id: items.id,
   kind: items.kind,
   libraryId: sql<string>`${homeLibraryId()}`.as("library_id"),
@@ -160,8 +157,10 @@ const viewFields = {
     limit 1
   )`.as("duration_seconds"),
   childCount: sql<number>`(
-    select count(*)::int from ${items} as child where child.parent_id = ${items.id}
+    select count(*)::int from ${items} as child
+    where child.parent_id = ${items.id} and ${visibility.item(sql.raw("child.id"))}
   )`.as("child_count"),
+  viewable: visibility.viewable().as("viewable"),
   providerIds: sql<Record<string, string>>`(
     select coalesce(jsonb_object_agg(${providerIds.provider}, ${providerIds.value}), '{}'::jsonb)
     from ${providerIds} where ${providerIds.itemId} = ${items.id}
@@ -173,7 +172,7 @@ const viewFields = {
   favourite: sql<boolean>`${favourites.id} is not null`.as("favourite"),
   rating: ratings.value,
   liked: ratings.liked,
-};
+});
 
 const sortColumns: Record<ItemViewSort, SQL[]> = {
   title: [sql`${items.title}`],
@@ -200,15 +199,10 @@ function orderOf(sort: ItemViewQuery["sort"]): SQL[] {
   ];
 }
 
-function filtersOf(viewable: string[], query: ItemViewQuery) {
-  const requested = query.libraryIds;
-  const scope =
-    requested === undefined
-      ? viewable
-      : viewable.filter((id) => requested.includes(id));
+function filtersOf(visibility: Visibility, query: ItemViewQuery) {
   const { parentId, ancestorId, kinds, ids, search } = query;
   return and(
-    inLibraries(scope),
+    visibility.item(undefined, query.libraryIds),
     parentId === undefined
       ? undefined
       : parentId === null
@@ -329,10 +323,14 @@ type ViewRow = Awaited<ReturnType<typeof selectViews>>[number];
 function selectViews(
   db: Database,
   userId: string,
+  visibility: Visibility,
   where: SQL | undefined,
   query: ItemViewQuery,
 ) {
-  let select = withJoins(db.select(viewFields).from(items).$dynamic(), userId)
+  let select = withJoins(
+    db.select(viewFields(visibility)).from(items).$dynamic(),
+    userId,
+  )
     .where(where)
     .orderBy(...orderOf(query.sort))
     .offset(query.offset ?? 0);
@@ -357,10 +355,15 @@ function toView(row: ViewRow) {
     favourite,
     rating,
     liked,
+    viewable,
     ...item
   } = row;
   return {
     ...item,
+    // A container shown only for what it holds keeps its title and artwork.
+    ...(viewable
+      ? {}
+      : { overview: null, contentRating: null, genres: [], tags: [] }),
     show:
       showId === null || showTitle === null
         ? null
@@ -385,37 +388,34 @@ function toView(row: ViewRow) {
 /** One Item as a translation layer shows it: medium fields, selected artwork, provider ids and the caller's marks. */
 export type ItemView = ReturnType<typeof toView>;
 
-/** Reads one visible Item; a denied Item reads as absent in translation layers. */
+/** Reads one visible Item, if only as a container; a hidden Item reads as absent in translation layers. */
 export async function getItemView(
   db: Database,
   userId: string,
   itemId: string,
 ) {
-  const [row] = await db
-    .select({ id: items.id })
-    .from(items)
-    .where(eq(items.id, itemId));
-  if (
-    !row ||
-    !(await checkPermission(db, userId, "view", { type: "item", id: itemId }))
-  )
-    return undefined;
-  const [view] = await selectViews(db, userId, eq(items.id, itemId), {});
+  const visibility = await loadVisibility(db, userId);
+  const [view] = await selectViews(
+    db,
+    userId,
+    visibility,
+    and(eq(items.id, itemId), visibility.opens()),
+    {},
+  );
   return view ? toView(view) : undefined;
 }
 
 /**
  * Lists Item views the user may see, offset-paged, with the total that match.
- * Items outside the user's viewable libraries never match, so a denied id reads as absent.
+ * Hidden Items never match, so a denied id reads as absent.
  */
 export async function listItemViews(
   db: Database,
   userId: string,
   query: ItemViewQuery,
 ): Promise<{ items: ItemView[]; total: number }> {
-  const viewable = await viewableLibraryIds(db, userId);
-  const where = filtersOf(viewable, query);
-  if (viewable.length === 0) return { items: [], total: 0 };
+  const visibility = await loadVisibility(db, userId);
+  const where = filtersOf(visibility, query);
   const matching = db
     .$with("member_items")
     .as(
@@ -431,6 +431,7 @@ export async function listItemViews(
   const page = selectViews(
     db,
     userId,
+    visibility,
     inArray(items.id, db.select({ id: matching.id }).from(matching)),
     query,
   ).as("catalogue_page");
@@ -624,10 +625,9 @@ export type VersionView = {
   externalSubtitles: (StoredSubtitle & { index: number })[];
 };
 
-/** Lists the libraries a user may view, by name. */
+/** Lists the libraries a user may view or that hold an Item they can see, by name. */
 export async function viewableLibraries(db: Database, userId: string) {
-  const viewable = await viewableLibraryIds(db, userId);
-  if (viewable.length === 0) return [];
+  const visibility = await loadVisibility(db, userId);
   return db
     .select({
       id: libraries.id,
@@ -635,7 +635,7 @@ export async function viewableLibraries(db: Database, userId: string) {
       medium: libraries.medium,
     })
     .from(libraries)
-    .where(inArray(libraries.id, viewable))
+    .where(visibility.library())
     .orderBy(asc(libraries.name), asc(libraries.id));
 }
 
@@ -645,8 +645,7 @@ export async function listLibraryFacets(
   userId: string,
   query: ItemViewQuery = {},
 ) {
-  const viewable = await viewableLibraryIds(db, userId);
-  const where = filtersOf(viewable, query);
+  const where = filtersOf(await loadVisibility(db, userId), query);
   const matching = withJoins(
     db.select({ id: items.id }).from(items).$dynamic(),
     userId,
@@ -708,11 +707,12 @@ export async function listContributorCredits(
   userId: string,
   query: ItemViewQuery = {},
 ) {
-  const viewable = await viewableLibraryIds(db, userId);
+  const visibility = await loadVisibility(db, userId);
+  // A container shown only for what it holds shows no credits.
   const matching = withJoins(
     db.select({ id: items.id }).from(items).$dynamic(),
     userId,
-  ).where(filtersOf(viewable, query));
+  ).where(and(filtersOf(visibility, query), visibility.viewable()));
   return db
     .select({
       id: contributors.id,
@@ -744,11 +744,11 @@ export async function countItemKinds(
   userId: string,
   query: ItemViewQuery = {},
 ) {
-  const viewable = await viewableLibraryIds(db, userId);
+  const visibility = await loadVisibility(db, userId);
   return withJoins(
     db.select({ kind: items.kind, total: count() }).from(items).$dynamic(),
     userId,
   )
-    .where(filtersOf(viewable, query))
+    .where(filtersOf(visibility, query))
     .groupBy(items.kind);
 }

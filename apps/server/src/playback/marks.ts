@@ -18,11 +18,8 @@ import {
   toPage,
 } from "../api/pagination.ts";
 import { AuthError } from "../auth/errors.ts";
-import {
-  loadPermissionScope,
-  requirePermission,
-  viewableLibraryIds,
-} from "../auth/permissions.ts";
+import { loadPermissionScope, requirePermission } from "../auth/permissions.ts";
+import { loadVisibility } from "../auth/visibility.ts";
 import type { Database } from "../db/client.ts";
 import {
   artwork,
@@ -33,7 +30,7 @@ import {
   ratings,
   versions,
 } from "../db/schema/index.ts";
-import { homeLibraryId, inLibraries } from "../libraries/membership.ts";
+import { homeLibraryId } from "../libraries/membership.ts";
 
 const cursorPrefix = "cw1.";
 type MarksDb = Pick<
@@ -398,8 +395,7 @@ export async function continueWatching(
     key = decodeCursor(input.cursor.slice(cursorPrefix.length));
     if (key === undefined) throw new AuthError("INVALID_INPUT");
   }
-  const viewable = await viewableLibraryIds(db, userId);
-  if (viewable.length === 0) return { items: [], cursor: null };
+  const visibility = await loadVisibility(db, userId);
   const rows = await db
     .select({
       item: {
@@ -440,7 +436,7 @@ export async function continueWatching(
         eq(progress.completed, false),
         gt(progress.positionSeconds, 0),
         isNotNull(progress.playedAt),
-        inLibraries(viewable),
+        visibility.item(),
         key === undefined
           ? undefined
           : sql`(${progress.playedAt}, ${items.id}) < (${key.addedAt}::timestamptz, ${key.id}::uuid)`,

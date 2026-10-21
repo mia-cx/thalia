@@ -177,30 +177,44 @@ describe.skipIf(!databaseUrl)("browse grids", () => {
     }));
 
   test(
-    `grids answer under ${gridBudgetMs} ms at ${sizeOfGeneratedLibrary} items`,
+    `grids answer under ${gridBudgetMs} ms at ${sizeOfGeneratedLibrary} items, with or without Item rules`,
     () =>
       withDatabase(async (db) => {
         await migrateDatabase(db);
-        const { token } = await seedViewer(db);
+        const { viewer, token } = await seedViewer(db);
         const library = await addLibrary(db, "Movies");
         await generateMovies(db, library.id, sizeOfGeneratedLibrary);
         const caller = await authenticate(db, token);
         const list = (input: ListItemsInput) =>
           runApi(listItemCards(db, caller, input));
-        for (const sort of ["added", "title"] as const) {
-          const first = await list({ kind: "movie", sort });
-          expect(first.items).toHaveLength(24);
-          if (first.cursor === null) throw new Error("Expected a cursor.");
-          const cursor = first.cursor;
-          const firstPageMs = await medianMs(() =>
-            list({ kind: "movie", sort }),
-          );
-          const nextPageMs = await medianMs(() =>
-            list({ kind: "movie", sort, cursor }),
-          );
-          expect(firstPageMs).toBeLessThan(gridBudgetMs);
-          expect(nextPageMs).toBeLessThan(gridBudgetMs);
-        }
+        const answerInBudget = async () => {
+          for (const sort of ["added", "title"] as const) {
+            const first = await list({ kind: "movie", sort });
+            expect(first.items).toHaveLength(24);
+            if (first.cursor === null) throw new Error("Expected a cursor.");
+            const cursor = first.cursor;
+            const firstPageMs = await medianMs(() =>
+              list({ kind: "movie", sort }),
+            );
+            const nextPageMs = await medianMs(() =>
+              list({ kind: "movie", sort, cursor }),
+            );
+            expect(firstPageMs).toBeLessThan(gridBudgetMs);
+            expect(nextPageMs).toBeLessThan(gridBudgetMs);
+          }
+        };
+        await answerInBudget();
+        // A dozen allows and denies take the restricted filter's slowest path.
+        const ruled = await db.select({ id: items.id }).from(items).limit(12);
+        await db.insert(accessRules).values(
+          ruled.map(({ id }, index) => ({
+            action: "view" as const,
+            itemId: id,
+            userId: viewer.id,
+            allowed: index % 2 === 0,
+          })),
+        );
+        await answerInBudget();
       }),
     60_000,
   );

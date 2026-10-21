@@ -1,12 +1,10 @@
 import { eq } from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
 import { readSessionToken } from "../auth/http.ts";
-import {
-  requirePermission,
-  requireVersionPermission,
-} from "../auth/permissions.ts";
+import { requireVersionPermission } from "../auth/permissions.ts";
 import { authenticate } from "../auth/sessions.ts";
 import { readAuthSettings } from "../auth/settings.ts";
+import { requireVisibleItem } from "../auth/visibility.ts";
 import type { Database } from "../db/client.ts";
 import { artwork, items, versions } from "../db/schema/index.ts";
 import {
@@ -275,6 +273,7 @@ export function createArtworkHandler(
         }
         if (itemId === null)
           return jsonError(404, "NOT_FOUND", "Artwork not found.");
+        // A container shown only for what it holds keeps its own artwork.
         if (row?.versionId)
           await requireVersionPermission(
             db,
@@ -283,10 +282,7 @@ export function createArtworkHandler(
             row.versionId,
             itemId,
           );
-        await requirePermission(db, caller.user.id, "view", {
-          type: "item",
-          id: itemId,
-        });
+        else await requireVisibleItem(db, caller.user.id, itemId);
       }
       const release = await acquireSlot(request.signal);
       if (release === undefined)

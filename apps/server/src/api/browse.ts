@@ -1,8 +1,7 @@
 import { and, desc, inArray } from "drizzle-orm";
-import { viewableLibraryIds } from "../auth/permissions.ts";
+import { loadVisibility } from "../auth/visibility.ts";
 import type { Database } from "../db/client.ts";
 import { itemKind, items } from "../db/schema/index.ts";
-import { inLibraries } from "../libraries/membership.ts";
 import type { CoreShelf, Medium } from "../mediums/medium.ts";
 import { moviesMedium } from "../mediums/movies.ts";
 import { createShowsMedium } from "../mediums/shows.ts";
@@ -67,12 +66,12 @@ async function recentlyAdded(
   userId: string,
   mediums: Medium[],
 ): Promise<Entry[]> {
-  const viewable = await viewableLibraryIds(db, userId);
   const roots = kindsOf(mediums, true);
-  if (viewable.length === 0 || roots.length === 0) return [];
+  if (roots.length === 0) return [];
+  const visibility = await loadVisibility(db, userId);
   const cards = await browseCards(
     db,
-    and(inLibraries(viewable), inArray(items.kind, roots)),
+    and(visibility.item(), inArray(items.kind, roots)),
     [desc(items.addedAt), desc(items.id)],
     shelfSize,
   );
@@ -107,18 +106,18 @@ export async function pluginShelves(
 ) {
   const resolved = await plugins.shelves(placement, { userId, itemId });
   if (resolved.length === 0) return [];
-  const viewable = await viewableLibraryIds(db, userId);
+  const visibility = await loadVisibility(db, userId);
   return Promise.all(
     resolved.map(async (shelf) => {
       const ids = shelf.itemIds
         .filter((id) => uuidPattern.test(id))
         .slice(0, shelfSize);
       const cards =
-        ids.length === 0 || viewable.length === 0
+        ids.length === 0
           ? []
           : await browseCards(
               db,
-              and(inArray(items.id, ids), inLibraries(viewable)),
+              and(inArray(items.id, ids), visibility.item()),
             );
       const byId = new Map(cards.map((card) => [card.id, card]));
       return {

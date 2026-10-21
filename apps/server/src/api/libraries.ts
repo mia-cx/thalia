@@ -1,6 +1,5 @@
-import { inArray } from "drizzle-orm";
 import { Effect, Schema } from "effect";
-import { viewableLibraryIds } from "../auth/permissions.ts";
+import { loadVisibility } from "../auth/visibility.ts";
 import { libraries } from "../db/schema/index.ts";
 import {
   FolderError,
@@ -87,11 +86,10 @@ const viewable = authenticated
   .handler(async ({ context }) =>
     runApi(
       fromHost(async () => {
-        const ids = await viewableLibraryIds(
+        const visibility = await loadVisibility(
           context.db,
           context.caller.user.id,
         );
-        if (ids.length === 0) return [];
         return context.db
           .select({
             id: libraries.id,
@@ -99,7 +97,7 @@ const viewable = authenticated
             medium: libraries.medium,
           })
           .from(libraries)
-          .where(inArray(libraries.id, ids))
+          .where(visibility.library())
           .orderBy(libraries.medium, libraries.name);
       }),
     ),

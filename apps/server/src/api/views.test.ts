@@ -199,8 +199,9 @@ describe.skipIf(!databaseUrl)("item views", () => {
         marks: { completed: true, playCount: 1 },
       });
       const shows = await byTitle({ libraryIds: [s.tv.id], parentId: null });
+      // Season 2 holds no Versions, so it is listed nowhere and not counted.
       expect(shows.get("Severance")).toMatchObject({
-        childCount: 2,
+        childCount: 1,
         premiereDate: "2022-02-18",
       });
 

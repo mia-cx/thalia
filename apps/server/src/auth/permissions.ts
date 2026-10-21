@@ -100,8 +100,8 @@ type VersionCandidate = Pick<
   "id" | "itemId" | "libraryId"
 >;
 
-/** Preloads caller facts once; batch filters read ancestry in sets before any copy's paths or streams are loaded. */
-export async function loadPermissionScope(db: Queryable, userId: string) {
+/** Loads who the caller is for the resolver: enabled, admin, Groups and every rule naming them. */
+export async function loadCaller(db: Queryable, userId: string) {
   const enabled = (await enabledUser(db, userId)) !== undefined;
   const memberGroups = enabled ? await memberships(db, userId) : [];
   const admin = memberGroups.some(
@@ -110,6 +110,12 @@ export async function loadPermissionScope(db: Queryable, userId: string) {
   const groupIds = memberGroups.map((group) => group.id);
   const rules =
     enabled && !admin ? await callerRules(db, userId, groupIds) : [];
+  return { userId, enabled, admin, groupIds, rules };
+}
+
+/** Preloads caller facts once; batch filters read ancestry in sets before any copy's paths or streams are loaded. */
+export async function loadPermissionScope(db: Queryable, userId: string) {
+  const { enabled, admin, groupIds, rules } = await loadCaller(db, userId);
 
   const chains = async (itemIds: readonly string[]) => {
     const rows =

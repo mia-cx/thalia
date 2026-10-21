@@ -1,16 +1,13 @@
 import { posix } from "node:path";
 import { sql } from "drizzle-orm";
-import {
-  type PermissionScope,
-  viewableLibraryIds,
-} from "../auth/permissions.ts";
+import type { PermissionScope } from "../auth/permissions.ts";
+import { loadVisibility } from "../auth/visibility.ts";
 import type { Database } from "../db/client.ts";
 import {
   episodes as episodeTable,
   seasons as seasonTable,
   shows as showTable,
 } from "../db/schema/shows.ts";
-import { inLibraries } from "../libraries/membership.ts";
 import type { Medium, RootedName, ScanRules } from "./medium.ts";
 import { isVideoExtra, isVideoPath } from "./video-common/paths.ts";
 import { folderProviderIds } from "./video-common/provider-ids.ts";
@@ -73,8 +70,7 @@ export function createShowsMedium(db: Database): Medium {
 
 /** Return the first unwatched Episode after each user's last completed Episode per Show. */
 export async function nextUp(db: Database, userId: string): Promise<string[]> {
-  const viewable = await viewableLibraryIds(db, userId);
-  if (viewable.length === 0) return [];
+  const visibility = await loadVisibility(db, userId);
   const rows = await db.execute(sql`
     with last_watched as (
       select distinct on (season.show_id)
@@ -112,7 +108,7 @@ export async function nextUp(db: Database, userId: string): Promise<string[]> {
           last_watched.season_number,
           last_watched.episode_number
         )
-        and ${inLibraries(viewable, sql.raw("episode_item.id"))}
+        and ${visibility.item(sql.raw("episode_item.id"))}
         and not coalesce(candidate_mark.completed, false)
       order by
         candidate_season.season_number,
