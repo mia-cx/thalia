@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { type AccessObject, resolveAccess, server } from "./access.ts";
+import {
+  type AccessObject,
+  type Decision,
+  resolveAccess,
+  server,
+} from "./access.ts";
 import { ids, resolverCases, rule } from "./access-cases.ts";
 
 const library = { type: "library", id: ids.library } as const;
@@ -98,15 +103,16 @@ describe("Access rule resolver", () => {
   test.each(resolverCases)(
     "$name",
     ({ action, rules, allowed, reason, winner }) => {
-      expect(
+      // Widened so the row's loose fields can be compared to the Decision union.
+      const decision: Pick<Decision, "allowed" | "reason" | "rule"> =
         resolveAccess({
           rules,
           chain,
           action,
           userId: ids.user,
           groupIds: [ids.group, ids.other],
-        }),
-      ).toEqual({
+        });
+      expect(decision).toEqual({
         allowed,
         reason,
         rule: winner === null ? null : (rules[winner] ?? null),
