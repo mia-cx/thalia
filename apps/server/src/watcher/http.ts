@@ -23,6 +23,7 @@ import { cacheProbe } from "../libraries/probe-cache.ts";
 import { type RootedPath, rootedKey, rootsOf } from "../libraries/roots.ts";
 import { inScope, type ScanSource, scanScope } from "../libraries/scan.ts";
 import { isLibraryScan } from "../libraries/scan-payload.ts";
+import { failScanJob } from "../libraries/scan-runs.ts";
 import type {
   createChangeDebouncer,
   WatchedChange,
@@ -449,6 +450,7 @@ async function finishJob(db: Database, request: Request, jobId: string) {
   }
   if ("error" in report) {
     const failed = await queue.fail(held, new Error(report.error));
+    if (failed?.state === "failed") await failScanJob(db, job.id, report.error);
     return { state: failed?.state };
   }
   const { payload } = job;
@@ -464,6 +466,12 @@ async function finishJob(db: Database, request: Request, jobId: string) {
     await queue.hold(held, () => runScanJob(db, payload, job, source));
   } catch (error) {
     const failed = await queue.fail(held, error);
+    if (failed?.state === "failed")
+      await failScanJob(
+        db,
+        job.id,
+        error instanceof Error ? error.message : String(error),
+      );
     return { state: failed?.state };
   }
   const completed = await queue.complete(held);

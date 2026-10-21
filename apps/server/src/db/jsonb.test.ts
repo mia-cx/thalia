@@ -86,6 +86,11 @@ const cases = [
     state: "playing",
     decision: { method: "stored", selection: { audio: 0 } },
   }),
+  write(schema.scanRuns, {
+    id: uuid(),
+    libraryId: uuid(),
+    pending: { [uuid()]: 2 },
+  }),
   write(schema.jobs, {
     type: "probe",
     maxAttempts: 1,
@@ -169,10 +174,15 @@ describe.skipIf(!databaseUrl)("jsonb columns", () => {
   test("the 0013 migration unwraps JSON strings and keeps plain strings", () =>
     withDatabase(async (db) => {
       await migrateDatabase(db);
-      // jobs.payload always stored objects, and no drizzle writer stored a top-level number.
+      // jobs.payload always stored objects, scan_runs came after 0013, and
+      // no drizzle writer stored a top-level number.
       const legacy = cases.filter((item) => {
         const { label, value } = target(item);
-        return label !== "jobs.payload" && typeof value !== "number";
+        return (
+          label !== "jobs.payload" &&
+          label !== "scan_runs.pending" &&
+          typeof value !== "number"
+        );
       });
       const ids = await Promise.all(
         legacy.map(async (item) => {

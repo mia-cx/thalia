@@ -61,6 +61,8 @@ export async function canReceive(
       });
     case "job.progress":
       return checkPermission(db, caller.user.id, "server:manage", server);
+    case "scan.progress":
+      return checkPermission(db, caller.user.id, "libraries:manage", server);
     case "session.state":
     case "segment.ready": {
       const [session] = await db
@@ -88,6 +90,8 @@ function subjectKey(event: Event): string {
       return `library:${event.libraryId}`;
     case "job.progress":
       return "job";
+    case "scan.progress":
+      return "scan";
     case "session.state":
     case "segment.ready":
       return `session:${event.sessionId}`;

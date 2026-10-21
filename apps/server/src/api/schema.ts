@@ -553,6 +553,23 @@ export const ScanStatus = Schema.Struct({
   }),
 });
 
+/** One whole-Library scan: live while running, then the Library's last-scan summary. */
+export const ScanRun = Schema.Struct({
+  id: Schema.UUID,
+  libraryId: Schema.UUID,
+  state: Schema.Literal("running", "completed", "failed", "interrupted"),
+  total: Schema.Int,
+  checked: Schema.Int,
+  added: Schema.Int,
+  changed: Schema.Int,
+  removed: Schema.Int,
+  unreadable: Schema.Int,
+  currentFolder: Schema.NullOr(Schema.String),
+  error: Schema.NullOr(Schema.String),
+  startedAt: Schema.String,
+  finishedAt: Schema.NullOr(Schema.String),
+});
+
 /** A cross-process event streamed to subscribed clients. */
 export const ApiEvent = Schema.Union(
   Schema.Struct({
@@ -573,6 +590,10 @@ export const ApiEvent = Schema.Union(
     kind: Schema.Literal("segment.ready"),
     sessionId: Schema.UUID,
     index: Schema.Int,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("scan.progress"),
+    run: ScanRun,
   }),
   Schema.Struct({
     kind: Schema.Literal("user-data.changed"),

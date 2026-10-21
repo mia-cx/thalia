@@ -18,11 +18,19 @@ import ListRow from "$lib/components/admin/ListRow.svelte";
 import ScanState from "$lib/components/admin/ScanState.svelte";
 import WatchTimeChart from "$lib/components/admin/WatchTimeChart.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
+import { Progress } from "$lib/components/ui/progress/index.ts";
 import { type FailureCode, readFailure } from "$lib/errors.ts";
 import { followEvents } from "$lib/events.ts";
 import { formatWatchTime, playMethods } from "$lib/history.ts";
 import { resource } from "$lib/resource.svelte.ts";
-import type { ScanStatus } from "$lib/scan.ts";
+import {
+  failureReason,
+  runChanges,
+  runProgress,
+  runSummary,
+  type ScanRun,
+  type ScanStatus,
+} from "$lib/scan.ts";
 import {
   formatCount,
   type LibraryGaps,
@@ -40,6 +48,15 @@ const freeSpace = resource(() => client.libraries.freeSpace());
 const summary = resource(() => client.libraries.summary());
 const insights = resource(() => client.history.insights());
 let scans = $state<Record<string, ScanStatus | null>>({});
+const scanRuns = resource(() => client.libraries.scanRuns());
+// Live runs from scan.progress, by library, over the loaded ones.
+let liveRuns = $state<Record<string, ScanRun>>({});
+const runs = $derived({
+  ...Object.fromEntries(
+    (scanRuns.data ?? []).map((run) => [run.libraryId, run]),
+  ),
+  ...liveRuns,
+});
 let stats = $state<readonly LibraryStatsData[]>([]);
 let gaps = $state<readonly LibraryGaps[]>([]);
 let statsFailures = $state<
@@ -207,6 +224,13 @@ void followEvents(
   (event) => {
     if (event.kind === "library.changed" || event.kind === "job.progress")
       void loadScans();
+    if (event.kind === "scan.progress") {
+      const previous = runs[event.run.libraryId];
+      liveRuns = { ...liveRuns, [event.run.libraryId]: event.run };
+      // Starting and finishing change the library's scan state too.
+      if (previous?.id !== event.run.id || previous.state !== event.run.state)
+        void loadScans();
+    }
     if (event.kind === "library.changed") {
       revisions = {
         ...revisions,
@@ -248,6 +272,41 @@ onDestroy(() => {
   clearInterval(timer);
 });
 </script>
+
+{#snippet runDetail(run: ScanRun)}
+  {#if run.state === "running"}
+    {@const progress = runProgress(run, Date.now())}
+    <span class="mt-1.5 flex flex-col gap-1">
+      <Progress
+        value={progress.fraction}
+        max={1}
+        aria-label="Scan progress"
+      />
+      <span class="block truncate text-footnote text-label-secondary tabular-nums"
+        >{progress.line}</span
+      >
+      <span class="block truncate text-footnote text-label-secondary tabular-nums"
+        >{runChanges(run)}</span
+      >
+      <span class="block truncate text-footnote text-label-secondary"
+        >{run.currentFolder ?? "\u00a0"}</span
+      >
+    </span>
+  {:else}
+    <span class="block truncate text-footnote text-label-secondary"
+      >{runSummary(run)}</span
+    >
+    {#if run.state === "failed"}
+      <span class="block text-footnote break-words text-destructive"
+        >{failureReason({ reason: "error", detail: run.error ?? "" })}</span
+      >
+    {:else if run.state === "completed"}
+      <span class="block truncate text-footnote text-label-secondary tabular-nums"
+        >{runChanges(run)}</span
+      >
+    {/if}
+  {/if}
+{/snippet}
 
 <AdminPage title="Overview">
   <FormGroup title="Health" loading={health === undefined ? 2 : undefined}>
@@ -347,13 +406,22 @@ onDestroy(() => {
   >
     {#if libraries.data !== undefined}
       {#each libraries.data as library (library.id)}
+        {@const run = runs[library.id]}
         <ListRow
           title={library.name}
           caption={mediumLabels[library.medium]}
           href="/admin/libraries/{library.id}"
+          detail={run === undefined ? undefined : scanRun}
         >
-          <ScanState status={scans[library.id]} />
+          {#if run === undefined}
+            <ScanState status={scans[library.id]} />
+          {/if}
         </ListRow>
+        {#snippet scanRun()}
+          {#if run !== undefined}
+            {@render runDetail(run)}
+          {/if}
+        {/snippet}
       {:else}
         <div class="relative min-h-12 px-4 py-2.5">
           <span class="text-subheadline text-label-secondary"
