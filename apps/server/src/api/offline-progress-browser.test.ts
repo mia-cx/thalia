@@ -16,12 +16,15 @@ import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
 import { browser, openPage, signIn, webBuild } from "./browser-testing.ts";
 
 const queued = "localStorage.getItem('thalia.offline-progress')";
+const video = "document.querySelector('video')";
+const byLabel = (label: string) =>
+  `[...document.querySelectorAll('button, a')].find(b => b.getAttribute('aria-label') === ${JSON.stringify(label)})`;
 
 describe.skipIf(!databaseUrl || browser === undefined)(
   "offline progress",
   () => {
     test(
-      "progress queued offline survives a reload and reaches the server once it is back",
+      "a download played offline to the end survives a reload and reaches the server once it is back",
       () =>
         withDatabase(async (db, url) => {
           if (browser === undefined) throw new Error("Expected a browser.");
@@ -80,27 +83,25 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             server = await startThalia("api", { databaseUrl: url, port: 0 });
             const port = server.apiServer?.port;
             const base = `http://127.0.0.1:${port}`;
-            await signIn(page, base, token, "/downloads");
+            await signIn(page, base, token, `/movies/${itemId}`);
             await page.waitFor("navigator.serviceWorker.controller !== null");
+            await page.waitFor(byLabel("Download"), 30_000);
+            await page.eval(`${byLabel("Download")}.click()`);
+            await page.waitFor(byLabel("Downloaded"), 30_000);
             await server.stop();
             server = undefined;
 
-            // What offline playback leaves: the end of the movie, a minute ago.
-            const at = new Date(Date.now() - 60_000).toISOString();
-            await page.eval(
-              `localStorage.setItem('thalia.offline-progress', ${JSON.stringify(
-                JSON.stringify([
-                  {
-                    userId: viewer.id,
-                    itemId,
-                    versionId,
-                    positionSeconds: 4,
-                    completed: true,
-                    at,
-                  },
-                ]),
-              )})`,
-            );
+            // Played from the Downloads page with the server down, to the end.
+            const playedFrom = Date.now();
+            await page.goto(`${base}/downloads`);
+            await page.waitFor(byLabel("Play"), 30_000);
+            await page.eval(`${byLabel("Play")}.click()`);
+            await page.waitFor(`${video}?.readyState >= 2`, 30_000);
+            await page.eval(`(() => {
+              if (!${video}.paused) return;
+              ${byLabel("Play")}?.click();
+            })()`);
+            await page.waitFor(`${video}.ended`, 30_000);
             // A fresh load, so the wait below can't pass on the old page.
             await page.goto(`${base}/downloads`);
             await page.waitFor(
@@ -109,6 +110,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await Bun.sleep(1000);
             expect(await page.eval<string>(queued)).toContain(versionId);
 
+            const restartedAt = Date.now();
             server = await startThalia("api", { databaseUrl: url, port });
             await page.waitFor(`${queued} === '[]'`, 30_000);
             const [row] = await db
@@ -120,12 +122,11 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                   eq(progress.itemId, itemId),
                 ),
               );
-            expect(row).toMatchObject({
-              versionId,
-              positionSeconds: 4,
-              completed: true,
-              updatedAt: new Date(at),
-            });
+            expect(row).toMatchObject({ versionId, completed: true });
+            // The end of the 4 s movie, dated when it was watched, not synced.
+            expect(row?.positionSeconds).toBeCloseTo(4, 0);
+            expect(row?.updatedAt.getTime()).toBeGreaterThanOrEqual(playedFrom);
+            expect(row?.updatedAt.getTime()).toBeLessThan(restartedAt);
           } finally {
             await page.close();
             await server?.stop();
