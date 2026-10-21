@@ -10,6 +10,7 @@ import Failure from "$lib/components/Failure.svelte";
 import SecretInput from "$lib/components/SecretInput.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
+import * as Select from "$lib/components/ui/select/index.ts";
 import { Switch } from "$lib/components/ui/switch/index.ts";
 import { Textarea } from "$lib/components/ui/textarea/index.ts";
 import { readFailure } from "$lib/errors.ts";
@@ -44,6 +45,14 @@ let cpu4kChecked = $state<boolean | null>(null);
 let capBusy = $state(false);
 let capFailure = $state<FailureShape | undefined>(undefined);
 
+type Medium = "movies" | "shows";
+type ThresholdUnit = "minutes" | "percent";
+let thresholdInputs = $state<
+  Partial<Record<Medium, { unit: ThresholdUnit; value: string }>>
+>({});
+let thresholdBusy = $state(false);
+let thresholdFailure = $state<FailureShape | undefined>(undefined);
+
 let windowStart = $state<string | null>(null);
 let windowEnd = $state<string | null>(null);
 let windowBusy = $state(false);
@@ -58,6 +67,26 @@ const capValue = $derived(
       ? ""
       : toMbps(settings.data.bitrateCapBps)),
 );
+const thresholdValues = $derived.by(() => {
+  const saved = settings.data?.watchThresholds;
+  const read = (medium: Medium) =>
+    thresholdInputs[medium] ?? {
+      unit: saved?.[medium].unit ?? "minutes",
+      value: saved === undefined ? "" : String(saved[medium].value),
+    };
+  return { movies: read("movies"), shows: read("shows") };
+});
+
+const thresholdMediums = [
+  { medium: "movies", label: "Movies" },
+  { medium: "shows", label: "Shows" },
+] as const;
+
+const thresholdUnits = [
+  { value: "minutes", label: "minutes" },
+  { value: "percent", label: "% of runtime" },
+];
+
 const startValue = $derived(
   windowStart ?? settings.data?.idleWindow.start ?? "",
 );
@@ -140,6 +169,58 @@ async function saveCap(event: SubmitEvent) {
     capFailure = readFailure(error);
   } finally {
     capBusy = false;
+  }
+}
+
+function editThreshold(
+  medium: Medium,
+  patch: Partial<{ unit: ThresholdUnit; value: string }>,
+) {
+  thresholdInputs[medium] = { ...thresholdValues[medium], ...patch };
+}
+
+async function saveThresholds(event: SubmitEvent) {
+  event.preventDefault();
+  thresholdFailure = undefined;
+  const submitted = thresholdValues;
+  const parsed = thresholdMediums.map(({ medium }) => {
+    const { unit, value } = submitted[medium];
+    const number = value.trim() === "" ? Number.NaN : Number(value);
+    return { medium, unit, value: number };
+  });
+  if (
+    parsed.some(
+      ({ unit, value }) =>
+        !Number.isFinite(value) ||
+        value < 0 ||
+        (unit === "percent" && value > 100),
+    )
+  ) {
+    thresholdFailure = {
+      code: "BAD_REQUEST",
+      message: "Enter a number of minutes, or a percentage from 0 to 100.",
+    };
+    return;
+  }
+  thresholdBusy = true;
+  try {
+    settings.set(
+      await serial(() =>
+        client.settings.update({
+          watchThresholds: Object.fromEntries(
+            parsed.map(({ medium, unit, value }) => [medium, { unit, value }]),
+          ),
+        }),
+      ),
+    );
+    for (const { medium } of thresholdMediums)
+      if (thresholdInputs[medium] === submitted[medium])
+        delete thresholdInputs[medium];
+    toast.success("Watch history saved");
+  } catch (error) {
+    thresholdFailure = readFailure(error);
+  } finally {
+    thresholdBusy = false;
   }
 }
 
@@ -263,6 +344,9 @@ async function removeKey(name: string) {
     <FormGroup title="Playback" loading={2}>
       <span></span>
     </FormGroup>
+    <FormGroup title="Watch history" loading={2}>
+      <span></span>
+    </FormGroup>
     <FormGroup title="Store window" loading={2}>
       <span></span>
     </FormGroup>
@@ -331,6 +415,57 @@ async function removeKey(name: string) {
       </FormRow>
       {#snippet actions()}
         <Button type="submit" disabled={capBusy}>Save</Button>
+      {/snippet}
+    </FormGroup>
+
+    <FormGroup
+      title="Watch history"
+      onsubmit={saveThresholds}
+      failure={thresholdFailure}
+      description="How long something has to play before it's added to watch history."
+    >
+      {#each thresholdMediums as { medium, label } (medium)}
+        {@const threshold = thresholdValues[medium]}
+        <FormRow {label} for="{medium}Threshold">
+          <div class="flex items-center gap-3">
+            <Input
+              id="{medium}Threshold"
+              type="number"
+              min="0"
+              max={threshold.unit === "percent" ? 100 : undefined}
+              step="any"
+              inputmode="decimal"
+              required
+              class="w-24"
+              value={threshold.value}
+              oninput={(event) =>
+                editThreshold(medium, { value: event.currentTarget.value })}
+            />
+            <Select.Root
+              type="single"
+              value={threshold.unit}
+              onValueChange={(unit) => {
+                if (unit === "minutes" || unit === "percent")
+                  editThreshold(medium, { unit });
+              }}
+              items={thresholdUnits}
+            >
+              <Select.Trigger class="w-40" aria-label="{label} unit"
+                ><Select.Value /></Select.Trigger
+              >
+              <Select.Content>
+                {#each thresholdUnits as unit (unit.value)}
+                  <Select.Item value={unit.value} label={unit.label}
+                    >{unit.label}</Select.Item
+                  >
+                {/each}
+              </Select.Content>
+            </Select.Root>
+          </div>
+        </FormRow>
+      {/each}
+      {#snippet actions()}
+        <Button type="submit" disabled={thresholdBusy}>Save</Button>
       {/snippet}
     </FormGroup>
 

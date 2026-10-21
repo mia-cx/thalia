@@ -16,9 +16,11 @@ import FormRow from "$lib/components/admin/FormRow.svelte";
 import LibraryStats from "$lib/components/admin/LibraryStats.svelte";
 import ListRow from "$lib/components/admin/ListRow.svelte";
 import ScanState from "$lib/components/admin/ScanState.svelte";
+import WatchTimeChart from "$lib/components/admin/WatchTimeChart.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { type FailureCode, readFailure } from "$lib/errors.ts";
 import { followEvents } from "$lib/events.ts";
+import { formatWatchTime, playMethods } from "$lib/history.ts";
 import { resource } from "$lib/resource.svelte.ts";
 import type { ScanStatus } from "$lib/scan.ts";
 import {
@@ -36,6 +38,7 @@ const libraries = resource(() => client.libraries.list());
 const sessions = resource(() => client.playback.sessions());
 const freeSpace = resource(() => client.libraries.freeSpace());
 const summary = resource(() => client.libraries.summary());
+const insights = resource(() => client.history.insights());
 let scans = $state<Record<string, ScanStatus | null>>({});
 let stats = $state<readonly LibraryStatsData[]>([]);
 let gaps = $state<readonly LibraryGaps[]>([]);
@@ -92,6 +95,10 @@ const stateLabels: Record<Session["state"], string> = {
   playing: "Playing",
   stopped: "Stopped",
 };
+
+function playsCaption(entry: { plays: number; seconds: number }) {
+  return `${entry.plays === 1 ? "1 play" : `${formatCount(entry.plays)} plays`} · ${formatWatchTime(entry.seconds)}`;
+}
 
 function clientLabel(session: Session) {
   if (session.clientName === null) return "Unknown app";
@@ -209,7 +216,10 @@ void followEvents(
       void freeSpace.reload();
       void summary.reload();
     }
-    if (event.kind === "session.state") void sessions.reload();
+    if (event.kind === "session.state") {
+      void sessions.reload();
+      if (event.state === "stopped") void insights.reload();
+    }
   },
   controller.signal,
 );
@@ -451,5 +461,86 @@ onDestroy(() => {
       >
     {/snippet}
   </FormGroup>
+  <FormGroup
+    title="Watch time"
+    loading={insights.data === undefined && !insights.failure ? 3 : undefined}
+    failure={insights.failure ?? undefined}
+  >
+    {#if insights.data !== undefined}
+      <WatchTimeChart weeks={insights.data.weeks} />
+    {/if}
+    {#snippet actions()}
+      {#if insights.failure}
+        <Button
+          variant="secondary"
+          onclick={() => insights.reload()}
+          disabled={insights.loading}>Try again</Button
+        >
+      {/if}
+    {/snippet}
+  </FormGroup>
+
+  {#if insights.data !== undefined}
+    {@const data = insights.data}
+    {@const methodTotal =
+      data.methods.directPlay + data.methods.remux + data.methods.transcode}
+    <FormGroup title="Top titles" description="Last 12 weeks">
+      {#each data.topTitles as entry (entry.item.id)}
+        {@const href = itemHref(entry.item)}
+        <ListRow
+          title={cardLabel(entry.item)}
+          caption={playsCaption(entry)}
+          href={href ?? undefined}
+        >
+          {#snippet leading()}
+            <span class="block w-8 shrink-0">
+              <Artwork
+                artworkId={entry.item.posterArtworkId}
+                title={cardLabel(entry.item)}
+                sizes="2rem"
+                kind={entry.item.kind}
+                fallbackTitle={false}
+              />
+            </span>
+          {/snippet}
+        </ListRow>
+      {:else}
+        <div class="relative min-h-12 px-4 py-2.5">
+          <span class="text-subheadline text-label-secondary"
+            >Nothing watched yet.</span
+          >
+        </div>
+      {/each}
+    </FormGroup>
+
+    <FormGroup title="Top users" description="Last 12 weeks">
+      {#each data.topUsers as entry (entry.user.id)}
+        <ListRow
+          title={entry.user.displayName}
+          caption={playsCaption(entry)}
+          href="/admin/users/{entry.user.id}"
+        />
+      {:else}
+        <div class="relative min-h-12 px-4 py-2.5">
+          <span class="text-subheadline text-label-secondary"
+            >Nothing watched yet.</span
+          >
+        </div>
+      {/each}
+    </FormGroup>
+
+    <FormGroup title="Direct play and transcoding" description="Last 12 weeks">
+      {#each playMethods as { key, label } (key)}
+        {@const seconds = data.methods[key]}
+        <FormRow {label} inline>
+          <span class="text-subheadline text-label-secondary tabular-nums"
+            >{formatWatchTime(seconds)}{methodTotal > 0
+              ? ` · ${Math.round((seconds / methodTotal) * 100)}%`
+              : ""}</span
+          >
+        </FormRow>
+      {/each}
+    </FormGroup>
+  {/if}
 </AdminPage>
 
