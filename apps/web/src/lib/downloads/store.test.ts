@@ -1014,6 +1014,22 @@ describe("downloads in a folder on disk", () => {
     expect(manifestOf(folder)).toEqual([]);
   });
 
+  test("a later session whose index already lists the folder's downloads rewrites nothing", async () => {
+    const root = new FakeDir();
+    const folder = new FakeDir();
+    const first = folderStore(root, folder);
+    await first.start(movie);
+    await waitFor(() => get(first).records[0]?.fileName !== null);
+    const index = root.dirs.get("downloads")?.files.get("index.json");
+
+    const later = folderStore(root, folder);
+    await later.restore();
+    expect(get(later).records).toEqual([
+      expect.objectContaining({ fileName: "Arrival (2016).mkv" }),
+    ]);
+    expect(root.dirs.get("downloads")?.files.get("index.json")).toBe(index);
+  });
+
   test("a later session lists the downloads its folder holds, and unlinking leaves the files", async () => {
     const folder = new FakeDir();
     folder.files.set("Arrival (2016).mkv", bytes);

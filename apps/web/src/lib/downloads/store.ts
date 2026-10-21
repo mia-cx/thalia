@@ -461,7 +461,11 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     if (folder === undefined) return;
     const found: DownloadRecord[] = [];
     for (const entry of parseRecords(await readManifest(folder))) {
-      if (entry.fileName === null) continue;
+      if (
+        entry.fileName === null ||
+        records.some((record) => record.versionId === entry.versionId)
+      )
+        continue;
       try {
         const file = await (
           await folder.getFileHandle(entry.fileName)
