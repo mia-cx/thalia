@@ -11,6 +11,7 @@ export type Media = Pick<
   readonly duration: number;
   readonly paused: boolean;
   readonly ended: boolean;
+  readonly readyState: number;
   volume: number;
   muted: boolean;
   playbackRate: number;
@@ -89,6 +90,8 @@ export type PlayerState = {
 };
 
 const resumeToleranceSeconds = 2;
+// HTMLMediaElement.HAVE_FUTURE_DATA: enough is loaded to keep playing.
+const haveFutureData = 3;
 
 /** One playback session and its chrome: transport, tracks, notices and auto-hiding controls. */
 export function createPlayer(options: {
@@ -459,6 +462,14 @@ export function createPlayer(options: {
     [
       "timeupdate",
       () => {
+        // Browsers don't always fire `playing` after a stall clears, so
+        // moving time with data ready ends the spinner too.
+        if (
+          current.buffering &&
+          !media.paused &&
+          media.readyState >= haveFutureData
+        )
+          patch({ buffering: false });
         updatePosition(media.currentTime);
         evaluateUpNext();
       },
