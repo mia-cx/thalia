@@ -7,6 +7,7 @@ const startAt = $derived.by(() => {
   const value = Number(page.url.searchParams.get("t") ?? Number.NaN);
   return Number.isFinite(value) && value >= 0 ? value : null;
 });
+const offline = $derived(page.url.searchParams.has("offline"));
 </script>
 
-<Player id={page.params.id ?? ""} {versionId} {startAt} />
+<Player id={page.params.id ?? ""} {versionId} {startAt} {offline} />

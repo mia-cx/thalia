@@ -3,7 +3,7 @@ import type Hls from "hls.js";
 import { client, createThaliaClient } from "./api.ts";
 import { readFailure } from "./errors.ts";
 import { browserProfile, progressiveMime, withToken } from "./playback.ts";
-import { attachProgressive } from "./progressive.ts";
+import { attachProgressive, fetchRuns } from "./progressive.ts";
 
 /** A message the player draws over the video. */
 export type PlayerNotice = { title: string; message: string; retry: boolean };
@@ -55,8 +55,10 @@ const closeWaitMs = 3_000;
 // The last report as a tab closes has to outlive the page.
 const lastWord = createThaliaClient({ keepalive: true });
 
-const cannotPlay = "Cannot play this Version";
-const stalled: PlayerNotice = {
+/** The notice title when a Version can't play at all. */
+export const cannotPlay = "Cannot play this Version";
+/** The notice when a playing stream stops loading. */
+export const stalled: PlayerNotice = {
   title: "Playback stopped",
   message: "The video stopped loading.",
   retry: true,
@@ -244,11 +246,11 @@ export function play(options: PlaybackOptions) {
       }
       const url = planned.url ?? "";
       progressive = attachProgressive(video, {
-        streamUrl: (start) => {
+        openRun: fetchRuns((start) => {
           const base =
             token === null ? url : withToken(url, token, location.href);
           return `${base}&start=${Math.max(0, start)}`;
-        },
+        }),
         mime,
         durationSeconds: options.durationSeconds,
         startAt: at,

@@ -57,6 +57,8 @@ export type Downloads = Readable<DownloadsSnapshot> & {
   pause(versionId: string): Promise<void>;
   resume(versionId: string): Promise<void>;
   remove(versionId: string): Promise<void>;
+  /** A Version's downloaded bytes as a File read in place, with no copy. */
+  file(versionId: string): Promise<File>;
 };
 
 const flushBytes = 8 * 1024 * 1024;
@@ -633,7 +635,19 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     notify();
   }
 
-  return { subscribe: store.subscribe, restore, start, pause, resume, remove };
+  async function file(versionId: string): Promise<File> {
+    return (await (await directory()).getFileHandle(versionId)).getFile();
+  }
+
+  return {
+    subscribe: store.subscribe,
+    restore,
+    start,
+    pause,
+    resume,
+    remove,
+    file,
+  };
 }
 
 /** Whether this browser exposes the OPFS root downloads need. */
