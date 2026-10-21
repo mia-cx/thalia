@@ -10,6 +10,7 @@ import PosterCard from "$lib/components/PosterCard.svelte";
 import PosterGrid from "$lib/components/PosterGrid.svelte";
 import { Input } from "$lib/components/ui/input/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 
 const query = $derived((page.url.searchParams.get("q") ?? "").trim());
 
@@ -66,10 +67,10 @@ function search() {
   clearTimeout(timer);
   const target =
     field.trim() === ""
-      ? "/search"
-      : `/search?q=${encodeURIComponent(field.trim())}`;
+      ? `${webBase}/search`
+      : `${webBase}/search?q=${encodeURIComponent(field.trim())}`;
   void goto(target, {
-    replaceState: page.url.pathname === "/search",
+    replaceState: page.url.pathname === `${webBase}/search`,
     keepFocus: true,
     noScroll: true,
   });

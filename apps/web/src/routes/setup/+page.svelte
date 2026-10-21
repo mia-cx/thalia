@@ -12,6 +12,7 @@ import { Label } from "$lib/components/ui/label/index.ts";
 import { Progress } from "$lib/components/ui/progress/index.ts";
 import * as Select from "$lib/components/ui/select/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import {
   type ScanStatus,
   scanPhase,
@@ -213,7 +214,7 @@ const title = $derived(
           {#if failure?.code === "CONFLICT"}
             <p class="text-center text-subheadline text-label-secondary">
               Setup is already complete.
-              <Button variant="link" href="/login" class="h-auto p-0"
+              <Button variant="link" href="{webBase}/login" class="h-auto p-0"
                 >Sign in</Button
               >
             </p>
@@ -365,7 +366,7 @@ const title = $derived(
               onclick={rescan}
               disabled={busy}>Scan again</Button
             >
-            <Button variant="ghost" href="/">Start watching</Button>
+            <Button variant="ghost" href="{webBase}/">Start watching</Button>
           {:else if phase === "unstarted" && failure}
             <Failure {failure} inline />
             <Button
@@ -374,7 +375,7 @@ const title = $derived(
               onclick={rescan}
               disabled={busy}>Try again</Button
             >
-            <Button variant="ghost" href="/">Start watching</Button>
+            <Button variant="ghost" href="{webBase}/">Start watching</Button>
           {:else if phase === "unfollowed" && failure}
             <Failure {failure} inline />
             <Button
@@ -384,11 +385,11 @@ const title = $derived(
               disabled={busy}>Check again</Button
             >
           {:else}
-            <Button href="/" size="lg" class="w-full">Start watching</Button>
+            <Button href="{webBase}/" size="lg" class="w-full">Start watching</Button>
           {/if}
           <Button
             variant="link"
-            href="/admin"
+            href="{webBase}/admin"
             class="h-auto p-0 text-footnote">Open Settings</Button
           >
         </div>

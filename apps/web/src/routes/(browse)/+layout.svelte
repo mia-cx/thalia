@@ -10,6 +10,7 @@ import TabBar from "$lib/components/TabBar.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Sheet from "$lib/components/ui/sheet/index.ts";
 import * as Tooltip from "$lib/components/ui/tooltip/index.ts";
+import { webBase } from "$lib/paths.js";
 import {
   isCurrent,
   isCurrentSection,
@@ -144,7 +145,7 @@ onNavigate((nav) => {
       class:px-2={!collapsed}
     >
       {#if !collapsed}
-        <a href="/" class="text-title-3 font-bold tracking-tight text-label">Thalia</a>
+        <a href="{webBase}/" class="text-title-3 font-bold tracking-tight text-label">Thalia</a>
       {/if}
       <Tooltip.Root>
         <Tooltip.Trigger>

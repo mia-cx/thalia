@@ -98,7 +98,7 @@ A plugin is imported on first use: a route request, a provider-fetch, a shelf, o
 
 Item, progress and playback writes enqueue one `plugin` job per event and per enabled plugin with `events`, inside the write's transaction. A schedule tick enqueues a `plugin` job whose id is derived from the plugin, schedule and minute, so every worker that fires the same tick enqueues it once. Workers need clocks within the same minute. `scan.completed` is declared but not emitted yet.
 
-Routes are served at `/plugins/<name>/<path>`, a scoped name taking two segments, for GET and POST. The handler gets the caller's user id when a session or API key authenticates, and null otherwise. POST passes the same origin check as API mutations. Plugin metadata providers join provider-fetch and take part in matching once their id is in the metadata `providerOrder`. Plugin subtitle providers join every subtitle-fetch next to OpenSubtitles. Plugin home shelves appear on Home after the medium shelves; `GET /api/shelves/item/{id}` lists item shelves. Both show only items the caller may view.
+Routes are served at `/api/ext/<name>/<path>`, a scoped name taking two segments, for GET and POST. The handler gets the caller's user id when a session or API key authenticates, and null otherwise. POST passes the same origin check as API mutations. Plugin metadata providers join provider-fetch and take part in matching once their id is in the metadata `providerOrder`. Plugin subtitle providers join every subtitle-fetch next to OpenSubtitles. Plugin home shelves appear on Home after the medium shelves; `GET /api/shelves/item/{id}` lists item shelves. Both show only items the caller may view.
 
 `plugins.*` and `registries.*` are the admin procedures, all behind `plugins:manage`: list, preview a source, install at the previewed integrity, enable and disable, files switches, config, and adding, listing and removing registries.
 
@@ -165,13 +165,13 @@ Use a private bind address, firewall or restricted ingress during setup. Expose 
 | POST | `/api/auth/invites/accept` | `token`, `username`, `password`, optional `displayName`, `clientName`, `deviceId`, `deviceName` | 201 with `token`, `user`, `session` and session cookie |
 | POST | `/api/auth/invites/status` | `token` | `status`: `live`, `expired`, `accepted` or `unknown` |
 | GET | `/api/auth/oidc/login` | Query `clientName`, `deviceId`, `deviceName`, optional `invite` | 302 to the configured provider |
-| GET | `/api/auth/oidc/callback` | Provider callback | 303 to `/` with the session cookie |
+| GET | `/api/auth/oidc/callback` | Provider callback | 303 to `/web/` with the session cookie |
 | GET | `/api/auth/me` | None | `user`, `credential` |
 | POST | `/api/auth/logout` | None | Revokes the current session or API key and returns `ok` |
 
 Invite creation requires `users:manage` and accepts bearer or session-cookie auth. Invite tokens are random, stored only as SHA-256 digests, expire, and work once.
 Invite acceptance and new OIDC accounts require a live invite. Existing OIDC subjects log in directly.
-The two OIDC routes answer a browser, so a failure is a 303 to `/login?error=<code>`, where the code is the lowercased error code such as `oidc_failed`, or `internal_error`.
+The two OIDC routes answer a browser, so a failure is a 303 to `/web/login?error=<code>`, where the code is the lowercased error code such as `oidc_failed`, or `internal_error`.
 Only `email_verified: true` can link an existing account. An unverified email never links, but a matching live invite can create a separate account.
 OIDC uses discovery, authorization code, state, nonce, PKCE S256, signed ID-token validation, confidential Basic client authentication, and UserInfo subject validation when advertised.
 
@@ -304,7 +304,7 @@ No proxy is trusted by default. Plain HTTP remains supported; TLS normally termi
 
 ## API
 
-The api and all roles serve one procedure router on two transports. `/rpc` carries the typed client and `/api` carries REST. `GET /api/openapi.json` answers the generated OpenAPI 3.1 document. The api role also serves `/api/auth` and the web app on the same origin.
+The api and all roles serve one procedure router on two transports. `/api/rpc` carries the typed client and `/api` carries REST. `GET /api/openapi.json` answers the generated OpenAPI 3.1 document. The api role also serves `/api/auth`, the web app under `/web` and the Jellyfin layer at the root, on the same origin.
 
 | Procedure | REST route | Input | Output |
 | --- | --- | --- | --- |

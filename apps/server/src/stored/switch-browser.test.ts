@@ -115,7 +115,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 RouterClient<typeof thaliaRouter>
               >(
                 new RPCLink({
-                  url: `${apiBase}/rpc`,
+                  url: `${apiBase}/api/rpc`,
                   headers: { authorization: `Bearer ${token}` },
                 }),
               );

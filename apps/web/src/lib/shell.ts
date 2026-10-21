@@ -1,3 +1,5 @@
+import { webBase } from "./paths.js";
+
 /** A library as the sidebar lists it. */
 export type ShellLibrary = {
   id: string;
@@ -25,22 +27,37 @@ export function navigation(
       .map((l) => ({ href: `${href}?library=${l.id}`, label: l.name }));
   };
   const entries: NavEntry[] = [
-    { href: "/search", label: "Search", icon: "search", children: [] },
-    { href: "/", label: "Home", icon: "home", children: [] },
     {
-      href: "/movies",
+      href: `${webBase}/search`,
+      label: "Search",
+      icon: "search",
+      children: [],
+    },
+    { href: `${webBase}/`, label: "Home", icon: "home", children: [] },
+    {
+      href: `${webBase}/movies`,
       label: "Movies",
       icon: "movies",
-      children: children("movies", "/movies"),
+      children: children("movies", `${webBase}/movies`),
     },
     {
-      href: "/shows",
+      href: `${webBase}/shows`,
       label: "Shows",
       icon: "shows",
-      children: children("shows", "/shows"),
+      children: children("shows", `${webBase}/shows`),
     },
-    { href: "/downloads", label: "Downloads", icon: "downloads", children: [] },
-    { href: "/settings", label: "Settings", icon: "settings", children: [] },
+    {
+      href: `${webBase}/downloads`,
+      label: "Downloads",
+      icon: "downloads",
+      children: [],
+    },
+    {
+      href: `${webBase}/settings`,
+      label: "Settings",
+      icon: "settings",
+      children: [],
+    },
   ];
   return entries;
 }
@@ -59,7 +76,7 @@ export function initials(name: string): string {
 /** Whether an href is the current destination for a URL. */
 export function isCurrent(url: URL, href: string): boolean {
   const [path, query] = href.split("?");
-  if (path === "/") return url.pathname === "/";
+  if (path === `${webBase}/`) return url.pathname === path;
   const wanted = new URLSearchParams(query ?? "").get("library");
   if (wanted !== null)
     return url.pathname === path && url.searchParams.get("library") === wanted;
@@ -78,7 +95,8 @@ export function isCurrentSection(
   const active =
     isCurrent(url, entry.href) ||
     (entry.icon === "settings" &&
-      (url.pathname === "/admin" || url.pathname.startsWith("/admin/")));
+      (url.pathname === `${webBase}/admin` ||
+        url.pathname.startsWith(`${webBase}/admin/`)));
   if (!active) return false;
   return !(childrenShown && entry.children.some((c) => isCurrent(url, c.href)));
 }

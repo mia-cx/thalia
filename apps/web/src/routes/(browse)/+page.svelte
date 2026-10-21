@@ -10,6 +10,7 @@ import PosterCard from "$lib/components/PosterCard.svelte";
 import Shelf, { shelfColumns } from "$lib/components/Shelf.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { Skeleton } from "$lib/components/ui/skeleton/index.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 
 const home = resource(() => client.shelves.home());
@@ -69,7 +70,7 @@ const skeletonSizes = ["landscape", "poster"] as const;
     <ClapperboardIcon class="size-10 text-label-tertiary" />
     <h2 class="text-title-2">Nothing to watch yet</h2>
     {#if page.data.me.admin}
-      <Button href="/admin/libraries">Add a library</Button>
+      <Button href="{webBase}/admin/libraries">Add a library</Button>
     {:else}
       <p class="text-subheadline text-label-secondary">
         Titles appear here once an admin adds a library.

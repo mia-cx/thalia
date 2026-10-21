@@ -11,6 +11,7 @@ import {
 } from "$lib/browse.ts";
 import Artwork from "$lib/components/Artwork.svelte";
 import CardMenu from "$lib/components/CardMenu.svelte";
+import { webBase } from "$lib/paths.js";
 
 const {
   card,
@@ -25,7 +26,7 @@ const {
 // Movies and Episodes play straight from the card; others open their page.
 const href = $derived(
   card.kind === "movie" || card.kind === "episode"
-    ? `/play/${card.id}`
+    ? `${webBase}/play/${card.id}`
     : itemHref(card),
 );
 const art = $derived(titleArt(card));

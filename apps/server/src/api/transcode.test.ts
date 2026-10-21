@@ -187,7 +187,7 @@ describe.skipIf(!databaseUrl)("live transcode over HLS", () => {
           base,
           client: createORPCClient<Client>(
             new RPCLink({
-              url: `${base}/rpc`,
+              url: `${base}/api/rpc`,
               headers: { authorization: `Bearer ${token}` },
             }),
           ),

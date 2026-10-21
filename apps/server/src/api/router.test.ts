@@ -23,7 +23,7 @@ const device = {
 
 function rpcClient(base: string, token?: string) {
   const link = new RPCLink({
-    url: `${base}/rpc`,
+    url: `${base}/api/rpc`,
     headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
   });
   return createORPCClient<RouterClient<typeof thaliaRouter>>(link);
@@ -457,7 +457,7 @@ describe.skipIf(!databaseUrl)("api router", () => {
         // The RPC transport gets the same headers; a wrapped fetch exposes them.
         let rpc: Headers | undefined;
         const link = new RPCLink({
-          url: `${base}/rpc`,
+          url: `${base}/api/rpc`,
           headers,
           fetch: async (request, init) => {
             const response = await fetch(request, init);

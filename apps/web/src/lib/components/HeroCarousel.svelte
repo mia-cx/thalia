@@ -15,6 +15,7 @@ import {
 import Hero from "$lib/components/Hero.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Tooltip from "$lib/components/ui/tooltip/index.ts";
+import { webBase } from "$lib/paths.js";
 
 const {
   slides,
@@ -112,7 +113,7 @@ const multiple = $derived(slides.length > 1);
           </p>
           <div class="mt-2 flex items-center gap-3">
             {#if card.kind === "movie" || card.kind === "episode"}
-              <Button size="pill" href="/play/{card.id}">
+              <Button size="pill" href="{webBase}/play/{card.id}">
                 <PlayIcon fill="currentColor" />
                 {slide.progress ? "Resume" : "Play"}
               </Button>

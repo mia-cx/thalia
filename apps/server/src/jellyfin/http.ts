@@ -109,9 +109,9 @@ function compile(route: Route) {
 }
 
 /**
- * Creates the Jellyfin translation layer handler. It answers matched routes, and a
- * JSON 404 for any other path under a Jellyfin root written in Jellyfin's own casing.
- * Everything else returns undefined so Thalia's own screens can use lowercase paths.
+ * Creates the Jellyfin translation layer handler. It owns every path outside
+ * Thalia's `/api` and `/web` (ADR 0017): it answers matched routes and a JSON
+ * 404 for anything else.
  */
 export function createJellyfinHandler(db: Database, routes: readonly Route[]) {
   // Literal operations precede parameter routes, so `/Items/Latest` is not an Item id.
@@ -119,21 +119,18 @@ export function createJellyfinHandler(db: Database, routes: readonly Route[]) {
     const score = (path: string) => path.replace(/\{[^}]+\}/g, "").length;
     return score(b.route.path) - score(a.route.path);
   });
-  const roots = new Set(routes.map((route) => route.path.split("/")[1]));
   return async (
     request: Request,
     peerAddress: string,
     server: Timeouts = noTimeouts,
-  ): Promise<Response | undefined> => {
+  ): Promise<Response> => {
     const url = new URL(request.url);
     const candidates = compiled.flatMap(({ route, pattern }) => {
       const match = pattern.exec(url.pathname);
       return match === null ? [] : [{ route, params: match.groups ?? {} }];
     });
     if (candidates.length === 0)
-      return roots.has(url.pathname.split("/")[1])
-        ? responseFor(request, failure(404, "NOT_FOUND", "Not found."))
-        : undefined;
+      return responseFor(request, failure(404, "NOT_FOUND", "Not found."));
     const found = candidates.find(
       ({ route }) => route.method === request.method,
     );

@@ -5,6 +5,7 @@ import Failure from "$lib/components/Failure.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Select from "$lib/components/ui/select/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 import { rungLabel } from "$lib/stored.ts";
 
@@ -68,7 +69,7 @@ async function request() {
     <p class="text-subheadline text-label-secondary">
       This library stores no Versions.
       <a
-        href="/admin/libraries/{detail.homeLibraryId}"
+        href="{webBase}/admin/libraries/{detail.homeLibraryId}"
         class="text-label underline underline-offset-2"
         >Choose its stored Versions</a
       >

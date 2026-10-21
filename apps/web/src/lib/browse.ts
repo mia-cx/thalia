@@ -1,4 +1,5 @@
 import type { ThaliaClient } from "./api.ts";
+import { webBase } from "./paths.js";
 
 /** One Item as the detail pages read it. */
 export type ItemDetail = Awaited<ReturnType<ThaliaClient["items"]["get"]>>;
@@ -26,8 +27,8 @@ export function itemHref(card: {
   parentId?: string | null;
   show?: { id: string } | null;
 }): string | null {
-  if (card.kind === "movie") return `/movies/${card.id}`;
-  if (card.kind === "show") return `/shows/${card.id}`;
+  if (card.kind === "movie") return `${webBase}/movies/${card.id}`;
+  if (card.kind === "show") return `${webBase}/shows/${card.id}`;
   if (
     card.show === null ||
     card.show === undefined ||
@@ -36,8 +37,8 @@ export function itemHref(card: {
   )
     return null;
   if (card.kind === "season")
-    return `/shows/${card.show.id}/seasons/${card.id}`;
-  return `/shows/${card.show.id}/seasons/${card.parentId}/episodes/${card.id}`;
+    return `${webBase}/shows/${card.show.id}/seasons/${card.id}`;
+  return `${webBase}/shows/${card.show.id}/seasons/${card.parentId}/episodes/${card.id}`;
 }
 
 /** The resized artwork URL at a pixel width. */

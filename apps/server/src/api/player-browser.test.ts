@@ -272,7 +272,7 @@ describe.skipIf(!databaseUrl || browser === undefined)("web player", () => {
             if (scanned.itemId === null || versionId === undefined)
               throw new Error(`Expected one Item and Version in ${folder}.`);
             const itemId = scanned.itemId;
-            const next = `/play/${itemId}?version=${versionId}`;
+            const next = `/web/play/${itemId}?version=${versionId}`;
             const close = await clickPlay(
               browser,
               `http://127.0.0.1:${signIn.port}/?next=${encodeURIComponent(next)}`,

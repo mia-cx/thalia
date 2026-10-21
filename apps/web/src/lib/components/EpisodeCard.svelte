@@ -8,6 +8,7 @@ import {
 } from "$lib/browse.ts";
 import Artwork from "$lib/components/Artwork.svelte";
 import CardMenu from "$lib/components/CardMenu.svelte";
+import { webBase } from "$lib/paths.js";
 
 const {
   episode,
@@ -60,7 +61,7 @@ const artworkId = $derived(landscapeArtwork(episode));
       : 'ring-1 ring-label/8'}"
   >
     <a
-      href="/play/{episode.id}"
+      href="{webBase}/play/{episode.id}"
       aria-label={label}
       aria-current={current ? "page" : undefined}
       class="block rounded-poster outline-none"

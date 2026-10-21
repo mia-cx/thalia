@@ -31,7 +31,7 @@ import type { thaliaRouter } from "./router.ts";
 
 function rpcClient(base: string, token: string) {
   const link = new RPCLink({
-    url: `${base}/rpc`,
+    url: `${base}/api/rpc`,
     headers: { authorization: `Bearer ${token}` },
   });
   return createORPCClient<RouterClient<typeof thaliaRouter>>(link);

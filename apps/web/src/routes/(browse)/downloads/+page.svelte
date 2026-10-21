@@ -19,6 +19,7 @@ import {
   downloads,
   downloadsSupported,
 } from "$lib/downloads/index.ts";
+import { webBase } from "$lib/paths.js";
 
 const supported = downloadsSupported();
 const unavailable = $derived($downloads.unavailable);
@@ -101,7 +102,7 @@ async function update(call: () => Promise<void>) {
       <FormGroup loading={ready ? 0 : 2}>
         {#if ready && records.length === 0}
           <EmptyState icon={DownloadIcon} title="No downloads">
-            <Button variant="secondary" href="/movies">Browse movies</Button>
+            <Button variant="secondary" href="{webBase}/movies">Browse movies</Button>
           </EmptyState>
         {:else if ready}
           {#each records as record (record.versionId)}

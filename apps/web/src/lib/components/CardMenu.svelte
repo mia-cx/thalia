@@ -4,6 +4,7 @@ import { goto } from "$app/navigation";
 import { type BrowseCard, cardLabel, itemHref } from "$lib/browse.ts";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.ts";
+import { webBase } from "$lib/paths.js";
 
 const {
   card,
@@ -16,8 +17,8 @@ const {
 const href = $derived(itemHref(card));
 const showHref = $derived(
   card.kind === "show"
-    ? `/shows/${card.id}`
-    : (card.show && `/shows/${card.show.id}`) || null,
+    ? `${webBase}/shows/${card.id}`
+    : (card.show && `${webBase}/shows/${card.show.id}`) || null,
 );
 // The pages a card can open: its own, then its Show's.
 const items = $derived.by(() => {
@@ -50,7 +51,7 @@ const items = $derived.by(() => {
     {/each}
     {#if progress !== null}
       <DropdownMenu.Separator />
-      <DropdownMenu.Item onSelect={() => goto(`/play/${card.id}?t=0`)}>
+      <DropdownMenu.Item onSelect={() => goto(`${webBase}/play/${card.id}?t=0`)}>
         Play from start
       </DropdownMenu.Item>
     {/if}

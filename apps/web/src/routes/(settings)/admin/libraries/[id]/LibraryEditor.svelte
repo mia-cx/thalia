@@ -21,6 +21,7 @@ import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import { readFailure } from "$lib/errors.ts";
 import { followLibrary } from "$lib/events.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 import { queuesScan, type RootDraft } from "$lib/roots.ts";
 import { type ScanStatus, waitForScan } from "$lib/scan.ts";
@@ -223,7 +224,7 @@ async function deleteLibrary() {
   try {
     await client.libraries.delete({ id });
     toast.success(`${current.name} deleted`);
-    await goto("/admin/libraries");
+    await goto(`${webBase}/admin/libraries`);
   } catch (error) {
     // ConfirmDialog has no error state; let it close and show the failure instead.
     deleteFailure = readFailure(error);
@@ -233,7 +234,7 @@ async function deleteLibrary() {
 
 <AdminPage
   title={library.data?.name ?? "Library"}
-  parent={{ href: "/admin/libraries", label: "Libraries" }}
+  parent={{ href: `${webBase}/admin/libraries`, label: "Libraries" }}
 >
   <FormGroup
     onsubmit={saveName}

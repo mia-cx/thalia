@@ -56,53 +56,59 @@ describe("matchSections", () => {
 describe("currentSection", () => {
   const at = (path: string) => currentSection(new URL(`http://x${path}`));
 
-  test("/admin is overview", () => {
-    expect(at("/admin")).toBe("overview");
+  test("/web/admin is overview", () => {
+    expect(at("/web/admin")).toBe("overview");
   });
 
-  test("/admin/overview is overview", () => {
-    expect(at("/admin/overview")).toBe("overview");
+  test("/web/admin/overview is overview", () => {
+    expect(at("/web/admin/overview")).toBe("overview");
   });
 
   test("nested paths count", () => {
-    expect(at("/admin/users/abc")).toBe("users");
-    expect(at("/admin/libraries/abc/scan")).toBe("libraries");
+    expect(at("/web/admin/users/abc")).toBe("users");
+    expect(at("/web/admin/libraries/abc/scan")).toBe("libraries");
   });
 
   test("non-admin paths are undefined", () => {
-    expect(at("/movies")).toBeUndefined();
+    expect(at("/web/movies")).toBeUndefined();
   });
 
-  test("/settings/account is account", () => {
-    expect(at("/settings")).toBeUndefined();
-    expect(at("/settings/account")).toBe("account");
-    expect(at("/settings/account/password")).toBe("account");
-    expect(at("/settings/playback")).toBe("playback");
+  test("/web/settings/account is account", () => {
+    expect(at("/web/settings")).toBeUndefined();
+    expect(at("/web/settings/account")).toBe("account");
+    expect(at("/web/settings/account/password")).toBe("account");
+    expect(at("/web/settings/playback")).toBe("playback");
   });
 });
 
 describe("navDirection", () => {
   test("deeper pushes", () => {
-    expect(navDirection("/admin", "/admin/users")).toBe("push");
-    expect(navDirection("/admin/users", "/admin/users/abc")).toBe("push");
+    expect(navDirection("/web/admin", "/web/admin/users")).toBe("push");
+    expect(navDirection("/web/admin/users", "/web/admin/users/abc")).toBe(
+      "push",
+    );
   });
 
   test("shallower pops", () => {
-    expect(navDirection("/admin/users/abc", "/admin/users")).toBe("pop");
-    expect(navDirection("/admin/users", "/admin")).toBe("pop");
+    expect(navDirection("/web/admin/users/abc", "/web/admin/users")).toBe(
+      "pop",
+    );
+    expect(navDirection("/web/admin/users", "/web/admin")).toBe("pop");
   });
 
   test("same depth or non-admin paths are null", () => {
-    expect(navDirection("/admin/users", "/admin/groups")).toBeNull();
-    expect(navDirection("/admin", "/movies")).toBeNull();
-    expect(navDirection("/movies", "/admin/users")).toBeNull();
+    expect(navDirection("/web/admin/users", "/web/admin/groups")).toBeNull();
+    expect(navDirection("/web/admin", "/web/movies")).toBeNull();
+    expect(navDirection("/web/movies", "/web/admin/users")).toBeNull();
   });
 
-  test("/settings paths push and pop like /admin ones", () => {
-    expect(navDirection("/settings", "/settings/account")).toBe("push");
-    expect(navDirection("/settings/account", "/settings")).toBe("pop");
-    expect(navDirection("/settings", "/admin/users")).toBe("push");
-    expect(navDirection("/admin/users", "/settings/account")).toBeNull();
+  test("/web/settings paths push and pop like /admin ones", () => {
+    expect(navDirection("/web/settings", "/web/settings/account")).toBe("push");
+    expect(navDirection("/web/settings/account", "/web/settings")).toBe("pop");
+    expect(navDirection("/web/settings", "/web/admin/users")).toBe("push");
+    expect(
+      navDirection("/web/admin/users", "/web/settings/account"),
+    ).toBeNull();
   });
 });
 

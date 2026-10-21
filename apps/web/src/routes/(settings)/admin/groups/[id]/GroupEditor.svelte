@@ -6,6 +6,7 @@ import AdminPage from "$lib/components/admin/AdminPage.svelte";
 import FormGroup from "$lib/components/admin/FormGroup.svelte";
 import ListRow from "$lib/components/admin/ListRow.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 
 // The route keys this component on the id, so it never outlives its group.
@@ -19,7 +20,7 @@ const everything = $derived(group?.builtIn === true && group.name === "admins");
 
 <AdminPage
   title={group?.name ?? "Group"}
-  parent={{ href: "/admin/groups", label: "Groups" }}
+  parent={{ href: `${webBase}/admin/groups`, label: "Groups" }}
 >
   {#if missing}
     <FormGroup

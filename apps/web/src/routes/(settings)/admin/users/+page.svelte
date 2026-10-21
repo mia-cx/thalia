@@ -12,6 +12,7 @@ import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import * as Select from "$lib/components/ui/select/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 import { initials } from "$lib/shell.ts";
 
@@ -117,7 +118,7 @@ const dayOptions = [
       <ListRow
         title={row.displayName}
         caption="@{row.username}{row.email ? ` · ${row.email}` : ''}"
-        href="/admin/users/{row.id}"
+        href="{webBase}/admin/users/{row.id}"
       >
         {#snippet leading()}
           <span
@@ -177,7 +178,7 @@ const dayOptions = [
     </FormGroup>
 
     {#if inviteResult}
-      {@const link = `${location.origin}/invite/${inviteResult.token}`}
+      {@const link = `${location.origin}${webBase}/invite/${inviteResult.token}`}
       <FormGroup
         title="Invite link"
         description="For {inviteResult.invite.email}. Expires {instant.format(

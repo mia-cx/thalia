@@ -395,7 +395,7 @@ describe.skipIf(!databaseUrl)("playback sessions", () => {
         const client = (token: string) =>
           createORPCClient<RouterClient<typeof thaliaRouter>>(
             new RPCLink({
-              url: `${base}/rpc`,
+              url: `${base}/api/rpc`,
               headers: { authorization: `Bearer ${token}` },
             }),
           );

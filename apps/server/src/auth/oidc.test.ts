@@ -285,7 +285,7 @@ function oidcCallback(flow: { callbackUrl?: string; flowCookie: string }) {
 /** Checks a successful callback sends the browser home, then reads its session through me. */
 async function signedIn(base: string, callback: Response) {
   expect(callback.status).toBe(303);
-  expect(callback.headers.get("location")).toBe("/");
+  expect(callback.headers.get("location")).toBe("/web/");
   const session = callback.headers
     .getSetCookie()
     .find((cookie) => cookie.startsWith("thalia_session="));
@@ -302,7 +302,7 @@ async function signedIn(base: string, callback: Response) {
 
 function expectLoginError(response: Response, code: string) {
   expect(response.status).toBe(303);
-  expect(response.headers.get("location")).toBe(`/login?error=${code}`);
+  expect(response.headers.get("location")).toBe(`/web/login?error=${code}`);
 }
 
 async function configureOidc(

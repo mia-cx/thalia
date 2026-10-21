@@ -19,7 +19,7 @@ const device = {
 
 function rpcClient(base: string, token?: string) {
   const link = new RPCLink({
-    url: `${base}/rpc`,
+    url: `${base}/api/rpc`,
     headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
   });
   return createORPCClient<RouterClient<typeof thaliaRouter>>(link);

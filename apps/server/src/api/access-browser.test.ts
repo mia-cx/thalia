@@ -191,7 +191,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           const base = `http://127.0.0.1:${server.apiServer?.port}`;
           const page = await openPage();
           try {
-            await signIn(page, base, token, "/admin/users");
+            await signIn(page, base, token, "/web/admin/users");
             await page.eval(fill("addUsername", "newbie"));
             await page.eval(fill("addPassword", "newbie-pass"));
             await page.eval(fill("addDisplayName", "Newbie"));
@@ -207,7 +207,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             });
             if (!created) throw new Error("The account was not created.");
 
-            await signIn(page, base, token, `/admin/users/${created.id}`);
+            await signIn(page, base, token, `/web/admin/users/${created.id}`);
             await page.waitFor(
               "document.querySelector('#access-object') !== null",
             );
@@ -299,13 +299,13 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           const base = `http://127.0.0.1:${server.apiServer?.port}`;
           const page = await openPage();
           try {
-            await signIn(page, base, token, "/admin/groups");
+            await signIn(page, base, token, "/web/admin/groups");
             await page.eval(fill("addName", "Family"));
             await page.eval(
               "[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Create group')?.click()",
             );
             await page.waitFor(
-              "location.pathname.startsWith('/admin/groups/')",
+              "location.pathname.startsWith('/web/admin/groups/')",
             );
             await page.waitFor(
               "document.querySelector('#access-object') !== null",
@@ -384,7 +384,12 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               ]),
             );
 
-            await signIn(page, base, token, `/admin/libraries/${library.id}`);
+            await signIn(
+              page,
+              base,
+              token,
+              `/web/admin/libraries/${library.id}`,
+            );
             await page.waitFor(
               removeButtonPresent("Remove the View rule for Family"),
             );
@@ -392,7 +397,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             await click(page, "#access-action");
             expect(await optionLabels(page)).not.toContain("Manage server");
             await pick(page, "View");
-            await signIn(page, base, token, `/shows/${showA.id}`);
+            await signIn(page, base, token, `/web/shows/${showA.id}`);
             await page.waitFor(
               removeButtonPresent("Remove the Download rule for Family"),
             );
@@ -423,7 +428,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           const base = `http://127.0.0.1:${server.apiServer?.port}`;
           const page = await openPage();
           try {
-            await signIn(page, base, token, `/admin/users/${newbie.id}`);
+            await signIn(page, base, token, `/web/admin/users/${newbie.id}`);
             await page.waitFor(
               "document.querySelector('#access-object') !== null",
             );

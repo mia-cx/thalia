@@ -1,4 +1,5 @@
 import { reachServer, ServerUnreachable } from "./api.ts";
+import { webBase } from "./paths.js";
 
 /** The icon key a section row renders; AdminNav maps each key to a Lucide component. */
 export type AdminIcon =
@@ -26,14 +27,14 @@ export const adminSectionGroups: readonly (readonly AdminSection[])[] = [
   [
     {
       id: "overview",
-      href: "/admin/overview",
+      href: `${webBase}/admin/overview`,
       label: "Overview",
       icon: "gauge",
       keywords: ["health", "status", "server", "database", "scan", "playing"],
     },
     {
       id: "activity",
-      href: "/admin/activity",
+      href: `${webBase}/admin/activity`,
       label: "Activity",
       icon: "activity",
       keywords: [
@@ -49,14 +50,14 @@ export const adminSectionGroups: readonly (readonly AdminSection[])[] = [
   [
     {
       id: "libraries",
-      href: "/admin/libraries",
+      href: `${webBase}/admin/libraries`,
       label: "Libraries",
       icon: "library",
       keywords: ["media", "folders", "roots", "scan", "policies", "versions"],
     },
     {
       id: "users",
-      href: "/admin/users",
+      href: `${webBase}/admin/users`,
       label: "Users",
       icon: "users",
       keywords: [
@@ -70,7 +71,7 @@ export const adminSectionGroups: readonly (readonly AdminSection[])[] = [
     },
     {
       id: "groups",
-      href: "/admin/groups",
+      href: `${webBase}/admin/groups`,
       label: "Groups",
       icon: "shield-check",
       keywords: ["permissions", "roles"],
@@ -79,14 +80,14 @@ export const adminSectionGroups: readonly (readonly AdminSection[])[] = [
   [
     {
       id: "plugins",
-      href: "/admin/plugins",
+      href: `${webBase}/admin/plugins`,
       label: "Plugins",
       icon: "puzzle",
       keywords: ["extensions", "registry", "install"],
     },
     {
       id: "general",
-      href: "/admin/settings",
+      href: `${webBase}/admin/settings`,
       label: "General",
       icon: "settings",
       keywords: [
@@ -108,14 +109,14 @@ export const adminSectionGroups: readonly (readonly AdminSection[])[] = [
 export const personalSections: readonly AdminSection[] = [
   {
     id: "account",
-    href: "/settings/account",
+    href: `${webBase}/settings/account`,
     label: "Account",
     icon: "user-round",
     keywords: ["name", "display name", "password", "profile"],
   },
   {
     id: "playback",
-    href: "/settings/playback",
+    href: `${webBase}/settings/playback`,
     label: "Playback",
     icon: "circle-play",
     keywords: ["direct stream", "quality", "autoplay", "next episode"],
@@ -145,7 +146,8 @@ export function matchSections(
 /** The section a URL belongs to; `/admin` is overview, prefixes count. */
 export function currentSection(url: URL): string | undefined {
   const path = url.pathname;
-  if (path === "/admin" || path === "/admin/") return "overview";
+  if (path === `${webBase}/admin` || path === `${webBase}/admin/`)
+    return "overview";
   for (const section of [...personalSections, ...adminSections]) {
     if (path === section.href || path.startsWith(`${section.href}/`))
       return section.id;
@@ -153,8 +155,10 @@ export function currentSection(url: URL): string | undefined {
   return undefined;
 }
 
-/** Depth of a settings path: `/admin` or `/settings` is 0, a section is 1, a detail page is 2. */
-function adminDepth(path: string): number | undefined {
+/** Depth of a settings pathname: `/web/admin` or `/web/settings` is 0, a section is 1, a detail page is 2. */
+function adminDepth(pathname: string): number | undefined {
+  if (!pathname.startsWith(`${webBase}/`)) return undefined;
+  const path = pathname.slice(webBase.length);
   if (
     path === "/admin" ||
     path === "/admin/" ||

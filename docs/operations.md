@@ -59,6 +59,19 @@ Thalia keeps artwork originals in one store, chosen once at setup. Moving existi
 
 Every role that serves the API or runs jobs reads the same settings and refuses to start when they are invalid. `compose.yaml` keeps the default and falls back to the `thalia-data` volume.
 
+## Paths
+
+The api serves everything on `THALIA_PORT`, split by path ([ADR 0017](./adr/0017-one-port-jellyfin-at-the-root.md)):
+
+| Path | Serves |
+| --- | --- |
+| `/web/` | The web app. `/` redirects here. |
+| `/api/` | The Thalia API: REST, the typed RPC client at `/api/rpc/`, auth, playback, artwork, subtitles, webhooks, the watcher routes and plugin routes at `/api/ext/<plugin>/`. |
+| `/healthz`, `/readyz` | The probes. |
+| everything else | The Jellyfin layer and its `/socket` websocket. An unknown path is a JSON 404. |
+
+Point Jellyfin clients at the server's root, such as `http://thalia.lan:3000`. An OIDC provider's redirect URI stays `/api/auth/oidc/callback`.
+
 ## Health
 
 The api and the transcoder each answer two probes on their own port. A worker and a watcher serve no HTTP.

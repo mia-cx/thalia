@@ -87,7 +87,7 @@ describe.skipIf(!databaseUrl || browser === undefined)("web downloads", () => {
           server = await startThalia("api", { databaseUrl: url, port: 0 });
           const base = `http://127.0.0.1:${server.apiServer?.port}`;
 
-          await signIn(page, base, token, `/movies/${itemId}`);
+          await signIn(page, base, token, `/web/movies/${itemId}`);
           await page.waitFor(byLabel("Download"), 30_000);
           // Slow enough that the file is still flowing when the page reloads.
           await page.send("Network.emulateNetworkConditions", {
@@ -108,7 +108,7 @@ describe.skipIf(!databaseUrl || browser === undefined)("web downloads", () => {
           await page.send("Page.reload", { ignoreCache: true });
           await page.waitFor("document.readyState === 'complete'");
 
-          await page.goto(`${base}/downloads`);
+          await page.goto(`${base}/web/downloads`);
           await page.waitFor(byLabel("Resume download"), 30_000);
           const restoredSize = await page.eval<number>(`(async () => {
             const root = await navigator.storage.getDirectory();

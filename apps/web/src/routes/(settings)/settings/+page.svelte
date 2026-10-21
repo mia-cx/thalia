@@ -2,13 +2,15 @@
 import { MediaQuery } from "svelte/reactivity";
 import { goto } from "$app/navigation";
 import AdminNav from "$lib/components/admin/AdminNav.svelte";
+import { webBase } from "$lib/paths.js";
 import type { PageProps } from "./$types";
 
 const { data }: PageProps = $props();
 const desktop = new MediaQuery("min-width: 64rem");
 
 $effect(() => {
-  if (desktop.current) void goto("/settings/account", { replaceState: true });
+  if (desktop.current)
+    void goto(`${webBase}/settings/account`, { replaceState: true });
 });
 </script>
 

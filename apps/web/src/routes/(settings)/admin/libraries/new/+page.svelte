@@ -10,6 +10,7 @@ import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import * as Select from "$lib/components/ui/select/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 import { type RootDraft, refusedRoot } from "$lib/roots.ts";
 
@@ -74,7 +75,9 @@ async function submit(event: SubmitEvent) {
       // The library is made either way; Scan now is on its page.
       toast.success(`${created.name} added`);
     }
-    await goto(`/admin/libraries/${created.id}`, { replaceState: true });
+    await goto(`${webBase}/admin/libraries/${created.id}`, {
+      replaceState: true,
+    });
   } catch (error) {
     const refused = refusedRoot(error);
     if (refused !== undefined && refused.index < sent.length) {
@@ -90,12 +93,12 @@ async function submit(event: SubmitEvent) {
 
 {#snippet noSource()}
   No {metadataSources[medium].noun} metadata source is set up, so posters and
-  details won't load until you add a {metadataSources[medium].key} key in <a href="/admin/settings" class="text-tint hover:underline">General settings</a>.
+  details won't load until you add a {metadataSources[medium].key} key in <a href="{webBase}/admin/settings" class="text-tint hover:underline">General settings</a>.
 {/snippet}
 
 <AdminPage
   title="New library"
-  parent={{ href: "/admin/libraries", label: "Libraries" }}
+  parent={{ href: `${webBase}/admin/libraries`, label: "Libraries" }}
 >
   <form onsubmit={submit} class="flex flex-col gap-8">
     <FormGroup

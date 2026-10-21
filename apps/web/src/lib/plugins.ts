@@ -30,7 +30,7 @@ const capabilityLabels: Record<Capability, string> = {
   shelves: "Add shelves to Home and item pages",
   events: "Receive server events",
   jobs: "Run scheduled jobs",
-  http: "Serve its own pages under /plugins/",
+  http: "Serve its own pages under /api/ext/",
   network: "Reach the internet",
   files: "Read, change and delete files in your libraries",
 };

@@ -171,7 +171,7 @@ describe.skipIf(!databaseUrl)("stored playback", () => {
                 RouterClient<typeof thaliaRouter>
               >(
                 new RPCLink({
-                  url: `${base}/rpc`,
+                  url: `${base}/api/rpc`,
                   headers: { authorization: `Bearer ${token}` },
                 }),
               );
@@ -405,7 +405,7 @@ describe.skipIf(!databaseUrl)("stored playback", () => {
                 RouterClient<typeof thaliaRouter>
               >(
                 new RPCLink({
-                  url: `${base}/rpc`,
+                  url: `${base}/api/rpc`,
                   headers: { authorization: `Bearer ${token}` },
                 }),
               );
@@ -453,7 +453,9 @@ describe.skipIf(!databaseUrl)("stored playback", () => {
                   },
                 },
                 {
-                  request: new Request("http://thalia.test/rpc/playback/plan"),
+                  request: new Request(
+                    "http://thalia.test/api/rpc/playback/plan",
+                  ),
                   peerAddress: "127.0.0.1",
                 },
               );

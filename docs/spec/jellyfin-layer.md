@@ -3,6 +3,8 @@
 Thalia mirrors Jellyfin's official stable OpenAPI contract. Every documented operation has a route, including HEAD requests.
 The adapter uses Thalia's core functions. It runs no database queries and does not put Jellyfin DTOs in the core.
 
+The layer owns every path outside `/api`, `/web`, `/healthz` and `/readyz` ([ADR 0017](../adr/0017-one-port-jellyfin-at-the-root.md)), matched without regard to case, so clients find it at the server's root. A path no route matches answers a JSON 404.
+
 ## Contract
 
 - Jellyfin 12.2.0, released as [v12.2](https://github.com/jellyfin/jellyfin/releases/tag/v12.2).

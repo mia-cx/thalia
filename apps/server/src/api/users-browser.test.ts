@@ -50,7 +50,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           const base = `http://127.0.0.1:${server.apiServer?.port}`;
           const page = await openPage();
           try {
-            await signIn(page, base, token, `/admin/users/${viewer.id}`);
+            await signIn(page, base, token, `/web/admin/users/${viewer.id}`);
             await page.waitFor(
               "document.querySelector('#preferDirectStream:not([disabled])') !== null",
             );
@@ -73,7 +73,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             );
 
             // A reload drops the override and shows the saved state.
-            await page.goto(`${base}/admin/users/${viewer.id}`);
+            await page.goto(`${base}/web/admin/users/${viewer.id}`);
             await page.waitFor(
               "document.querySelector('#preferDirectStream:not([disabled])') !== null && document.querySelector('#preferDirectStream').getAttribute('aria-checked') === 'true'",
             );

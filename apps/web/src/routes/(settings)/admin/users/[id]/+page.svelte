@@ -16,6 +16,7 @@ import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import { Switch } from "$lib/components/ui/switch/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 import type { PageProps } from "./$types";
 
@@ -264,7 +265,8 @@ async function revoke(sessionId: string) {
     if (!currentVisit(target, generation)) return;
     await sessions.reload();
     if (!currentVisit(target, generation)) return;
-    if (sessions.failure?.code === "UNAUTHORIZED") await goto("/login");
+    if (sessions.failure?.code === "UNAUTHORIZED")
+      await goto(`${webBase}/login`);
     else toast.success("Session revoked");
   } catch (error) {
     if (currentVisit(target, generation))
@@ -277,7 +279,7 @@ async function revoke(sessionId: string) {
 
 <AdminPage
   title={displayName}
-  parent={{ href: "/admin/users", label: "Users" }}
+  parent={{ href: `${webBase}/admin/users`, label: "Users" }}
 >
   <FormGroup
     title="Account"

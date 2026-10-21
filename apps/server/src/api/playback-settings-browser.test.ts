@@ -50,7 +50,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
           const base = `http://127.0.0.1:${server.apiServer?.port}`;
           const page = await openPage();
           try {
-            await signIn(page, base, token, "/settings/playback");
+            await signIn(page, base, token, "/web/settings/playback");
             await page.waitFor(
               "document.querySelector('#preferDirectStream:not([disabled])') !== null",
             );
@@ -74,7 +74,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             );
 
             // A reload shows the saved state.
-            await page.goto(`${base}/settings/playback`);
+            await page.goto(`${base}/web/settings/playback`);
             await page.waitFor(
               "document.querySelector('#preferDirectStream:not([disabled])') !== null && document.querySelector('#preferDirectStream').getAttribute('aria-checked') === 'true'",
             );

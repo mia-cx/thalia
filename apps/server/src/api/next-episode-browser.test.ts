@@ -125,7 +125,7 @@ describe.skipIf(!databaseUrl || browser === undefined)("next Episode", () => {
           const api = `http://127.0.0.1:${server.apiServer?.port}`;
           const page = await openPage();
           try {
-            await signIn(page, api, token, `/play/${first}`);
+            await signIn(page, api, token, `/web/play/${first}`);
             // Wait for the source before playing with CDP's user gesture. A
             // transport click can race the initial autoplay and pause it.
             await page.waitFor(
@@ -134,7 +134,7 @@ describe.skipIf(!databaseUrl || browser === undefined)("next Episode", () => {
             await page.eval("document.querySelector('video').play()");
             // E1 ends, the end card counts five seconds, E2 plays to its end.
             await page.waitFor(
-              `location.pathname === ${JSON.stringify(`/play/${second}`)}`,
+              `location.pathname === ${JSON.stringify(`/web/play/${second}`)}`,
               30_000,
             );
             await page.waitFor(
@@ -157,7 +157,7 @@ describe.skipIf(!databaseUrl || browser === undefined)("next Episode", () => {
               expect(sessions).toHaveLength(1);
             }
             expect(await page.eval<string>("location.pathname")).toBe(
-              `/play/${second}`,
+              `/web/play/${second}`,
             );
           } finally {
             await page.close();

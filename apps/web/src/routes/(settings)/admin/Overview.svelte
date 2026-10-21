@@ -19,6 +19,7 @@ import ScanState from "$lib/components/admin/ScanState.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { type FailureCode, readFailure } from "$lib/errors.ts";
 import { followEvents } from "$lib/events.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 import type { ScanStatus } from "$lib/scan.ts";
 import {
@@ -340,7 +341,7 @@ onDestroy(() => {
         <ListRow
           title={library.name}
           caption={mediumLabels[library.medium]}
-          href="/admin/libraries/{library.id}"
+          href="{webBase}/admin/libraries/{library.id}"
         >
           <ScanState status={scans[library.id]} />
         </ListRow>
@@ -360,7 +361,7 @@ onDestroy(() => {
           disabled={libraries.loading}>Try again</Button
         >
       {:else if libraries.data?.length === 0}
-        <Button variant="secondary" href="/admin/libraries"
+        <Button variant="secondary" href="{webBase}/admin/libraries"
           >Add a library</Button
         >
       {/if}
@@ -446,7 +447,7 @@ onDestroy(() => {
       </div>
     {/each}
     {#snippet actions()}
-      <Button variant="secondary" size="sm" href="/admin/activity"
+      <Button variant="secondary" size="sm" href="{webBase}/admin/activity"
         >Open Activity</Button
       >
     {/snippet}

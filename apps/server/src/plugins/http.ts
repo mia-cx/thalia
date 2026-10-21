@@ -12,7 +12,7 @@ import {
 } from "./runtime.ts";
 
 /** The path prefix plugin routes are served under. */
-export const pluginRoutePrefix = "/plugins/";
+export const pluginRoutePrefix = "/api/ext/";
 
 const maxBodyBytes = 1024 * 1024;
 
@@ -50,7 +50,7 @@ async function readBody(request: Request): Promise<unknown> {
 }
 
 /**
- * Serves plugin routes under `/plugins/<name>/`, with a scoped name taking two
+ * Serves plugin routes under `/api/ext/<name>/`, with a scoped name taking two
  * segments. The caller's user id is passed when a session authenticates, and
  * a POST passes the same origin check as API mutations.
  */

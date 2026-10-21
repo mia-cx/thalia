@@ -9,6 +9,7 @@ import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import { Label } from "$lib/components/ui/label/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import type { PageProps } from "./$types";
 
 const { data }: PageProps = $props();
@@ -68,7 +69,7 @@ async function submit(event: SubmitEvent) {
   failure = undefined;
   try {
     await signIn({ username, password });
-    await goto("/");
+    await goto(`${webBase}/`);
   } catch (error) {
     failure = readFailure(error);
     busy = false;

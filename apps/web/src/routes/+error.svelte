@@ -5,6 +5,7 @@ import WifiOffIcon from "@lucide/svelte/icons/wifi-off";
 import { page } from "$app/state";
 import FocusScreen from "$lib/components/FocusScreen.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
+import { webBase } from "$lib/paths.js";
 
 const state = $derived(
   page.error?.code === "UNREACHABLE"
@@ -43,7 +44,7 @@ const line = $derived(
 <FocusScreen {title} {icon}>
   {#if state === "not-found"}
     <p class="text-center text-callout text-label-secondary">{line}</p>
-    <Button href="/" size="lg" class="mt-6 w-full">Go to Home</Button>
+    <Button href="{webBase}/" size="lg" class="mt-6 w-full">Go to Home</Button>
   {:else}
     <div role="alert" class="flex w-full flex-col items-center">
       <p class="text-center text-callout text-label-secondary">{line}</p>
