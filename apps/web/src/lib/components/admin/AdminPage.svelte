@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { Snippet } from "svelte";
 import AdminBackLink from "$lib/components/admin/AdminBackLink.svelte";
+import { webBase } from "$lib/paths.js";
 
 /** The one section layout every admin page uses: back row, large title, grouped body. */
 const {
@@ -26,7 +27,7 @@ const {
       <AdminBackLink href={parent.href} label={parent.label} always />
     </div>
   {:else}
-    <AdminBackLink href="/settings" label="Settings" />
+    <AdminBackLink href="{webBase}/settings" label="Settings" />
     <!-- The hidden back row is the phone offset; desktop pads like browse. -->
     <div class="hidden lg:block lg:h-8" aria-hidden="true"></div>
   {/if}

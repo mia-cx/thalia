@@ -27,6 +27,7 @@ import StoreRequest from "$lib/components/StoreRequest.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.ts";
 import { Skeleton } from "$lib/components/ui/skeleton/index.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 
 const { id }: { id: string } = $props();
@@ -87,13 +88,15 @@ function metaLine(detail: ItemDetail): string[] {
 
 /** Where Back lands for a cold-opened page. */
 function fallbackHref(detail: ItemDetail): string {
-  if (detail.kind === "movie") return "/movies";
-  if (detail.kind === "show") return "/shows";
+  if (detail.kind === "movie") return `${webBase}/movies`;
+  if (detail.kind === "show") return `${webBase}/shows`;
   if (detail.kind === "season")
-    return detail.show === null ? "/shows" : `/shows/${detail.show.id}`;
+    return detail.show === null
+      ? `${webBase}/shows`
+      : `${webBase}/shows/${detail.show.id}`;
   return detail.show !== null && detail.parentId !== null
-    ? `/shows/${detail.show.id}/seasons/${detail.parentId}`
-    : "/shows";
+    ? `${webBase}/shows/${detail.show.id}/seasons/${detail.parentId}`
+    : `${webBase}/shows`;
 }
 
 /** The hero aside: starring actors, then the director or creator. */
@@ -132,7 +135,7 @@ function creditsAside(detail: ItemDetail) {
 
 <DetailBar
   title={item.data?.title ?? ""}
-  fallbackHref={item.data ? fallbackHref(item.data) : "/"}
+  fallbackHref={item.data ? fallbackHref(item.data) : `${webBase}/`}
   {hero}
 />
 
@@ -167,13 +170,13 @@ function creditsAside(detail: ItemDetail) {
       {#snippet eyebrow()}
         {#if detail.show && (detail.kind === "season" || detail.kind === "episode")}
           <p class="text-title-3 text-white/90">
-            <a href="/shows/{detail.show.id}" class="hover:underline"
+            <a href="{webBase}/shows/{detail.show.id}" class="hover:underline"
               >{detail.show.title}</a
             >
             {#if detail.kind === "episode" && detail.parentId !== null}
               <span aria-hidden="true"> · </span>
               <a
-                href="/shows/{detail.show.id}/seasons/{detail.parentId}"
+                href="{webBase}/shows/{detail.show.id}/seasons/{detail.parentId}"
                 class="hover:underline">{seasonLabel(detail.seasonNumber)}</a
               >
             {/if}
@@ -362,7 +365,7 @@ function creditsAside(detail: ItemDetail) {
               <Button
                 variant="secondary"
                 size="icon"
-                href="/play/{detail.id}?version={version.id}"
+                href="{webBase}/play/{detail.id}?version={version.id}"
                 aria-label="Play {version.label}"
               >
                 <PlayIcon />

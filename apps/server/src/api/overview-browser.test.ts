@@ -98,7 +98,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const page = await openPage();
             try {
               const base = `http://127.0.0.1:${server.apiServer?.port}`;
-              await signIn(page, base, token, "/admin/overview");
+              await signIn(page, base, token, "/web/admin/overview");
 
               // Only the overview gap is non-zero; its row is the button to open.
               await page.waitFor(
@@ -216,7 +216,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               "document.querySelectorAll('[data-slot=dialog-content] a').length";
             try {
               const base = `http://127.0.0.1:${server.apiServer?.port}`;
-              await signIn(page, base, token, "/admin/overview");
+              await signIn(page, base, token, "/web/admin/overview");
               await page.waitFor(
                 "[...document.querySelectorAll('button')].some(b => b.textContent.includes('No poster'))",
               );
@@ -317,7 +317,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const page = await openPage();
             try {
               const base = `http://127.0.0.1:${server.apiServer?.port}`;
-              await signIn(page, base, token, "/admin/overview");
+              await signIn(page, base, token, "/web/admin/overview");
               await page.waitFor(
                 "[...document.querySelectorAll('button')].some(b => b.textContent.includes('No poster'))",
               );
@@ -477,7 +477,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const exceptions: string[] = [];
             try {
               const base = `http://127.0.0.1:${server.apiServer?.port}`;
-              await signIn(page, base, token, "/admin/overview");
+              await signIn(page, base, token, "/web/admin/overview");
               page.on("Runtime.exceptionThrown", (e: unknown) =>
                 exceptions.push(JSON.stringify(e)),
               );
@@ -549,7 +549,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const exceptions: string[] = [];
             try {
               const base = `http://127.0.0.1:${server.apiServer?.port}`;
-              await signIn(page, base, token, "/admin/overview");
+              await signIn(page, base, token, "/web/admin/overview");
               page.on("Runtime.exceptionThrown", (e: unknown) =>
                 exceptions.push(JSON.stringify(e)),
               );
@@ -646,7 +646,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const exceptions: string[] = [];
             try {
               const base = `http://127.0.0.1:${server.apiServer?.port}`;
-              await signIn(page, base, token, "/admin/overview");
+              await signIn(page, base, token, "/web/admin/overview");
               page.on("Runtime.exceptionThrown", (e: unknown) =>
                 exceptions.push(JSON.stringify(e)),
               );
@@ -756,7 +756,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 ?.closest('section');
               return section?.innerText ?? '';
             })()`;
-              await signIn(page, base, token, "/admin");
+              await signIn(page, base, token, "/web/admin");
               await page.waitFor(`(${mediaText}).includes('Movies')`);
               await api.libraries.delete({ id: movies.id });
               // The library-list poll notices the id change and refetches all.
@@ -827,7 +827,12 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const page = await openPage();
             try {
               const base = `http://127.0.0.1:${server.apiServer?.port}`;
-              await signIn(page, base, token, `/admin/libraries/${library.id}`);
+              await signIn(
+                page,
+                base,
+                token,
+                `/web/admin/libraries/${library.id}`,
+              );
               // The show misses everything; only the overview row matters here.
               await page.waitFor(
                 "[...document.querySelectorAll('button')].some(b => b.textContent.includes('No overview'))",
@@ -913,7 +918,12 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const page = await openPage();
             try {
               const base = `http://127.0.0.1:${server.apiServer?.port}`;
-              await signIn(page, base, token, `/admin/libraries/${library.id}`);
+              await signIn(
+                page,
+                base,
+                token,
+                `/web/admin/libraries/${library.id}`,
+              );
               await page.waitFor("document.body.innerText.includes('2.4 GB')");
               await page.eval(
                 `document.querySelector(${JSON.stringify(`button[aria-label="Remove ${dirB}"]`)}).click()`,
@@ -969,7 +979,12 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                     errorReason: "ConnectionFailed",
                   }),
               );
-              await signIn(page, base, token, `/admin/libraries/${library.id}`);
+              await signIn(
+                page,
+                base,
+                token,
+                `/web/admin/libraries/${library.id}`,
+              );
               await page.waitFor(
                 "[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Try again')",
               );

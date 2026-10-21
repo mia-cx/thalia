@@ -16,6 +16,7 @@ import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import { Label } from "$lib/components/ui/label/index.ts";
 import { AuthRouteError, readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import type { PageProps } from "./$types";
 
 const { data, params }: PageProps = $props();
@@ -51,7 +52,7 @@ async function submit(event: SubmitEvent) {
       password,
       displayName: displayName.trim() === "" ? undefined : displayName,
     });
-    await goto("/");
+    await goto(`${webBase}/`);
   } catch (error) {
     try {
       if (error instanceof AuthRouteError && error.code === "INVALID_INVITE")
@@ -141,7 +142,7 @@ async function submit(event: SubmitEvent) {
     <p class="text-center text-callout text-label-secondary">
       It already created an account.
     </p>
-    <Button href="/login" size="lg" class="mt-6 w-full">Sign in</Button>
+    <Button href="{webBase}/login" size="lg" class="mt-6 w-full">Sign in</Button>
   </FocusScreen>
 {:else}
   <FocusScreen title="This invite does not exist" icon={UnlinkIcon}>

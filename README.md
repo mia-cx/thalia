@@ -19,7 +19,7 @@ docker login ghcr.io
 docker compose up -d
 ```
 
-Open http://localhost:3000 and create the admin account in the setup wizard. Inside Thalia, your media lives under `/media`: put it in `./media`, or set `THALIA_MEDIA` to its folder before `docker compose up`.
+Open http://localhost:3000/web/ and create the admin account in the setup wizard. Jellyfin clients such as Infuse and Swiftfin connect to http://localhost:3000 itself. Inside Thalia, your media lives under `/media`: put it in `./media`, or set `THALIA_MEDIA` to its folder before `docker compose up`.
 
 Movie metadata and artwork come from TMDB. Put your TMDB v3 API key, the 32-character one, in `.env` as `TMDB_API_KEY=<key>`, or run `scripts/tmdb-key-wizard.sh` to write it there. Then run `docker compose up -d` again. Thalia does not use the Read Access Token.
 

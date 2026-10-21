@@ -6,6 +6,7 @@ import { goto } from "$app/navigation";
 import { signOut } from "$lib/auth.ts";
 import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import { initials } from "$lib/shell.ts";
 
 /** The account dropdown: the caller styles the trigger, the menu offers sign out. */
@@ -27,10 +28,10 @@ async function logout() {
   signingOut = true;
   try {
     await signOut();
-    await goto("/login");
+    await goto(`${webBase}/login`);
   } catch (error) {
     const read = readFailure(error);
-    if (read.code === "UNAUTHORIZED") await goto("/login");
+    if (read.code === "UNAUTHORIZED") await goto(`${webBase}/login`);
     else toast.error("Couldn't sign out", { description: read.message });
   } finally {
     signingOut = false;

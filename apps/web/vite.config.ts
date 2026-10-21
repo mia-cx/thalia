@@ -11,7 +11,6 @@ export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],
   server: {
     proxy: {
-      "/rpc": sameOrigin,
       "/api": sameOrigin,
       "/healthz": sameOrigin,
       "/readyz": sameOrigin,

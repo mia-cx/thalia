@@ -27,6 +27,7 @@ import {
   downloadsSupported,
 } from "$lib/downloads/index.ts";
 import { followLibrary } from "$lib/events.ts";
+import { webBase } from "$lib/paths.js";
 import { pickVersion } from "$lib/playback.ts";
 import { createRatingWrites } from "$lib/rating.ts";
 import { resource } from "$lib/resource.svelte.ts";
@@ -61,7 +62,7 @@ const start = resource(async () => {
 });
 
 const href = (versionId: string, from?: number) =>
-  `/play/${detail.id}?version=${versionId}${from === undefined ? "" : `&t=${from}`}`;
+  `${webBase}/play/${detail.id}?version=${versionId}${from === undefined ? "" : `&t=${from}`}`;
 
 // A failed read still offers Play; the player reports what went wrong.
 const fallback = $derived(
@@ -239,7 +240,7 @@ onDestroy(() => refreshAbort?.abort());
       {/if}
     {/if}
   {:else if upNext !== undefined}
-    <Button size="pill" class="max-sm:flex-1 max-sm:min-w-0" href="/play/{upNext.id}">
+    <Button size="pill" class="max-sm:flex-1 max-sm:min-w-0" href="{webBase}/play/{upNext.id}">
       <PlayIcon fill="currentColor" />
       {upNext.progress !== null &&
       !upNext.progress.completed &&
@@ -348,7 +349,7 @@ onDestroy(() => refreshAbort?.abort());
               variant="glass"
               size="icon-lg"
               class="size-11 text-tint"
-              href="/downloads"
+              href="{webBase}/downloads"
               aria-label={dl}
             >
               {#if downloadRecord.state === "complete"}

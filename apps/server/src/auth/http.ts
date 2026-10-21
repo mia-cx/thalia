@@ -63,7 +63,7 @@ function loginFailure(error: unknown, headers?: Headers): Response {
     console.error(
       JSON.stringify({ level: "error", message: "auth.request.failed" }),
     );
-  return redirect(`/login?error=${code}`, headers);
+  return redirect(`/web/login?error=${code}`, headers);
 }
 
 function errorResponse(error: unknown): Response {
@@ -410,7 +410,7 @@ export function createAuthHandler(db: Database) {
               "Set-Cookie",
               clearedOidcFlowCookie(identity.secure),
             );
-            return redirect("/", headers);
+            return redirect("/web/", headers);
           } catch (error) {
             return loginFailure(
               error,

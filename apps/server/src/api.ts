@@ -36,17 +36,19 @@ export function readPort(name: string, fallback: number): number {
   return port;
 }
 
-function isApplicationPath(pathname: string): boolean {
-  return !["/api", "/rpc"].some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-}
+/** Where the web app lives; `/` redirects here, as on a Jellyfin server (ADR 0017). */
+const webPrefix = "/web";
 
+const under = (pathname: string, prefix: string) =>
+  pathname === prefix || pathname.startsWith(`${prefix}/`);
+
+/** Serves `pathname` below `/web/` from the built web app. */
 async function serveWeb(pathname: string, root: string): Promise<Response> {
   const webRoot = resolve(root);
-  const relativePath = pathname.endsWith("/")
-    ? `${pathname.slice(1)}index.html`
-    : pathname.slice(1);
+  const path = pathname.slice(webPrefix.length);
+  const relativePath = path.endsWith("/")
+    ? `${path.slice(1)}index.html`
+    : path.slice(1);
   const requestedPath = resolve(webRoot, relativePath);
   const insideWebRoot = requestedPath.startsWith(`${webRoot}${sep}`);
 
@@ -100,6 +102,17 @@ export function startApiServer(
           : Response.json({ status: "database unavailable" }, { status: 503 });
       }
 
+      if (pathname === "/" || pathname === webPrefix) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: `${webPrefix}/` },
+        });
+      }
+
+      if (pathname.startsWith(`${webPrefix}/`)) {
+        return serveWeb(pathname, webRoot);
+      }
+
       if (
         handlers.webhooks &&
         (pathname === "/api/webhooks" || pathname.startsWith("/api/webhooks/"))
@@ -138,20 +151,7 @@ export function startApiServer(
         if (response !== undefined) return response;
       }
 
-      if (handlers.socket && pathname.toLowerCase() === socketPath) {
-        return handlers.socket.upgrade(request, server);
-      }
-
-      if (handlers.jellyfin) {
-        const response = await handlers.jellyfin(
-          request,
-          server.requestIP(request)?.address ?? "",
-          server,
-        );
-        if (response !== undefined) return response;
-      }
-
-      if (handlers.api && !isApplicationPath(pathname)) {
+      if (handlers.api && under(pathname, "/api")) {
         const response = await handlers.api(
           request,
           server.requestIP(request)?.address ?? "",
@@ -160,8 +160,21 @@ export function startApiServer(
         if (response !== undefined) return response;
       }
 
-      if (isApplicationPath(pathname)) {
-        return serveWeb(pathname, webRoot);
+      if (under(pathname, "/api")) {
+        return new Response("Not found", { status: 404 });
+      }
+
+      if (handlers.socket && pathname.toLowerCase() === socketPath) {
+        return handlers.socket.upgrade(request, server);
+      }
+
+      // Every other path is Jellyfin's, so a Jellyfin client finds its routes at the root.
+      if (handlers.jellyfin) {
+        return handlers.jellyfin(
+          request,
+          server.requestIP(request)?.address ?? "",
+          server,
+        );
       }
 
       return new Response("Not found", { status: 404 });

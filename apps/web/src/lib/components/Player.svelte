@@ -24,6 +24,7 @@ import Scrubber from "$lib/components/Scrubber.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Slider from "$lib/components/ui/slider/index.ts";
 import { carryStreams } from "$lib/next-episode.ts";
+import { webBase } from "$lib/paths.js";
 import { formatPosition, pickVersion } from "$lib/playback.ts";
 import { play, type StreamChoice } from "$lib/player.ts";
 import { playerPrefs } from "$lib/player-prefs.ts";
@@ -105,7 +106,9 @@ const version = $derived(
     ? undefined
     : pickVersion(detail.versions, versionId, item.data?.progressVersionId),
 );
-const back = $derived(detail === undefined ? "/" : (itemHref(detail) ?? "/"));
+const back = $derived(
+  detail === undefined ? `${webBase}/` : (itemHref(detail) ?? `${webBase}/`),
+);
 const context = $derived(
   detail?.kind === "episode" && detail.show !== null
     ? [detail.show.title, episodeCode(detail)]
@@ -146,7 +149,7 @@ $effect(() => {
         carriedTracks = playerState?.tracks;
         const following = itemData.next;
         if (following !== null)
-          void goto(`/play/${following.id}`, {
+          void goto(`${webBase}/play/${following.id}`, {
             replaceState: true,
             keepFocus: true,
             noScroll: true,

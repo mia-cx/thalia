@@ -253,7 +253,7 @@ describe.skipIf(!databaseUrl)("OpenSubtitles", () => {
         try {
           const client = createORPCClient<RouterClient<typeof thaliaRouter>>(
             new RPCLink({
-              url: `http://127.0.0.1:${server.apiServer?.port}/rpc`,
+              url: `http://127.0.0.1:${server.apiServer?.port}/api/rpc`,
               headers: { authorization: `Bearer ${token}` },
             }),
           );
@@ -317,7 +317,7 @@ describe.skipIf(!databaseUrl)("stored subtitle tracks", () => {
           const base = `http://127.0.0.1:${server.apiServer?.port}`;
           const client = createORPCClient<RouterClient<typeof thaliaRouter>>(
             new RPCLink({
-              url: `${base}/rpc`,
+              url: `${base}/api/rpc`,
               headers: { authorization: `Bearer ${token}` },
             }),
           );

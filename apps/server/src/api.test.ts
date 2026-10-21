@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startApiServer } from "./api.ts";
-import { probeDatabase } from "./db/client.ts";
+import { type Database, probeDatabase } from "./db/client.ts";
+import { createJellyfinHandler, json } from "./jellyfin/http.ts";
 
 const alwaysReady = async () => true;
 
@@ -62,15 +63,61 @@ afterEach(() => {
   rmSync(fixtureRoot, { recursive: true, force: true });
 });
 
-test("the web root serves the prerendered page at / and the shell elsewhere", async () => {
+test("the web app lives under /web, and / redirects there", async () => {
   const server = startApiServer(alwaysReady, 0);
   const base = `http://127.0.0.1:${server.port}`;
 
   try {
-    expect(await (await fetch(`${base}/`)).text()).toContain("Thalia index");
-    expect(await (await fetch(`${base}/some/client/route`)).text()).toContain(
+    for (const path of ["/", "/web"]) {
+      const response = await fetch(`${base}${path}`, { redirect: "manual" });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe("/web/");
+    }
+    expect(await (await fetch(`${base}/web/`)).text()).toContain(
+      "Thalia index",
+    );
+    expect(await (await fetch(`${base}/web/movies`)).text()).toContain(
       "Thalia shell",
     );
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("Thalia answers under /api and Jellyfin owns every other path", async () => {
+  const jellyfin = createJellyfinHandler({} as Database, [
+    {
+      method: "GET",
+      path: "/Movies/Recommendations",
+      anonymous: true,
+      handle: () => json("jellyfin"),
+    },
+  ]);
+  const server = startApiServer(alwaysReady, 0, {
+    api: async (request) =>
+      new URL(request.url).pathname === "/api/rpc/setup/status"
+        ? Response.json("thalia")
+        : undefined,
+    jellyfin,
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+
+  try {
+    expect(await (await fetch(`${base}/api/rpc/setup/status`)).json()).toBe(
+      "thalia",
+    );
+    expect(await (await fetch(`${base}/Movies/Recommendations`)).json()).toBe(
+      "jellyfin",
+    );
+    // Unmatched paths, old web app paths among them, are Jellyfin's 404s.
+    for (const path of ["/movies", "/rpc/setup/status", "/some/client/route"]) {
+      const response = await fetch(`${base}${path}`);
+      expect(response.status).toBe(404);
+      expect(response.headers.get("content-type")).toContain(
+        "application/json",
+      );
+    }
+    expect((await fetch(`${base}/api/nothing`)).status).toBe(404);
   } finally {
     await server.stop(true);
   }

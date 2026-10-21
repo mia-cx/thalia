@@ -8,6 +8,7 @@ import AdminNav from "$lib/components/admin/AdminNav.svelte";
 import TabBar from "$lib/components/TabBar.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Tooltip from "$lib/components/ui/tooltip/index.ts";
+import { webBase } from "$lib/paths.js";
 import type { LayoutProps } from "./$types";
 
 const { data, children }: LayoutProps = $props();
@@ -55,7 +56,7 @@ onNavigate((nav) => {
     class="fixed inset-y-(--sidebar-inset) left-(--sidebar-inset) z-40 hidden w-(--sidebar-width) flex-col material rounded-2xl p-3 shadow-float lg:flex"
   >
     <div class="flex h-10 shrink-0 items-center px-2">
-      <a href="/" class="flex items-center gap-0.5 text-tint text-subheadline">
+      <a href="{webBase}/" class="flex items-center gap-0.5 text-tint text-subheadline">
         <ChevronLeftIcon class="size-4.5" />
         Home
       </a>

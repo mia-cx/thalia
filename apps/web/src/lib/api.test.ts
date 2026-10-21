@@ -27,7 +27,7 @@ test("the default client calls the page's own origin", async () => {
     ),
   });
   expect(await client.setup.status()).toEqual(status);
-  expect(requested).toEqual([`${pageOrigin}/rpc/setup/status`]);
+  expect(requested).toEqual([`${pageOrigin}/api/rpc/setup/status`]);
 });
 
 function answering(respond: () => Promise<Response>) {
@@ -73,7 +73,7 @@ describe("an unreachable server", () => {
 
   test("an aborted request keeps its abort error", async () => {
     const aborted = new DOMException("Aborted", "AbortError");
-    const caught = await reachServer("/rpc", undefined, () =>
+    const caught = await reachServer("/api/rpc", undefined, () =>
       Promise.reject(aborted),
     ).catch((error) => error);
     expect(caught).toBe(aborted);

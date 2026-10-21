@@ -210,7 +210,7 @@ describe.skipIf(!databaseUrl)("plugin admin api", () => {
             config: { greeting: "hi" },
           });
           const hello = await fetch(
-            `${base}/plugins/thalia-plugin-greeter/hello`,
+            `${base}/api/ext/thalia-plugin-greeter/hello`,
           );
           expect(await hello.json()).toEqual({ greeting: "hi", loud: false });
 
@@ -250,7 +250,7 @@ describe.skipIf(!databaseUrl)("plugin admin api", () => {
             const { integrity } = await admin.plugins.preview({ source });
             await admin.plugins.install({ source, integrity });
             const boom = await fetch(
-              `${base}/plugins/thalia-plugin-greeter/boom`,
+              `${base}/api/ext/thalia-plugin-greeter/boom`,
             );
             expect(boom.status).toBe(500);
             expect((await admin.me()).admin).toBe(true);
@@ -260,7 +260,7 @@ describe.skipIf(!databaseUrl)("plugin admin api", () => {
               failure: { message: "greeter broke" },
             });
             const gone = await fetch(
-              `${base}/plugins/thalia-plugin-greeter/hello`,
+              `${base}/api/ext/thalia-plugin-greeter/hello`,
             );
             expect(gone.status).toBe(404);
             const [restarted] = (
@@ -273,7 +273,7 @@ describe.skipIf(!databaseUrl)("plugin admin api", () => {
           });
           await withServer(url, join(folder, "fresh"), async (base) => {
             const hello = await fetch(
-              `${base}/plugins/thalia-plugin-greeter/hello`,
+              `${base}/api/ext/thalia-plugin-greeter/hello`,
             );
             expect(hello.status).toBe(200);
           });

@@ -4,17 +4,16 @@
 /// <reference lib="webworker" />
 
 // Caches the app shell so Thalia opens without its server. API calls and
-// media never pass through here: the worker answers only shell requests.
+// media never pass through here: the worker answers only shell requests,
+// which all live under the web app's base path.
 
-import { build, files, prerendered, version } from "$service-worker";
+import { base, build, files, prerendered, version } from "$service-worker";
 
 const worker = self as unknown as ServiceWorkerGlobalScope;
 
 const shellCache = `shell-${version}`;
-const fallback = "/200.html";
+const fallback = `${base}/200.html`;
 const shell = new Set([...build, ...files, ...prerendered, fallback]);
-// The api role's own routes, opened directly by OIDC redirects or a media URL.
-const serverPaths = ["/api/", "/rpc/", "/healthz", "/readyz"];
 
 worker.addEventListener("install", (event) => {
   event.waitUntil(
@@ -66,7 +65,7 @@ worker.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== worker.location.origin) return;
-  if (serverPaths.some((prefix) => url.pathname.startsWith(prefix))) return;
+  if (!url.pathname.startsWith(`${base}/`)) return;
   if (request.mode === "navigate") {
     event.respondWith(navigate(request));
     return;

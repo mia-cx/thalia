@@ -82,7 +82,7 @@ describe.skipIf(!databaseUrl)("stored playback with subtitles", () => {
             const base = `http://127.0.0.1:${server.apiServer?.port}`;
             const client = createORPCClient<Client>(
               new RPCLink({
-                url: `${base}/rpc`,
+                url: `${base}/api/rpc`,
                 headers: { authorization: `Bearer ${token}` },
               }),
             );

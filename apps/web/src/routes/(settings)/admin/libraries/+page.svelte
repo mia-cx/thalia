@@ -6,6 +6,7 @@ import ListRow from "$lib/components/admin/ListRow.svelte";
 import ScanState from "$lib/components/admin/ScanState.svelte";
 import { navIcons } from "$lib/components/nav-icons.ts";
 import { Button } from "$lib/components/ui/button/index.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 import type { ScanStatus } from "$lib/scan.ts";
 import { libraryCaption, libraryCounts } from "$lib/stats.ts";
@@ -38,7 +39,7 @@ async function loadStatuses(rows: readonly LibraryRow[]) {
 
 <AdminPage title="Libraries">
   {#snippet actions()}
-    <Button href="/admin/libraries/new">Add library</Button>
+    <Button href="{webBase}/admin/libraries/new">Add library</Button>
   {/snippet}
   <FormGroup
     loading={list.data === undefined && !list.failure ? 3 : undefined}
@@ -55,7 +56,7 @@ async function loadStatuses(rows: readonly LibraryRow[]) {
           );
           return entry === undefined ? undefined : libraryCounts(row, entry);
         })()}
-        href="/admin/libraries/{row.id}"
+        href="{webBase}/admin/libraries/{row.id}"
       >
         {#snippet leading()}
           <span

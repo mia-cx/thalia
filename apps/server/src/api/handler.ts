@@ -13,9 +13,9 @@ import { createHlsHandler } from "./hls.ts";
 import { openApiDocument } from "./openapi.ts";
 import { thaliaRouter } from "./router.ts";
 
-const eventStreamPaths = new Set(["/api/events", "/rpc/events/stream"]);
+const eventStreamPaths = new Set(["/api/events", "/api/rpc/events/stream"]);
 
-/** Creates the handler that serves the router over /rpc and /api plus the playback file routes. */
+/** Creates the handler that serves the router over /api/rpc and /api plus the playback file routes. */
 export function createApiHandler(
   db: Database,
   events: EventBroker,
@@ -45,8 +45,8 @@ export function createApiHandler(
     if (eventStreamPaths.has(pathname)) server.timeout(request, 0);
     const context: ApiContext = { db, request, peerAddress, events, plugins };
     const result =
-      pathname === "/rpc" || pathname.startsWith("/rpc/")
-        ? await rpc.handle(request, { prefix: "/rpc", context })
+      pathname === "/api/rpc" || pathname.startsWith("/api/rpc/")
+        ? await rpc.handle(request, { prefix: "/api/rpc", context })
         : await openapi.handle(request, { prefix: "/api", context });
     const response = result.response;
     if (response === undefined) return undefined;

@@ -136,7 +136,7 @@ export interface PluginHost {
     schedule(id: string, cron: string, handler: () => Promise<void>): { cancel(): void };
   };
 
-  /** Present with "http". Routes are served under /plugins/<id>/. */
+  /** Present with "http". Routes are served under /api/ext/<id>/. */
   readonly http?: {
     route(method: "GET" | "POST", path: string, handler: (request: PluginRequest) => Promise<PluginResponse>): void;
   };

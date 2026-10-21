@@ -69,11 +69,15 @@ test("answers legacy per-user routes with a JSON 404", async () => {
   }
 });
 
-test("leaves lowercase web screens to the SPA", async () => {
-  expect(
-    await get("/shows/0192f0c4-7b1a-7c3e-9a1b-2c3d4e5f6a7b"),
-  ).toBeUndefined();
-  expect(await get("/admin")).toBeUndefined();
+test("answers any unmatched path with a JSON 404", async () => {
+  for (const path of [
+    "/shows/0192f0c4-7b1a-7c3e-9a1b-2c3d4e5f6a7b",
+    "/admin",
+  ]) {
+    const response = await get(path);
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-type")).toContain("application/json");
+  }
 });
 
 test("rejects unauthenticated calls to user routes and wrong methods", async () => {

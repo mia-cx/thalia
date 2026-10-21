@@ -53,7 +53,7 @@ export function createThaliaClient(
   const link = new RPCLink({
     // oRPC builds `new URL(url)`, which rejects a bare path, so same origin
     // resolves against the page at call time.
-    url: () => `${options.origin ?? location.origin}/rpc`,
+    url: () => `${options.origin ?? location.origin}/api/rpc`,
     headers: options.headers ?? {},
     fetch: (request, init) =>
       reachServer(

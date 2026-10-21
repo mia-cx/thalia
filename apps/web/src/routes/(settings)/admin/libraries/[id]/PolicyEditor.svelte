@@ -10,6 +10,7 @@ import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import { Switch } from "$lib/components/ui/switch/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 import {
   deletedRungs,
@@ -75,7 +76,7 @@ async function save() {
     toast.success("Stored versions saved", {
       action: {
         label: "Show in Activity",
-        onClick: () => goto("/admin/activity"),
+        onClick: () => goto(`${webBase}/admin/activity`),
       },
     });
   } catch (error) {

@@ -92,7 +92,12 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             });
             const page = await openPage();
             try {
-              await signIn(page, base, token, `/admin/libraries/${library.id}`);
+              await signIn(
+                page,
+                base,
+                token,
+                `/web/admin/libraries/${library.id}`,
+              );
               await page.waitFor(
                 `[...document.querySelectorAll('button')].filter(b => b.textContent.trim() === 'Change').length === 3`,
               );
@@ -240,7 +245,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             });
             const page = await openPage();
             try {
-              await signIn(page, base, token, "/admin/libraries/new");
+              await signIn(page, base, token, "/web/admin/libraries/new");
               await page.waitFor(
                 'document.body.innerText.includes("posters and details won\'t load")',
               );
@@ -248,7 +253,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 await page.eval<string>(
                   "document.querySelector('.text-footnote a')?.href",
                 ),
-              ).toMatch(/\/admin\/settings$/);
+              ).toMatch(/\/web\/admin\/settings$/);
               expect(
                 await page.eval<boolean>(
                   "document.body.innerText.includes('add a TMDB key')",
@@ -284,7 +289,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 "document.body.innerText.includes('add a TVDB key')",
               );
 
-              await signIn(page, base, token, "/admin/settings");
+              await signIn(page, base, token, "/web/admin/settings");
               await page.waitFor(
                 'document.body.innerText.includes("until you add a key named tmdb for movies or tvdb for shows")',
               );
@@ -293,7 +298,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 name: "tmdb",
                 value: "provider-secret-value",
               });
-              await signIn(page, base, token, "/admin/settings");
+              await signIn(page, base, token, "/web/admin/settings");
               await page.waitFor(
                 'document.body.innerText.includes("until you add a key named tvdb")',
               );
@@ -304,7 +309,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               ).toBe(false);
 
               // Only shows lack a source now, so the footnote follows Medium.
-              await signIn(page, base, token, "/admin/libraries/new");
+              await signIn(page, base, token, "/web/admin/libraries/new");
               await click("#libraryMedium");
               await page.waitFor(
                 "[...document.querySelectorAll('[data-slot=select-item]')].some(i => i.textContent.trim() === 'Shows')",
@@ -369,7 +374,12 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             const base = `http://127.0.0.1:${server.apiServer?.port}`;
             const page = await openPage();
             try {
-              await signIn(page, base, token, `/admin/libraries/${library.id}`);
+              await signIn(
+                page,
+                base,
+                token,
+                `/web/admin/libraries/${library.id}`,
+              );
               await page.waitFor(
                 `[...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Change')`,
               );
@@ -495,7 +505,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 errorReason: "ConnectionFailed",
               }),
             );
-            await signIn(page, base, token, "/movies");
+            await signIn(page, base, token, "/web/movies");
             const card = `document.querySelector('a[aria-label^="Poster Fails"]')`;
             await page.waitFor(
               `${card}?.querySelector('.artwork-fallback .text-title-3')?.textContent.includes('Poster Fails')`,
@@ -582,14 +592,14 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               deviceScaleFactor: 2,
               mobile: true,
             });
-            await signIn(page, base, token, "/movies");
+            await signIn(page, base, token, "/web/movies");
             expect(
               await page.eval<boolean>(
                 `document.querySelector('button[aria-label="Menu"]') !== null`,
               ),
             ).toBe(true);
 
-            await page.goto(`${base}/movies/${item.id}`);
+            await page.goto(`${base}/web/movies/${item.id}`);
             await page.waitFor(
               `document.querySelector('a[aria-label="Back"], button[aria-label="Back"]')`,
             );

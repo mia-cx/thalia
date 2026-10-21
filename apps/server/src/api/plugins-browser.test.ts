@@ -83,7 +83,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
                 source: preview.source,
                 integrity: preview.integrity,
               });
-              await signIn(page, base, token, "/admin/plugins");
+              await signIn(page, base, token, "/web/admin/plugins");
               await page.waitFor(
                 "document.querySelector('[data-slot=switch]')",
               );
@@ -203,7 +203,7 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               await api.registries.add({
                 url: `http://127.0.0.1:${registry.port}/registry`,
               });
-              await signIn(page, base, token, "/admin/plugins");
+              await signIn(page, base, token, "/web/admin/plugins");
               await page.waitFor(
                 `[...document.querySelectorAll('button')].some(b => (b.getAttribute('aria-label') ?? '').includes(${JSON.stringify(older.name)}))`,
               );

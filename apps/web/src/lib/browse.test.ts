@@ -52,14 +52,14 @@ function card(overrides: Partial<BrowseCard>): BrowseCard {
 
 describe("browse helpers", () => {
   test("cards link to the route their medium declares", () => {
-    expect(itemHref(card({}))).toBe("/movies/item-1");
-    expect(itemHref(card({ kind: "show" }))).toBe("/shows/item-1");
+    expect(itemHref(card({}))).toBe("/web/movies/item-1");
+    expect(itemHref(card({ kind: "show" }))).toBe("/web/shows/item-1");
     expect(itemHref(card({ kind: "season", parentId: "show-1", show }))).toBe(
-      "/shows/show-1/seasons/item-1",
+      "/web/shows/show-1/seasons/item-1",
     );
     expect(
       itemHref(card({ kind: "episode", parentId: "season-1", show })),
-    ).toBe("/shows/show-1/seasons/season-1/episodes/item-1");
+    ).toBe("/web/shows/show-1/seasons/season-1/episodes/item-1");
     expect(itemHref(card({ kind: "episode", parentId: "season-1" }))).toBe(
       null,
     );

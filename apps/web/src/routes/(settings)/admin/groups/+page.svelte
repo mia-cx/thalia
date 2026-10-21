@@ -11,6 +11,7 @@ import { Badge } from "$lib/components/ui/badge/index.ts";
 import { Button } from "$lib/components/ui/button/index.ts";
 import { Input } from "$lib/components/ui/input/index.ts";
 import { readFailure } from "$lib/errors.ts";
+import { webBase } from "$lib/paths.js";
 import { resource } from "$lib/resource.svelte.ts";
 import type { PageProps } from "./$types";
 
@@ -37,7 +38,7 @@ async function addGroup(event: SubmitEvent) {
     const created = await client.groups.create({ name });
     if (addName === name) addName = "";
     toast.success(`${created.name} created`);
-    await goto(`/admin/groups/${created.id}`);
+    await goto(`${webBase}/admin/groups/${created.id}`);
   } catch (error) {
     addFailure = readFailure(error);
   } finally {
@@ -58,7 +59,7 @@ async function addGroup(event: SubmitEvent) {
       <ListRow
         title={row.name}
         caption={groupSummary(row)}
-        href="/admin/groups/{row.id}"
+        href="{webBase}/admin/groups/{row.id}"
       >
         {#if row.builtIn}
           <Badge variant="outline">Built in</Badge>

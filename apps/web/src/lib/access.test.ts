@@ -37,15 +37,15 @@ describe("objectActions", () => {
 describe("objectHref", () => {
   test("links each object type to its page", () => {
     expect(objectHref({ type: "library", id: "lib-1", name: "TV" })).toBe(
-      "/admin/libraries/lib-1",
+      "/web/admin/libraries/lib-1",
     );
-    expect(objectHref(item("movie"))).toBe("/movies/item-1");
-    expect(objectHref(item("show"))).toBe("/shows/item-1");
+    expect(objectHref(item("movie"))).toBe("/web/movies/item-1");
+    expect(objectHref(item("show"))).toBe("/web/shows/item-1");
     expect(objectHref(item("season", "show-1", "show-1"))).toBe(
-      "/shows/show-1/seasons/item-1",
+      "/web/shows/show-1/seasons/item-1",
     );
     expect(objectHref(item("episode", "season-1", "show-1"))).toBe(
-      "/shows/show-1/seasons/season-1/episodes/item-1",
+      "/web/shows/show-1/seasons/season-1/episodes/item-1",
     );
   });
 
@@ -72,18 +72,18 @@ describe("sourceHref", () => {
   test("links server rules to the subject's permissions section", () => {
     expect(rule({ type: "server", name: "Server" })).toBeDefined();
     expect(sourceHref(rule({ type: "server", name: "Server" }))).toBe(
-      "/admin/users/subject-1#permissions",
+      "/web/admin/users/subject-1#permissions",
     );
     expect(sourceHref(rule({ type: "server", name: "Server" }, "group"))).toBe(
-      "/admin/groups/subject-1#permissions",
+      "/web/admin/groups/subject-1#permissions",
     );
   });
 
   test("links other objects to their own page", () => {
     expect(sourceHref(rule({ type: "library", id: "lib-1", name: "TV" }))).toBe(
-      "/admin/libraries/lib-1",
+      "/web/admin/libraries/lib-1",
     );
-    expect(sourceHref(rule(item("show")))).toBe("/shows/item-1");
+    expect(sourceHref(rule(item("show")))).toBe("/web/shows/item-1");
   });
 });
 

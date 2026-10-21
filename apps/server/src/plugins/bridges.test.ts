@@ -175,7 +175,7 @@ host.http.route("POST", "/boom", async () => { throw new Error("route boom"); })
         const handle = createPluginRouteHandler(db, runtime);
         const hello = await handle(
           new Request(
-            "http://thalia.test/plugins/@thalia/plugin-route/hello?x=1",
+            "http://thalia.test/api/ext/@thalia/plugin-route/hello?x=1",
             {
               headers: { authorization: `Bearer ${token}` },
             },
@@ -188,7 +188,7 @@ host.http.route("POST", "/boom", async () => { throw new Error("route boom"); })
           query: { x: "1" },
         });
         const anonymous = await handle(
-          new Request("http://thalia.test/plugins/@thalia/plugin-route/hello"),
+          new Request("http://thalia.test/api/ext/@thalia/plugin-route/hello"),
           "127.0.0.1",
         );
         expect(await anonymous?.json()).toMatchObject({ userId: null });
@@ -197,7 +197,7 @@ host.http.route("POST", "/boom", async () => { throw new Error("route boom"); })
         ).toBeUndefined();
 
         const boom = await handle(
-          new Request("http://thalia.test/plugins/@thalia/plugin-route/boom", {
+          new Request("http://thalia.test/api/ext/@thalia/plugin-route/boom", {
             method: "POST",
           }),
           "127.0.0.1",
@@ -208,7 +208,7 @@ host.http.route("POST", "/boom", async () => { throw new Error("route boom"); })
           failure: { message: "route boom" },
         });
         const after = await handle(
-          new Request("http://thalia.test/plugins/@thalia/plugin-route/hello"),
+          new Request("http://thalia.test/api/ext/@thalia/plugin-route/hello"),
           "127.0.0.1",
         );
         expect(after?.status).toBe(404);
