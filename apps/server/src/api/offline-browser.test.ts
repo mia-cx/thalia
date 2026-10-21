@@ -351,9 +351,9 @@ describe.skipIf(browser === undefined)("offline playback", () => {
   test("a forced SubRip cue at the very start shows", async () => {
     await openDownload(page, base, fixtures.early);
     await page.waitFor(`${activeCues}.length > 0`, 10_000);
-    expect(await page.eval<{ text: string; start: number }[]>(activeCues)).toEqual([
-      { text: "Fixture", start: expect.closeTo(0.5, 1) },
-    ]);
+    expect(
+      await page.eval<{ text: string; start: number }[]>(activeCues),
+    ).toEqual([{ text: "Fixture", start: expect.closeTo(0.5, 1) }]);
   }, 60_000);
 
   test("a forced SubRip track shows on its own, timed right after a seek past the buffer", async () => {
@@ -388,9 +388,9 @@ describe.skipIf(browser === undefined)("offline playback", () => {
     await chooseSubtitles(page, "English (3)");
     await page.eval(`${video}.currentTime = 5`);
     await page.waitFor(`${activeCues}.length > 0`, 30_000);
-    expect(await page.eval<{ text: string; start: number }[]>(activeCues)).toEqual([
-      { text: "Stored", start: 1 },
-    ]);
+    expect(
+      await page.eval<{ text: string; start: number }[]>(activeCues),
+    ).toEqual([{ text: "Stored", start: 1 }]);
   }, 60_000);
 
   test("playing keeps one copy of each download in browser storage", async () => {
