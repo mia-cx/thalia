@@ -7,6 +7,8 @@ export type SubtitleSource =
       file: Blob;
       /** The track's place among the File's subtitle tracks. */
       position: number;
+      /** A forced track: of an image track, only forced captions show. */
+      forced: boolean;
     }
   | { kind: "file"; file: Blob; format: "srt" | "ass" | "vtt" };
 
@@ -137,6 +139,31 @@ export async function showSubtitles(
     (await reader.read(from, to)).filter(
       (block) => block.track === track.number,
     );
+  if (track.codecId === "S_HDMV/PGS" || track.codecId === "S_VOBSUB") {
+    const { bitmapOverlay, pgsDecoder, vobSubDecoder } = await import(
+      "./bitmaps.ts"
+    );
+    const decode =
+      track.codecId === "S_HDMV/PGS"
+        ? pgsDecoder(source.forced)
+        : vobSubDecoder(track.codecPrivate);
+    const overlay = bitmapOverlay(video);
+    follow(
+      video,
+      read,
+      (block) => {
+        const frame = decode(block);
+        if (frame !== null) overlay.add(frame);
+      },
+      stopped.signal,
+    );
+    return {
+      close() {
+        stopped.abort();
+        overlay.close();
+      },
+    };
+  }
   if (track.codecId === "S_TEXT/ASS" || track.codecId === "S_TEXT/SSA") {
     const header =
       track.codecPrivate === null ? "" : decoder.decode(track.codecPrivate);

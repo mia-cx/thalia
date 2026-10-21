@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, normalize } from "node:path";
 import {
   createVideoFixture,
+  pgsFixtureBox,
   type VideoFixtureOptions,
 } from "../mediums/video-common/fixtures.ts";
 import { probeVideo } from "../mediums/video-common/probe.ts";
@@ -68,6 +69,27 @@ const fixtures = {
     toneFrom: 0,
   }),
   truehd: fixture("truehd.mkv", { durationSeconds: 4, audioCodec: "truehd" }),
+  // A white box on black. The first track is forced and its caption isn't
+  // flagged forced, so it shows nothing; the second shows the box.
+  pgs: fixture("pgs.mkv", {
+    durationSeconds: longSeconds,
+    pattern: "color",
+    subtitles: ["pgs", "pgs"],
+    subtitleTime: { start: cueSeconds, end: cueSeconds + 30 },
+  }),
+  forcedPgs: fixture("forced-pgs.mkv", {
+    durationSeconds: 4,
+    pattern: "color",
+    subtitles: ["pgs"],
+    pgsForced: true,
+    subtitleTime: { start: 0.5, end: 3.5 },
+  }),
+  vobsub: fixture("vobsub.mkv", {
+    durationSeconds: 4,
+    pattern: "color",
+    subtitles: ["vobsub"],
+    subtitleTime: { start: 0.5, end: 3.5 },
+  }),
   // Black frames, so drawn subtitles are the only bright pixels. The SubRip
   // track is Dutch and forced, the ASS track English.
   early: fixture("early.mkv", {
@@ -210,36 +232,69 @@ const activeCues = `[...${video}.textTracks]
   .flatMap((track) => [...(track.activeCues ?? [])])
   .map((cue) => ({ text: cue.text, start: cue.startTime }))`;
 
-/** Counts near-white screen pixels in the video's top half and bottom quarter, with the player's bars hidden. */
+/**
+ * Finds the near-white screen pixels over the video's picture, with the
+ * player's bars hidden and subtitle canvases unshifted: how many lie in its
+ * top 40% and its bottom half, and their bounds as fractions of the picture.
+ */
 async function brightPixels(page: Page) {
-  await page.eval(
-    `document.querySelectorAll("[data-bar]").forEach((bar) => { bar.style.display = "none"; })`,
-  );
+  const chrome = (hidden: boolean) =>
+    page.eval(`(() => {
+      for (const bar of document.querySelectorAll("[data-bar]"))
+        bar.style.display = ${hidden ? '"none"' : '""'};
+      for (const canvas of document.querySelectorAll("canvas"))
+        canvas.style.transition = canvas.style.translate = ${hidden ? '"none"' : '""'};
+    })()`);
+  await chrome(true);
   const shot = (await page.send("Page.captureScreenshot", {
     format: "png",
   })) as unknown as { data: string };
-  await page.eval(
-    `document.querySelectorAll("[data-bar]").forEach((bar) => { bar.style.display = ""; })`,
-  );
-  return page.eval<{ top: number; bottom: number }>(`(async () => {
+  await chrome(false);
+  return page.eval<{
+    top: number;
+    bottom: number;
+    bounds: { left: number; top: number; right: number; bottom: number };
+  }>(`(async () => {
     const blob = await (await fetch("data:image/png;base64,${shot.data}")).blob();
     const bitmap = await createImageBitmap(blob);
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const context = canvas.getContext("2d");
     context.drawImage(bitmap, 0, 0);
     const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height);
-    const box = ${video}.getBoundingClientRect();
-    let top = 0;
-    let bottom = 0;
+    const media = ${video};
+    const element = media.getBoundingClientRect();
+    const ratio = media.videoWidth / media.videoHeight;
+    const width = Math.min(element.width, element.height * ratio);
+    const height = width / ratio;
+    const left = element.x + (element.width - width) / 2;
+    const top = element.y + (element.height - height) / 2;
+    const bounds = { left: 1, top: 1, right: 0, bottom: 0 };
+    let upper = 0;
+    let lower = 0;
     for (let y = 0; y < bitmap.height; y += 1)
       for (let x = 0; x < bitmap.width; x += 1) {
         const i = (y * bitmap.width + x) * 4;
         if (data[i] < 200 || data[i + 1] < 200 || data[i + 2] < 200) continue;
-        if (y < box.y + box.height / 2) top += 1;
-        else if (y > box.y + box.height * 0.75) bottom += 1;
+        const u = (x - left) / width;
+        const v = (y - top) / height;
+        if (v < 0.4) upper += 1;
+        else if (v > 0.5) lower += 1;
+        bounds.left = Math.min(bounds.left, u);
+        bounds.top = Math.min(bounds.top, v);
+        bounds.right = Math.max(bounds.right, (x + 1 - left) / width);
+        bounds.bottom = Math.max(bounds.bottom, (y + 1 - top) / height);
       }
-    return { top, bottom };
+    return { top: upper, bottom: lower, bounds };
   })()`);
+}
+
+/** Bright pixels once something has drawn; renderers draw a frame or two after the time arrives. */
+async function drawnPixels(page: Page) {
+  for (let attempt = 0; ; attempt += 1) {
+    const pixels = await brightPixels(page);
+    if (pixels.top + pixels.bottom > 0 || attempt === 20) return pixels;
+    await Bun.sleep(100);
+  }
 }
 
 describe.skipIf(browser === undefined)("offline playback", () => {
@@ -442,13 +497,13 @@ describe.skipIf(browser === undefined)("offline playback", () => {
     await chooseSubtitles(page, "English (2)");
     await page.waitFor("document.querySelector('canvas.JASSUB')", 30_000);
     await page.eval(`${video}.play()`);
-    expect(await brightPixels(page)).toEqual({ top: 0, bottom: 0 });
+    expect(await brightPixels(page)).toMatchObject({ top: 0, bottom: 0 });
     await page.eval(`${video}.currentTime = ${cueSeconds + 5}`);
     await page.waitFor(
       `${video}.currentTime > ${cueSeconds + 5.5} && !${video}.paused`,
       30_000,
     );
-    const drawn = await brightPixels(page);
+    const drawn = await drawnPixels(page);
     expect(drawn.top).toBe(0);
     expect(drawn.bottom).toBeGreaterThan(50);
   }, 60_000);
@@ -461,6 +516,56 @@ describe.skipIf(browser === undefined)("offline playback", () => {
     expect(
       await page.eval<{ text: string; start: number }[]>(activeCues),
     ).toEqual([{ text: "Stored", start: 1 }]);
+  }, 60_000);
+
+  test("a PGS track draws its box in place after a seek past the buffer, without dropping frames", async () => {
+    await openDownload(page, base, fixtures.pgs);
+    await chooseSubtitles(page, "English");
+    await page.waitFor("document.querySelector('canvas[data-subtitles]')");
+    await page.eval(`${video}.play()`);
+    expect(await brightPixels(page)).toMatchObject({ top: 0, bottom: 0 });
+    await page.eval(`${video}.currentTime = ${cueSeconds - 1}`);
+    await page.waitFor(`${video}.currentTime > ${cueSeconds - 0.5}`, 30_000);
+    const dropped = await page.eval<number>(
+      `${video}.getVideoPlaybackQuality().droppedVideoFrames`,
+    );
+    await page.waitFor(`${video}.currentTime > ${cueSeconds + 1.5}`, 30_000);
+    // Across the caption appearing, no frame was dropped.
+    expect(
+      await page.eval<number>(
+        `${video}.getVideoPlaybackQuality().droppedVideoFrames`,
+      ),
+    ).toBe(dropped);
+    const drawn = await drawnPixels(page);
+    const box = pgsFixtureBox(320, 180);
+    expect(drawn.top).toBe(0);
+    expect(drawn.bottom).toBeGreaterThan(1000);
+    expect(drawn.bounds.left).toBeCloseTo(box.x / 320, 1);
+    expect(drawn.bounds.right).toBeCloseTo((box.x + box.width) / 320, 1);
+    expect(drawn.bounds.top).toBeCloseTo(box.y / 180, 1);
+    expect(drawn.bounds.bottom).toBeCloseTo((box.y + box.height) / 180, 1);
+  }, 60_000);
+
+  test("a forced PGS track shows only the captions flagged forced", async () => {
+    // The forced track is on by default; its unflagged caption stays hidden.
+    await openDownload(page, base, fixtures.pgs);
+    await page.waitFor("document.querySelector('canvas[data-subtitles]')");
+    await page.eval(`${video}.currentTime = ${cueSeconds + 1}`);
+    await page.waitFor(`${video}.currentTime > ${cueSeconds + 1.5}`, 30_000);
+    expect(await brightPixels(page)).toMatchObject({ top: 0, bottom: 0 });
+    // A flagged caption on a forced track shows.
+    await openDownload(page, base, fixtures.forcedPgs);
+    await page.waitFor(`${video}.currentTime > 1`, 30_000);
+    expect((await drawnPixels(page)).bottom).toBeGreaterThan(1000);
+  }, 60_000);
+
+  test("a VobSub track draws its picture", async () => {
+    await openDownload(page, base, fixtures.vobsub);
+    await page.waitFor("document.querySelector('canvas[data-subtitles]')");
+    await page.waitFor(`${video}.currentTime > 1`, 30_000);
+    const drawn = await drawnPixels(page);
+    expect(drawn.top).toBe(0);
+    expect(drawn.bottom).toBeGreaterThan(1000);
   }, 60_000);
 
   test("playing keeps one copy of each download in browser storage", async () => {

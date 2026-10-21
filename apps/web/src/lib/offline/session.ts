@@ -33,11 +33,18 @@ type SubtitleOption = PlannedTracks["subtitleStreams"][number] & {
   source: (file: DownloadPlayback["file"]) => Promise<SubtitleSource>;
 };
 
-// Embedded subtitle codecs drawn offline, by the probe's names.
-const textCodecs = new Set(["subrip", "ass", "ssa", "webvtt"]);
+// Embedded subtitle codecs drawn offline, by the probe's names: text, ASS and images.
+const drawnCodecs = new Set([
+  "subrip",
+  "ass",
+  "ssa",
+  "webvtt",
+  "hdmv_pgs_subtitle",
+  "dvd_subtitle",
+]);
 
 /**
- * The subtitles a download offers: its Matroska text and ASS tracks, then
+ * The subtitles a download offers: its Matroska text, ASS and image tracks, then
  * the stored files saved with it, numbered past every embedded Stream.
  */
 function subtitleOptions(record: DownloadPlayback["record"]): SubtitleOption[] {
@@ -49,7 +56,7 @@ function subtitleOptions(record: DownloadPlayback["record"]): SubtitleOption[] {
     Math.max(-1, ...record.streams.map((stream) => stream.index)) + 1;
   return [
     ...embedded.flatMap((stream, position) =>
-      matroska && textCodecs.has(stream.codec)
+      matroska && drawnCodecs.has(stream.codec)
         ? [
             {
               index: stream.index,
@@ -61,6 +68,7 @@ function subtitleOptions(record: DownloadPlayback["record"]): SubtitleOption[] {
                 kind: "embedded" as const,
                 file: await file(record.versionId),
                 position,
+                forced: stream.forced,
               }),
             },
           ]
