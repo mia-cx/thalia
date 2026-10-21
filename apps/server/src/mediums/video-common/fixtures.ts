@@ -24,7 +24,9 @@ export interface VideoFixtureOptions {
   /** Adds a second audio Stream, Japanese stereo AAC carrying a 440 Hz tone; the first stays silent. */
   toneAudio?: boolean;
   /** Subtitle Streams in order, each showing "Fixture" for `subtitleTime`; default one SRT. */
-  subtitles?: readonly ("srt" | "ass" | "pgs")[];
+  subtitles?: readonly (keyof typeof subtitleFormats)[];
+  /** Flags the PGS fixture's caption as forced, as a forced-only track's are. */
+  pgsForced?: boolean;
   /** When the subtitles show; default 0 to 0.8 s. */
   subtitleTime?: SubtitleTime;
 }
@@ -66,8 +68,23 @@ const pgsSegment = (seconds: number, type: number, body: number[]) => {
 /** When the fixture's subtitles show, in seconds. */
 type SubtitleTime = { start: number; end: number };
 
+// How each subtitle format is written for ffmpeg to read, and what it muxes
+// as. VobSub is the PGS box re-encoded by ffmpeg's dvdsub encoder, which
+// takes only bitmaps.
+const subtitleFormats = {
+  srt: { file: "srt", codec: "srt" },
+  ass: { file: "ass", codec: "ass" },
+  pgs: { file: "sup", codec: "copy" },
+  vobsub: { file: "sup", codec: "dvdsub" },
+} as const;
+
 /** Builds a `.sup` that shows a white box for `time`; ffmpeg has no PGS encoder. */
-function pgsFixture(width: number, height: number, time: SubtitleTime) {
+function pgsFixture(
+  width: number,
+  height: number,
+  time: SubtitleTime,
+  forced: boolean,
+) {
   const { start, end } = time;
   const box = pgsFixtureBox(width, height);
   const video = [...u16(width), ...u16(height), 0x10];
@@ -77,9 +94,10 @@ function pgsFixture(width: number, height: number, time: SubtitleTime) {
   const line = [0, 0xc0 | (box.width >> 8), box.width & 255, 1, 0, 0];
   const rle = Array.from({ length: box.height }, () => line).flat();
   const objectLength = rle.length + 4;
-  return new Uint8Array([
-    // Epoch start: composition, window, palette, object, end.
-    ...pgsSegment(start, 0x16, [
+  // Epoch start: composition, window, palette, object, end. `alpha` 0 draws
+  // the box invisible.
+  const displaySet = (at: number, alpha: number) => [
+    ...pgsSegment(at, 0x16, [
       ...video,
       ...u16(0),
       0x80,
@@ -88,13 +106,14 @@ function pgsFixture(width: number, height: number, time: SubtitleTime) {
       1,
       ...u16(0),
       0,
-      0,
+      // The object's flags: 0x40 marks a forced caption.
+      forced ? 0x40 : 0,
       ...u16(box.x),
       ...u16(box.y),
     ]),
-    ...pgsSegment(start, 0x17, [1, ...window]),
-    ...pgsSegment(start, 0x14, [0, 0, 1, 235, 128, 128, 255]),
-    ...pgsSegment(start, 0x15, [
+    ...pgsSegment(at, 0x17, [1, ...window]),
+    ...pgsSegment(at, 0x14, [0, 0, 1, 235, 128, 128, alpha]),
+    ...pgsSegment(at, 0x15, [
       ...u16(0),
       0,
       0xc0,
@@ -104,7 +123,13 @@ function pgsFixture(width: number, height: number, time: SubtitleTime) {
       ...u16(box.height),
       ...rle,
     ]),
-    ...pgsSegment(start, 0x80, []),
+    ...pgsSegment(at, 0x80, []),
+  ];
+  return new Uint8Array([
+    // ffmpeg starts a `.sup` at its first caption, so an invisible one at
+    // zero keeps a later caption at its own time.
+    ...(start > 0 ? displaySet(0, 0) : []),
+    ...displaySet(start, 255),
     // An empty composition clears the screen.
     ...pgsSegment(end, 0x16, [...video, ...u16(1), 0, 0, 0, 0]),
     ...pgsSegment(end, 0x17, [1, ...window]),
@@ -158,6 +183,7 @@ export async function createVideoFixture(
     toneFrom,
     subtitles = ["srt"],
     subtitleTime = { start: 0, end: 0.8 },
+    pgsForced = false,
   } = options;
   if (hdr !== undefined && videoCodec !== "hevc") {
     throw new Error("An HDR fixture needs HEVC video.");
@@ -217,14 +243,14 @@ export async function createVideoFixture(
   ];
   const subtitleFiles = subtitles.map((format, index) => ({
     format,
-    path: `${path}.${index}.${format === "pgs" ? "sup" : format}`,
+    path: `${path}.${index}.${subtitleFormats[format].file}`,
   }));
   const metadataPath = `${path}.ffmetadata`;
   for (const { format, path: subtitlePath } of subtitleFiles) {
     await writeFile(
       subtitlePath,
-      format === "pgs"
-        ? pgsFixture(width, height, subtitleTime)
+      subtitleFormats[format].file === "sup"
+        ? pgsFixture(width, height, subtitleTime, pgsForced)
         : format === "ass"
           ? assFixture(subtitleTime)
           : `1\n${clock(subtitleTime.start, 3, 2)} --> ${clock(subtitleTime.end, 3, 2)}\nFixture\n`,
@@ -287,7 +313,7 @@ export async function createVideoFixture(
         ...tone.input,
         ...subtitleFiles.flatMap(({ format, path: subtitlePath }) => [
           "-f",
-          format === "pgs" ? "sup" : format,
+          subtitleFormats[format].file,
           "-i",
           subtitlePath,
         ]),
@@ -320,7 +346,7 @@ export async function createVideoFixture(
         ...tone.encode,
         ...subtitleFiles.flatMap(({ format }, index) => [
           `-c:s:${index}`,
-          format === "pgs" ? "copy" : format,
+          subtitleFormats[format].codec,
           `-metadata:s:s:${index}`,
           `language=${index === 0 ? "nld" : "eng"}`,
         ]),

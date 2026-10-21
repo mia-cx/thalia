@@ -847,12 +847,14 @@ const VolumeIcon = $derived(
     transition: transform var(--duration-fast) ease-out;
   }
 
-  /* An offline ASS track draws on JASSUB's canvas; it clears the controls too. */
-  .player :global(canvas.JASSUB) {
+  /* Offline ASS and image tracks draw on canvases; they clear the controls too. */
+  .player :global(canvas.JASSUB),
+  .player :global(canvas[data-subtitles]) {
     transition: translate var(--duration-fast) ease-out;
   }
 
-  .player[data-controls="shown"] :global(canvas.JASSUB) {
+  .player[data-controls="shown"] :global(canvas.JASSUB),
+  .player[data-controls="shown"] :global(canvas[data-subtitles]) {
     translate: 0 calc(-1 * var(--controls-height, 0px));
   }
 </style>
