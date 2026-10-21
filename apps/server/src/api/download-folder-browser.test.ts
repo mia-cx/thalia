@@ -135,7 +135,9 @@ describe.skipIf(!databaseUrl || browser === undefined)(
             })()`);
             await server.stop();
             server = undefined;
-            await page.send("Page.reload", {});
+            // Page.reload answers before the new document commits, so the old
+            // one could pass the wait; navigating answers once it commits.
+            await page.goto(`${base}/downloads`);
             await page.waitFor(hasText("In disk"), 30_000);
             await page.goto(`${base}/movies/${itemId}`);
             await page.waitFor("document.title === 'Arrival · Thalia'", 30_000);
