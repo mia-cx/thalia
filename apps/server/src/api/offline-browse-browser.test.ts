@@ -252,6 +252,11 @@ describe.skipIf(!databaseUrl || browser === undefined)(
               "!document.body.innerText.includes('Arrival')",
               30_000,
             );
+            // The row disappears before the index write and artwork cleanup finish.
+            await page.waitFor(
+              `(${savedArtwork}).then((names) => names.length === 1 && names[0] === ${JSON.stringify(showPoster)})`,
+              30_000,
+            );
             expect(await page.eval<string[]>(savedArtwork)).toEqual([
               showPoster,
             ]);
