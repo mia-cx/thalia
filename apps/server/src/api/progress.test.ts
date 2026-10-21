@@ -541,6 +541,97 @@ describe.skipIf(!databaseUrl)("playback progress", () => {
       }
     }));
 
+  test("offline progress syncs by when it happened, and newer progress wins", () =>
+    withDatabase(async (db, url) => {
+      await migrateDatabase(db);
+      const fx = await seed(db);
+      const version = await addVersion(db, fx);
+      const session = await addSession(db, fx.owner.id, fx.item.id, version.id);
+      const server = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const base = `http://127.0.0.1:${server.apiServer?.port}`;
+        const client = rpcClient(base, fx.keyToken);
+        const minutesAgo = (n: number) =>
+          new Date(Date.now() - n * 60_000).toISOString();
+        const offline = {
+          itemId: fx.item.id,
+          versionId: version.id,
+          completed: false,
+        };
+
+        const tenAgo = minutesAgo(10);
+        const first = await client.playback.syncProgress({
+          ...offline,
+          positionSeconds: 30,
+          at: tenAgo,
+        });
+        expect(first.applied).toBe(true);
+        expect(first.progress).toMatchObject({
+          positionSeconds: 30,
+          updatedAt: tenAgo,
+        });
+
+        // Another device plays on afterwards; the older offline update loses.
+        const scope = { sessionId: session.id, itemId: fx.item.id };
+        await client.playback.start({ ...scope, positionSeconds: 50 });
+        const stale = await client.playback.syncProgress({
+          ...offline,
+          positionSeconds: 80,
+          at: minutesAgo(5),
+        });
+        expect(stale.applied).toBe(false);
+        expect(stale.progress).toMatchObject({ positionSeconds: 50 });
+
+        // Reaching the end offline marks the Item watched; a clock ahead counts as now.
+        const ended = await client.playback.syncProgress({
+          ...offline,
+          positionSeconds: 120,
+          completed: true,
+          at: new Date(Date.now() + 3_600_000).toISOString(),
+        });
+        expect(ended.applied).toBe(true);
+        expect(ended.progress).toMatchObject({
+          positionSeconds: 120,
+          completed: true,
+        });
+        expect(
+          new Date(ended.progress?.updatedAt ?? 0).getTime(),
+        ).toBeLessThanOrEqual(Date.now());
+
+        expect(
+          (
+            await capture(
+              client.playback.syncProgress({
+                ...offline,
+                positionSeconds: 999,
+                at: minutesAgo(0),
+              }),
+            )
+          ).status,
+        ).toBe(400);
+        await setPermissionOverride(
+          db,
+          fx.admin.id,
+          fx.owner.id,
+          "play",
+          false,
+        );
+        expect(
+          (
+            await capture(
+              client.playback.syncProgress({
+                ...offline,
+                positionSeconds: 1,
+                at: minutesAgo(0),
+              }),
+            )
+          ).status,
+        ).toBe(403);
+      } finally {
+        await server.stop();
+      }
+    }));
+
   test("concurrent and late lifecycle calls stay serialized per item", () =>
     withDatabase(async (db, url) => {
       await migrateDatabase(db);

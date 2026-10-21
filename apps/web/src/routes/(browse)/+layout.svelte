@@ -10,6 +10,7 @@ import TabBar from "$lib/components/TabBar.svelte";
 import { Button } from "$lib/components/ui/button/index.ts";
 import * as Sheet from "$lib/components/ui/sheet/index.ts";
 import * as Tooltip from "$lib/components/ui/tooltip/index.ts";
+import { syncOfflineProgress } from "$lib/offline-progress.ts";
 import {
   isCurrent,
   isCurrentSection,
@@ -26,6 +27,9 @@ const menuShown = $derived(
   entries.some((entry) => page.url.pathname === entry.href.split("?")[0]),
 );
 const settings = $derived(entries.find((e) => e.icon === "settings"));
+
+// Progress made offline goes to the server whenever it answers.
+$effect(() => syncOfflineProgress(data.me.user.id));
 
 let drawer = $state(false);
 afterNavigate(() => {

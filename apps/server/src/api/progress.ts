@@ -4,6 +4,7 @@ import {
   resumeProgress,
   startPlayback,
   stopPlayback,
+  syncProgress,
   updatePlayback,
 } from "../playback/progress.ts";
 import { authenticated, authenticatedMutation } from "./context.ts";
@@ -155,6 +156,42 @@ const stop = authenticatedMutation
     ),
   );
 
+const sync = authenticatedMutation
+  .route({ method: "PUT", path: "/items/{itemId}/progress" })
+  .input(
+    Schema.standardSchemaV1(
+      Schema.Struct({
+        itemId: Schema.UUID,
+        versionId: Schema.UUID,
+        positionSeconds: position,
+        completed: Schema.Boolean,
+        /** When the progress happened on the client, as an ISO date-time. */
+        at: Schema.String,
+      }),
+    ),
+  )
+  .output(
+    Schema.standardSchemaV1(
+      Schema.Struct({
+        applied: Schema.Boolean,
+        progress: Schema.NullOr(Progress),
+      }),
+    ),
+  )
+  .handler(async ({ context, input }) =>
+    runApi(
+      fromHost(() =>
+        syncProgress(context.db, context.caller.user.id, {
+          itemId: input.itemId,
+          versionId: input.versionId,
+          positionSeconds: input.positionSeconds,
+          completed: input.completed,
+          at: new Date(input.at),
+        }),
+      ),
+    ),
+  );
+
 /** The playback progress and session lifecycle procedures mounted under `playback`. */
 export const progressProcedures = {
   getProgress,
@@ -162,4 +199,5 @@ export const progressProcedures = {
   start,
   progress: heartbeat,
   stop,
+  syncProgress: sync,
 };
