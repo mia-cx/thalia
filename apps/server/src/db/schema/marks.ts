@@ -8,12 +8,14 @@ import {
   integer,
   numeric,
   pgTable,
+  text,
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
 import { users } from "./access.ts";
 import { id, instant, owned } from "./common.ts";
 import { format, items, versions } from "./core.ts";
+import { playMethod } from "./operations.ts";
 
 export const progress = pgTable(
   "progress",
@@ -108,5 +110,44 @@ export const ratings = pgTable(
       "ratings_opinion_check",
       sql`${table.value} is not null or ${table.liked} is not null`,
     ),
+  ],
+);
+
+/**
+ * Watch history: one row per playback session that passed its medium's
+ * threshold. Kept indefinitely, so it has no key to the session it records.
+ */
+export const plays = pgTable(
+  "plays",
+  {
+    id: id(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, owned),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => items.id, owned),
+    sessionId: uuid("session_id").notNull().unique(),
+    playMethod: playMethod("play_method").notNull(),
+    /** What a transcode converts, as `transcodeReasons` names it; empty otherwise. */
+    transcodeReasons: text("transcode_reasons")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    playedSeconds: doublePrecision("played_seconds").notNull(),
+    startedAt: instant("started_at").notNull(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check(
+      "plays_played_check",
+      sql`${table.playedSeconds} >= 0 and ${table.playedSeconds} < 'Infinity'::float8`,
+    ),
+    index("plays_user_started_idx").on(
+      table.userId,
+      table.startedAt.desc(),
+      table.id.desc(),
+    ),
+    index("plays_started_idx").on(table.startedAt.desc(), table.id.desc()),
   ],
 );

@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigserial,
   check,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -226,8 +227,17 @@ export const sessionRegistry = pgTable(
     credentialId: uuid("credential_id"),
     createdAt: instant("created_at").notNull().defaultNow(),
     lastSeenAt: instant("last_seen_at").notNull().defaultNow(),
+    /** Playback time the player's reports account for; seeks and pauses add nothing. */
+    playedSeconds: doublePrecision("played_seconds").notNull().default(0),
+    /** The position and time of the last report, the baseline the next one adds to. */
+    reportedPosition: doublePrecision("reported_position"),
+    reportedAt: instant("reported_at"),
   },
   (table) => [
+    check(
+      "session_registry_played_check",
+      sql`${table.playedSeconds} >= 0 and ${table.playedSeconds} < 'Infinity'::float8`,
+    ),
     foreignKey({
       name: "session_registry_node_fk",
       columns: [table.transcoderNodeId],

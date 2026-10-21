@@ -19,6 +19,7 @@ import {
   authenticateRequest,
 } from "./context.ts";
 import { fromHost, runApi } from "./errors.ts";
+import { historyProcedures } from "./history.ts";
 import { getItemDetail, listItemCards, searchItems } from "./items.ts";
 import { libraryProcedures } from "./libraries.ts";
 import { markProcedures, shelfProcedures } from "./marks.ts";
@@ -161,6 +162,7 @@ export const thaliaRouter = {
   store: { status: storeStatus },
   playback: playbackProcedures,
   marks: markProcedures,
+  history: historyProcedures,
   shelves: shelfProcedures,
   setup: setupProcedures,
   users: userProcedures,

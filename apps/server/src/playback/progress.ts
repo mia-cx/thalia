@@ -16,6 +16,7 @@ import {
   versions,
 } from "../db/schema/index.ts";
 import { emitPluginEvents } from "../plugins/events.ts";
+import { recordPlay } from "./history.ts";
 import { callerClient } from "./planning.ts";
 
 type Caller = Awaited<ReturnType<typeof authenticate>>;
@@ -265,6 +266,48 @@ async function upsertProgress(
       payload: { itemId, userId, positionSeconds, completed },
     },
   ]);
+  return watched;
+}
+
+/**
+ * Adds the playback since the session's last report: how far the position
+ * moved, capped by the time between the reports, so a seek or a pause adds
+ * nothing that didn't play. The first report only sets the baseline.
+ */
+async function addPlayed(
+  tx: LifecycleDb,
+  sessionId: string,
+  positionSeconds: number,
+) {
+  await tx
+    .update(sessionRegistry)
+    .set({
+      playedSeconds: sql`${sessionRegistry.playedSeconds} + coalesce(greatest(0, least(
+        ${positionSeconds}::float8 - ${sessionRegistry.reportedPosition},
+        extract(epoch from clock_timestamp() - ${sessionRegistry.reportedAt})
+      )), 0)`,
+      reportedPosition: positionSeconds,
+      reportedAt: sql`clock_timestamp()`,
+    })
+    .where(eq(sessionRegistry.id, sessionId));
+}
+
+/** Counts a report toward the session's played time and its watch history. */
+async function reportPlayed(
+  tx: LifecycleDb,
+  userId: string,
+  scope: Scope,
+  version: VersionRow,
+  positionSeconds: number,
+  watched: boolean,
+) {
+  await addPlayed(tx, scope.sessionId, positionSeconds);
+  await recordPlay(
+    tx,
+    { id: scope.sessionId, userId, itemId: scope.itemId },
+    version,
+    watched,
+  );
 }
 
 async function touchSession(tx: LifecycleDb, sessionId: string) {
@@ -411,6 +454,7 @@ export async function startPlayback(
       false,
       true,
     );
+    await addPlayed(tx, scope.sessionId, position);
     await tx
       .update(sessionRegistry)
       .set({ state: "playing", lastSeenAt: sql`clock_timestamp()` })
@@ -445,7 +489,7 @@ export async function updatePlayback(
     const { session, version } = await lockSession(tx, userId, scope);
     if (session.state !== "playing") throw new AuthError("CONFLICT");
     checkPosition(input.positionSeconds, version.durationSeconds);
-    await upsertProgress(
+    const watched = await upsertProgress(
       tx,
       userId,
       scope.itemId,
@@ -453,6 +497,14 @@ export async function updatePlayback(
       input.positionSeconds,
       input.completed ?? false,
       false,
+    );
+    await reportPlayed(
+      tx,
+      userId,
+      scope,
+      version,
+      input.positionSeconds,
+      watched,
     );
     await touchSession(tx, scope.sessionId);
     return {
@@ -479,7 +531,7 @@ export async function stopPlayback(
       };
     if (session.state === "playing" && input.positionSeconds !== undefined) {
       checkPosition(input.positionSeconds, version.durationSeconds);
-      await upsertProgress(
+      const watched = await upsertProgress(
         tx,
         userId,
         scope.itemId,
@@ -487,6 +539,14 @@ export async function stopPlayback(
         input.positionSeconds,
         input.completed ?? false,
         false,
+      );
+      await reportPlayed(
+        tx,
+        userId,
+        scope,
+        version,
+        input.positionSeconds,
+        watched,
       );
       await publishEvent(tx, {
         kind: "user-data.changed",

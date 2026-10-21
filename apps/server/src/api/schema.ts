@@ -425,6 +425,25 @@ export const Session = Schema.Struct({
   revokedAt: Schema.NullOr(Schema.String),
 });
 
+/** How long a play must run before it counts: minutes, or a share of the runtime. */
+export const WatchThreshold = Schema.Struct({
+  unit: Schema.Literal("minutes", "percent"),
+  value: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+}).pipe(
+  Schema.filter(
+    (threshold) => threshold.unit === "minutes" || threshold.value <= 100,
+    { message: () => "a percentage is at most 100" },
+  ),
+);
+export type WatchThreshold = typeof WatchThreshold.Type;
+
+/** One threshold per medium. */
+export const WatchThresholds = Schema.Struct({
+  movies: WatchThreshold,
+  shows: WatchThreshold,
+});
+export type WatchThresholds = typeof WatchThresholds.Type;
+
 /** The server settings the admin reads; no secret ever appears. */
 export const ServerSettings = Schema.Struct({
   trustedProxyAddresses: Schema.Array(Schema.String),
@@ -436,6 +455,7 @@ export const ServerSettings = Schema.Struct({
   bitrateCapBps: Schema.NullOr(Schema.Int),
   allowCpu4k: Schema.Boolean,
   idleWindow: Schema.Struct({ start: Schema.String, end: Schema.String }),
+  watchThresholds: WatchThresholds,
   artworkStore: Schema.Struct({
     backend: Schema.Literal("colocated", "configured-path", "s3"),
     path: Schema.NullOr(Schema.String),
