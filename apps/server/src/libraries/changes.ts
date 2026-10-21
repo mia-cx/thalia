@@ -1,6 +1,16 @@
 import { lstat } from "node:fs/promises";
 import { posix } from "node:path";
-import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNull,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { AuthError } from "../auth/errors.ts";
 import type { Database } from "../db/client.ts";
 import {
@@ -154,11 +164,12 @@ const providerIdPairs = (providerIds: Record<string, string>) =>
     ([provider, value]) => provider !== "" && value !== "",
   );
 
-/** Finds one server Item of the requested kind from explicit provider ids; derived metadata ids never identify a scan. */
+/** Finds one server Item from explicit ids, replacing stored ids with any pending scan overrides. Derived metadata ids never identify a scan. */
 export async function findItemByProviderIds(
   db: Connection,
   kind: "movie" | "show",
   providerIds: Record<string, string>,
+  overrides: ReadonlyMap<string, Record<string, string>> = new Map(),
 ): Promise<typeof items.$inferSelect | undefined> {
   const pairs = providerIdPairs(providerIds);
   if (pairs.length === 0) return undefined;
@@ -170,6 +181,9 @@ export async function findItemByProviderIds(
       and(
         eq(items.kind, kind),
         eq(providerIdRows.metadataDerived, false),
+        overrides.size === 0
+          ? undefined
+          : notInArray(items.id, [...overrides.keys()]),
         or(
           ...pairs.map(([provider, value]) =>
             and(
@@ -181,6 +195,16 @@ export async function findItemByProviderIds(
       ),
     );
   const matched = new Map(rows.map((row) => [row.item.id, row.item]));
+  const pendingIds = [...overrides].flatMap(([id, ids]) =>
+    pairs.some(([provider, value]) => ids[provider] === value) ? [id] : [],
+  );
+  if (pendingIds.length > 0) {
+    const pending = await db
+      .select()
+      .from(items)
+      .where(and(eq(items.kind, kind), inArray(items.id, pendingIds)));
+    for (const item of pending) matched.set(item.id, item);
+  }
   if (matched.size > 1) throw new AuthError("CONFLICT");
   return matched.values().next().value;
 }

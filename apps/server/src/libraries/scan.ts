@@ -47,6 +47,7 @@ import {
   probeVideo,
   UnreadableMediaError,
 } from "../mediums/video-common/probe.ts";
+import { folderProviderIds } from "../mediums/video-common/provider-ids.ts";
 import { parseTitle, titleKey } from "../mediums/video-common/titles.ts";
 import { removeArtworkFiles } from "../metadata/artwork-store.ts";
 import {
@@ -702,6 +703,8 @@ async function findGroupItem(
     changeProviderIds: Record<string, string>;
     /** Explicit ids earlier groups asserted, as `provider:value` to Item id. */
     sameScan?: ReadonlyMap<string, string>;
+    /** Effective explicit ids of Shows already resolved, including corrections and fill-only tags. */
+    providerOverrides?: ReadonlyMap<string, Record<string, string>>;
     candidates: () => Promise<Awaited<ReturnType<typeof rootItemCandidates>>>;
     claimed: Set<string>;
   },
@@ -728,6 +731,7 @@ async function findGroupItem(
     exact === undefined
       ? { ...group.providerIds, ...context.changeProviderIds }
       : context.changeProviderIds,
+    context.providerOverrides,
   );
   const authoritative = Object.values(context.changeProviderIds).some(
     (value) => value !== "",
@@ -743,7 +747,13 @@ async function findGroupItem(
         location.titleKey !== null &&
         group.files.some((file) => file.rootId === location.rootId) &&
         (location.canonicalFolder !== group.canonicalFolder ||
-          location.titleKey !== group.titleKey),
+          location.titleKey !== group.titleKey) &&
+        // Quality subfolders of one tagged movie folder are copies of that Item.
+        !(
+          kind === "movie" &&
+          (group.canonicalFolder.startsWith(`${location.canonicalFolder}/`) ||
+            location.canonicalFolder.startsWith(`${group.canonicalFolder}/`))
+        ),
     );
   };
   if (
@@ -989,9 +999,17 @@ export async function scanDirectory(
   // one Item; each root's file at a member path is its own Version.
   const walked = await source.walk(path, false);
   const walkedAt = performance.now();
-  const discovered = groupMoviePaths(walked).filter(
-    (group) => group.canonicalFolder === path,
-  );
+  const discovered = groupMoviePaths(walked)
+    .filter((group) => group.canonicalFolder === path)
+    .map((group) => ({
+      ...group,
+      // A quality-only subfolder inherits its tagged Movie folder's identity.
+      providerIds: Object.assign(
+        {},
+        ...group.canonicalFolder.split("/").map(folderProviderIds),
+        group.providerIds,
+      ),
+    }));
   const result = await probeScanMembers(
     db,
     libraryId,
@@ -1387,7 +1405,8 @@ export async function scanShowDirectory(
     const claimed = new Set<string>();
     let candidates: Awaited<ReturnType<typeof rootItemCandidates>> | undefined;
     const singleGroup = discovered.length === 1;
-    const asserted = new Map<string, string>();
+    const effectiveIds = new Map<string, Record<string, string>>();
+    const resolved = [];
 
     for (const group of groups) {
       const groupFiles = group.seasons.flatMap((season) =>
@@ -1410,17 +1429,49 @@ export async function scanShowDirectory(
         kind: "show",
         group: { ...group, files: groupFiles },
         changeProviderIds: webhookProviderIds,
-        sameScan: asserted,
-        candidates: async () =>
-          (candidates ??= await rootItemCandidates(tx, libraryId, "show")),
+        providerOverrides: effectiveIds,
+        candidates: async () => {
+          candidates ??= await rootItemCandidates(tx, libraryId, "show");
+          return candidates.map((candidate) => ({
+            ...candidate,
+            providerIds: effectiveIds.has(candidate.id)
+              ? Object.entries(effectiveIds.get(candidate.id) ?? {}).map(
+                  ([provider, value]) => ({ provider, value }),
+                )
+              : candidate.providerIds,
+          }));
+        },
         claimed,
       });
       const showId = show.id;
-      for (const [provider, value] of Object.entries({
-        ...group.providerIds,
-        ...webhookProviderIds,
-      }))
-        if (value !== "") asserted.set(`${provider}:${value}`, showId);
+      // Lookups follow sequential assertions, while the final write below
+      // rejects conflicting batches. Replacing the whole view masks old ids.
+      let effective = effectiveIds.get(showId);
+      if (effective === undefined) {
+        const stored = await tx
+          .select()
+          .from(providerIds)
+          .where(
+            and(
+              eq(providerIds.itemId, showId),
+              eq(providerIds.metadataDerived, false),
+            ),
+          );
+        effective = Object.fromEntries(
+          stored.map((id) => [id.provider, id.value]),
+        );
+        effectiveIds.set(showId, effective);
+      }
+      for (const [provider, value] of Object.entries(webhookProviderIds))
+        if (value !== "") effective[provider] = value;
+      for (const [provider, value] of Object.entries(group.providerIds))
+        if (value !== "" && effective[provider] === undefined)
+          effective[provider] = value;
+      resolved.push({
+        showId,
+        webhookProviderIds,
+        taggedProviderIds: group.providerIds,
+      });
       for (const rootId of new Set(groupFiles.map((file) => file.rootId))) {
         const location = await itemLocation(tx, showId, rootId);
         if (location === undefined || location.titleKey === null)
@@ -1794,20 +1845,26 @@ export async function scanShowDirectory(
           }
         }
       }
+    }
 
-      // A changed provider id invalidates the match, so metadata re-fetches.
-      // Webhook ids assert; folder tags only fill ids nothing asserted yet.
-      const assertedChanged = await setItemProviderIds(
-        tx,
-        showId,
-        webhookProviderIds,
+    // One write per Show and source: a conflicting batch cannot replace a
+    // curated identity or invalidate its metadata match.
+    for (const [showId, owned] of Map.groupBy(
+      resolved,
+      (entry) => entry.showId,
+    )) {
+      const webhook = mergeProviderIds(
+        owned.map((entry) => entry.webhookProviderIds),
       );
-      const filledChanged = await setItemProviderIds(
-        tx,
-        showId,
-        group.providerIds,
-        { fillOnly: true },
+      const tagged = mergeProviderIds(
+        owned.map((entry) => entry.taggedProviderIds),
       );
+      const assertedChanged =
+        webhook !== undefined &&
+        (await setItemProviderIds(tx, showId, webhook));
+      const filledChanged =
+        tagged !== undefined &&
+        (await setItemProviderIds(tx, showId, tagged, { fillOnly: true }));
       if (assertedChanged || filledChanged) {
         await tx
           .update(items)
