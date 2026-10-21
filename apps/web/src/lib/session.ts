@@ -63,3 +63,14 @@ export async function loadSession() {
   });
   return { me };
 }
+
+/**
+ * The caller {@link loadSession} last saw, read without the server, so a
+ * download plays at once and its progress has an owner; undefined when none
+ * was kept.
+ */
+export function savedSession() {
+  return {
+    me: readSaved().me as Awaited<ReturnType<typeof client.me>> | undefined,
+  };
+}

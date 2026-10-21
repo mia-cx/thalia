@@ -1,6 +1,7 @@
 import type { DownloadRecord } from "../downloads/index.ts";
 import {
   cannotPlay,
+  heartbeatMs,
   type PlannedTracks,
   type PlayerNotice,
   type StreamChoice,
@@ -20,6 +21,8 @@ export type DownloadPlayback = {
   >;
   /** Reads one of the download's files: the media by Version id, a subtitle by name. */
   file: (name: string) => Promise<Blob>;
+  /** The Version's probed length; reported positions never pass it. */
+  durationSeconds: number | null;
   /** Where to start, in seconds; null starts at the beginning. */
   startAt: number | null;
   /** Starts loaded but paused, so a paused viewer stays paused across a switch. */
@@ -27,6 +30,11 @@ export type DownloadPlayback = {
   choice: StreamChoice;
   onNotice: (notice: PlayerNotice) => void;
   onTracks: (tracks: PlannedTracks) => void;
+  /** Takes the position while playing, on pause, at the end and on close; absent records nothing. */
+  onProgress?: (progress: {
+    positionSeconds: number;
+    completed: boolean;
+  }) => void;
 };
 
 type SubtitleOption = PlannedTracks["subtitleStreams"][number] & {
@@ -92,11 +100,12 @@ function subtitleOptions(record: DownloadPlayback["record"]): SubtitleOption[] {
 /**
  * Plays a download from browser storage with no server: the File is remuxed
  * to fragmented MP4 in the page and fed through Media Source Extensions, and
- * the chosen subtitles are drawn over it. A download this browser can't play
- * reports why instead.
+ * the chosen subtitles are drawn over it. Progress goes to `onProgress` on
+ * the online player's cadence. A download this browser can't play reports
+ * why instead.
  */
 export function playDownload(options: DownloadPlayback): {
-  close(): Promise<void>;
+  close(options?: { completed?: boolean }): Promise<void>;
 } {
   const { video, record, onNotice } = options;
   const { streams } = record;
@@ -104,6 +113,22 @@ export function playDownload(options: DownloadPlayback): {
   let closing = false;
   let progressive: { close(): void } | undefined;
   const releases: (() => void)[] = [];
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  // As online, only a session that started playing has progress to record.
+  let started = false;
+
+  const position = () =>
+    options.durationSeconds === null
+      ? video.currentTime
+      : Math.min(video.currentTime, options.durationSeconds);
+
+  const report = (completed = video.ended) => {
+    if (started)
+      options.onProgress?.({ positionSeconds: position(), completed });
+  };
+
+  const on = (type: keyof HTMLMediaElementEventMap, listener: () => void) =>
+    video.addEventListener(type, listener, { signal: events.signal });
 
   const refuse = (message: string) => {
     if (!closing) onNotice({ title: cannotPlay, message, retry: false });
@@ -178,9 +203,17 @@ export function playDownload(options: DownloadPlayback): {
       refuse("This browser can't play this download.");
       return;
     }
-    video.addEventListener("error", () => onNotice(stalled), {
-      signal: events.signal,
+    on("error", () => onNotice(stalled));
+    on("playing", () => {
+      started = true;
     });
+    on("pause", () => {
+      if (!video.ended) report();
+    });
+    on("ended", () => report());
+    heartbeat = setInterval(() => {
+      if (!video.paused) report();
+    }, heartbeatMs);
     progressive = attachProgressive(video, {
       openRun: async (start) => ({ body: prepared.run(start), offset: 0 }),
       mime: prepared.mime,
@@ -201,10 +234,12 @@ export function playDownload(options: DownloadPlayback): {
   });
 
   return {
-    /** Stops the remux and subtitles and releases the video element. Safe to call twice. */
-    async close() {
+    /** Records the last position, stops the remux and subtitles and releases the video element. `completed` marks it watched; safe to call twice. */
+    async close(close?: { completed?: boolean }) {
       if (closing) return;
+      report(close?.completed === true || video.ended);
       closing = true;
+      clearInterval(heartbeat);
       events.abort();
       progressive?.close();
       video.removeAttribute("src");

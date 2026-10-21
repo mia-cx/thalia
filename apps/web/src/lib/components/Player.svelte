@@ -27,6 +27,7 @@ import * as Slider from "$lib/components/ui/slider/index.ts";
 import { type DownloadRecord, downloads } from "$lib/downloads/index.ts";
 import { carryStreams } from "$lib/next-episode.ts";
 import { playDownload } from "$lib/offline/session.ts";
+import { offlineProgress } from "$lib/offline-progress.ts";
 import { formatPosition, pickVersion } from "$lib/playback.ts";
 import { play, type StreamChoice } from "$lib/player.ts";
 import { playerPrefs } from "$lib/player-prefs.ts";
@@ -125,7 +126,11 @@ async function loadDownload(): Promise<Loaded> {
                 id: record.versionId,
                 label: record.title,
                 bytes: record.bytes,
-                durationSeconds: null,
+                // Saved with the download; older records lack it.
+                durationSeconds:
+                  record.detail?.versions.find(
+                    (version) => version.id === record.versionId,
+                  )?.durationSeconds ?? null,
                 playable: true,
                 streams: record.streams,
               },
@@ -222,33 +227,48 @@ $effect(() => {
           });
       },
       streams: carried,
-      open: (request) =>
-        itemData.download !== undefined
-          ? playDownload({
-              video: media,
-              record: itemData.download,
-              file: downloads.file,
-              startAt: request.startAt,
-              paused: request.paused,
-              choice: request.streams,
-              onNotice: request.onNotice,
-              onTracks: request.onTracks,
-            })
-          : play({
-              video: media,
-              itemId: detailNow.id,
-              versionId: request.versionId,
-              durationSeconds:
-                detailNow.versions.find(
-                  (version) => version.id === request.versionId,
-                )?.durationSeconds ?? null,
-              startAt: request.startAt,
-              streams: request.streams,
-              quality: request.quality,
-              paused: request.paused,
-              onNotice: request.onNotice,
-              onTracks: request.onTracks,
-            }),
+      open: (request) => {
+        const durationSeconds =
+          detailNow.versions.find((version) => version.id === request.versionId)
+            ?.durationSeconds ?? null;
+        const download = itemData.download;
+        if (download === undefined)
+          return play({
+            video: media,
+            itemId: detailNow.id,
+            versionId: request.versionId,
+            durationSeconds,
+            startAt: request.startAt,
+            streams: request.streams,
+            quality: request.quality,
+            paused: request.paused,
+            onNotice: request.onNotice,
+            onTracks: request.onTracks,
+          });
+        // Progress waits in the offline queue until the server takes it.
+        const userId = page.data.me?.user.id;
+        return playDownload({
+          video: media,
+          record: download,
+          file: downloads.file,
+          durationSeconds,
+          startAt: request.startAt,
+          paused: request.paused,
+          choice: request.streams,
+          onNotice: request.onNotice,
+          onTracks: request.onTracks,
+          onProgress:
+            userId === undefined
+              ? undefined
+              : (progress) =>
+                  offlineProgress.record({
+                    userId,
+                    itemId: download.itemId,
+                    versionId: download.versionId,
+                    ...progress,
+                  }),
+        });
+      },
       prefs: playerPrefs,
       amplify,
     }),

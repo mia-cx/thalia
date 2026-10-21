@@ -212,12 +212,18 @@ async function lockSession(tx: LifecycleDb, userId: string, scope: Scope) {
     type: "item",
     id: version.itemId,
   });
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${`${userId}:${scope.itemId}`}, 0))`,
-  );
+  await lockProgress(tx, userId, scope.itemId);
   return { session, version };
 }
 
+/** Serializes progress writes for one user on one Item until the transaction ends. */
+async function lockProgress(tx: LifecycleDb, userId: string, itemId: string) {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${`${userId}:${itemId}`}, 0))`,
+  );
+}
+
+/** Writes the caller's progress; `at` dates it when it happened earlier, else it is now. */
 async function upsertProgress(
   tx: LifecycleDb,
   userId: string,
@@ -226,7 +232,9 @@ async function upsertProgress(
   positionSeconds: number,
   completed: boolean,
   countPlay: boolean,
+  at?: Date,
 ) {
+  const stamp = at ?? sql`clock_timestamp()`;
   await tx
     .insert(progress)
     .values({
@@ -236,8 +244,8 @@ async function upsertProgress(
       format: version.format,
       positionSeconds,
       completed,
-      playedAt: sql`clock_timestamp()`,
-      updatedAt: sql`clock_timestamp()`,
+      playedAt: stamp,
+      updatedAt: stamp,
       playCount: countPlay ? 1 : 0,
     })
     .onConflictDoUpdate({
@@ -247,8 +255,8 @@ async function upsertProgress(
         format: version.format,
         positionSeconds,
         completed,
-        playedAt: sql`clock_timestamp()`,
-        updatedAt: sql`clock_timestamp()`,
+        playedAt: stamp,
+        updatedAt: stamp,
         ...(countPlay ? { playCount: sql`${progress.playCount} + 1` } : {}),
       },
     });
@@ -506,5 +514,63 @@ export async function stopPlayback(
       state: "stopped" as const,
       progress: await readProgress(tx, userId, scope.itemId),
     };
+  });
+}
+
+/**
+ * Applies progress a client made without the server, such as offline
+ * playback of a download, dated when it happened. It goes through the same
+ * write as a live session, so the same rules decide what is watched, but
+ * opens no session. Progress stored later, by any device, wins: the update
+ * is dropped and `applied` is false. A date in the future counts as now.
+ */
+export async function syncProgress(
+  db: Database,
+  userId: string,
+  input: {
+    itemId: string;
+    versionId: string;
+    positionSeconds: number;
+    completed: boolean;
+    at: Date;
+  },
+) {
+  const { itemId, versionId, positionSeconds, completed } = input;
+  if (Number.isNaN(input.at.getTime())) throw new AuthError("INVALID_INPUT");
+  const at = new Date(Math.min(input.at.getTime(), Date.now()));
+  await requireViewableItem(db, userId, itemId);
+  await requirePermission(db, userId, "play", { type: "item", id: itemId });
+  const [version] = await db
+    .select()
+    .from(versions)
+    .where(and(eq(versions.id, versionId), eq(versions.itemId, itemId)))
+    .limit(1);
+  if (version === undefined) throw new AuthError("NOT_FOUND");
+  await requireVersionPermission(db, userId, "play", version.id, itemId);
+  checkPosition(positionSeconds, version.durationSeconds);
+  return db.transaction(async (tx) => {
+    await lockProgress(tx, userId, itemId);
+    const stored = await readProgressRow(tx, userId, itemId);
+    if (stored !== undefined && stored.updatedAt >= at)
+      return {
+        applied: false,
+        progress: await readProgress(tx, userId, itemId),
+      };
+    await upsertProgress(
+      tx,
+      userId,
+      itemId,
+      version,
+      positionSeconds,
+      completed,
+      false,
+      at,
+    );
+    await publishEvent(tx, {
+      kind: "user-data.changed",
+      userId,
+      itemIds: [itemId],
+    });
+    return { applied: true, progress: await readProgress(tx, userId, itemId) };
   });
 }

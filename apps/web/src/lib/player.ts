@@ -45,7 +45,8 @@ export type PlannedTracks = Pick<
   | "quality"
 >;
 
-const heartbeatMs = 10_000;
+/** How often a playing session reports its position. */
+export const heartbeatMs = 10_000;
 // Tokens live five minutes; refresh with a minute to spare.
 const refreshLeadMs = 60_000;
 const refreshRetryMs = 15_000;
