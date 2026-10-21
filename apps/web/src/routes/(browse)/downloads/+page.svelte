@@ -1,5 +1,7 @@
 <script lang="ts">
 import DownloadIcon from "@lucide/svelte/icons/download";
+import FolderInputIcon from "@lucide/svelte/icons/folder-input";
+import FolderOutputIcon from "@lucide/svelte/icons/folder-output";
 import PauseIcon from "@lucide/svelte/icons/pause";
 import PlayIcon from "@lucide/svelte/icons/play";
 import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
@@ -23,8 +25,10 @@ import * as Tooltip from "$lib/components/ui/tooltip/index.ts";
 import {
   type DownloadedItem,
   type DownloadRecord,
+  downloadFolder,
   downloads,
   downloadsSupported,
+  folderSupported,
   groupDownloads,
 } from "$lib/downloads/index.ts";
 import {
@@ -34,18 +38,23 @@ import {
 } from "$lib/offline/playable.ts";
 
 const supported = downloadsSupported();
+const canLink = folderSupported();
 const unavailable = $derived($downloads.unavailable);
 const storage = $derived($downloads.storage);
 const records = $derived($downloads.records);
 const ready = $derived($downloads.ready);
 const persisted = $derived($downloads.persisted);
 const groups = $derived(groupDownloads(records));
+const folder = $derived($downloadFolder);
+const folderOpen = $derived(folder?.access === "granted");
 
 onMount(() => {
   if (supported) void downloads.restore();
+  if (canLink) void downloadFolder.restore();
 });
 
 function caption(record: DownloadRecord): string {
+  if ($downloads.moving.includes(record.versionId)) return "Moving…";
   const size =
     record.bytes === 0
       ? formatBytes(record.written)
@@ -53,9 +62,15 @@ function caption(record: DownloadRecord): string {
   switch (record.state) {
     case "complete": {
       const plan = offlinePlan(record.streams, browserDecodes);
-      return "reason" in plan
-        ? `${formatBytes(record.bytes)} · ${plan.reason}`
-        : formatBytes(record.bytes);
+      return [
+        formatBytes(record.bytes),
+        record.fileName === null || folder === undefined
+          ? null
+          : `In ${folder.name}`,
+        "reason" in plan ? plan.reason : null,
+      ]
+        .filter((part) => part !== null)
+        .join(" · ");
     }
     case "downloading":
       return size;
@@ -83,6 +98,16 @@ async function update(call: () => Promise<void>) {
     await call();
   } catch {
     toast.error("Couldn't update the download");
+  }
+}
+
+async function changeFolder(call: () => Promise<void>) {
+  try {
+    await call();
+  } catch (error) {
+    // Closing the picker is a choice, not a failure.
+    if (error instanceof DOMException && error.name === "AbortError") return;
+    toast.error("Couldn't update the download folder");
   }
 }
 </script>
@@ -123,6 +148,50 @@ async function update(call: () => Promise<void>) {
               class="mt-2"
             />
           </div>
+          {#if canLink}
+            <ListRow
+              title="Download folder"
+              caption={folder === undefined
+                ? "None"
+                : folderOpen
+                  ? folder.name
+                  : `${folder.name} · Needs access`}
+            >
+              {#snippet actions()}
+                <div class="flex items-center gap-2">
+                  {#if folder === undefined}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onclick={() => void changeFolder(downloadFolder.link)}
+                      >Choose folder</Button
+                    >
+                  {:else}
+                    {#if folderOpen}
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onclick={() => void changeFolder(downloadFolder.link)}
+                        >Change</Button
+                      >
+                    {:else}
+                      <Button
+                        size="sm"
+                        onclick={() => void changeFolder(downloadFolder.allow)}
+                        >Allow access</Button
+                      >
+                    {/if}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onclick={() => void changeFolder(downloadFolder.unlink)}
+                      >Unlink</Button
+                    >
+                  {/if}
+                </div>
+              {/snippet}
+            </ListRow>
+          {/if}
         {/if}
       </FormGroup>
 
@@ -247,7 +316,9 @@ async function update(call: () => Promise<void>) {
 
 {#snippet controls(record: DownloadRecord)}
   <div class="flex items-center gap-1">
-    {#if record.state === "queued" || record.state === "downloading"}
+    {#if $downloads.moving.includes(record.versionId) || (record.fileName !== null && !folderOpen)}
+      <!-- Nothing to do until the move ends or the folder opens. -->
+    {:else if record.state === "queued" || record.state === "downloading"}
       {@render action("Pause download", PauseIcon, () =>
         downloads.pause(record.versionId),
       )}
@@ -286,6 +357,15 @@ async function update(call: () => Promise<void>) {
           </Tooltip.Trigger>
           <Tooltip.Content>Play</Tooltip.Content>
         </Tooltip.Root>
+      {/if}
+      {#if record.fileName !== null}
+        {@render action("Move to browser storage", FolderOutputIcon, () =>
+          downloads.move(record.versionId, "browser"),
+        )}
+      {:else if folderOpen}
+        {@render action("Move to folder", FolderInputIcon, () =>
+          downloads.move(record.versionId, "folder"),
+        )}
       {/if}
       {@render action("Delete download", Trash2Icon, () =>
         downloads.remove(record.versionId),

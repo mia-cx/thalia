@@ -16,6 +16,9 @@ class FakeFile {
   async text() {
     return new TextDecoder().decode(this.data);
   }
+  stream() {
+    return new Blob([this.data.slice()]).stream();
+  }
 }
 
 class FakeWritable {
@@ -634,7 +637,14 @@ describe("downloads store", () => {
     const snapshot = get(restored);
     expect(snapshot.ready).toBe(true);
     expect(snapshot.records).toEqual([
-      { ...input, written: 16, state: "paused", etag: null, subtitles: [] },
+      {
+        ...input,
+        written: 16,
+        state: "paused",
+        etag: null,
+        subtitles: [],
+        fileName: null,
+      },
     ]);
     await restored.resume(input.versionId);
     await waitFor(() => get(restored).records[0]?.state === "complete");
@@ -818,7 +828,14 @@ describe("downloads store", () => {
     const snapshot = get(store);
     expect(snapshot.ready).toBe(true);
     expect(snapshot.records).toEqual([
-      { ...input, written: 8, state: "paused", etag: null, subtitles: [] },
+      {
+        ...input,
+        written: 8,
+        state: "paused",
+        etag: null,
+        subtitles: [],
+        fileName: null,
+      },
     ]);
   });
 
@@ -952,6 +969,99 @@ function channelPair() {
   });
   return [make(listenersA, listenersB), make(listenersB, listenersA)] as const;
 }
+
+describe("downloads in a folder on disk", () => {
+  const movie = { ...input, title: "Arrival (2016)", container: "mkv" };
+
+  function folderStore(root: FakeDir, folder: FakeDir | undefined) {
+    return createDownloads({
+      root: async () => root as unknown as FileSystemDirectoryHandle,
+      open: (id) => openFake(root, id),
+      fetch: fakeFetch(bytes).transport,
+      storage: fakeStorage().storage,
+      folder: async () => folder as unknown as FileSystemDirectoryHandle,
+    });
+  }
+
+  const manifestOf = (folder: FakeDir) =>
+    JSON.parse(
+      new TextDecoder().decode(
+        folder.dirs.get(".thalia")?.files.get("downloads.json"),
+      ),
+    ) as { versionId: string; fileName: string }[];
+
+  test("a finished download lands in the linked folder under the Item's name, and moves back", async () => {
+    const root = new FakeDir();
+    const folder = new FakeDir();
+    const store = folderStore(root, folder);
+    await store.start(movie);
+    await waitFor(() => get(store).records[0]?.fileName !== null);
+
+    expect(folder.files.get("Arrival (2016).mkv")).toEqual(bytes);
+    expect(fileOf(root)).toBeUndefined();
+    expect(manifestOf(folder)).toEqual([
+      expect.objectContaining({
+        versionId: movie.versionId,
+        fileName: "Arrival (2016).mkv",
+      }),
+    ]);
+    expect(get(store).storage?.downloads).toBe(0);
+
+    await store.move(movie.versionId, "browser");
+    expect(get(store).records[0]?.fileName).toBeNull();
+    expect(fileOf(root)).toEqual(bytes);
+    expect(folder.files.has("Arrival (2016).mkv")).toBe(false);
+    expect(manifestOf(folder)).toEqual([]);
+  });
+
+  test("a later session lists the downloads its folder holds, and unlinking leaves the files", async () => {
+    const folder = new FakeDir();
+    folder.files.set("Arrival (2016).mkv", bytes);
+    const manifest = await folder.getDirectoryHandle(".thalia", {
+      create: true,
+    });
+    manifest.files.set(
+      "downloads.json",
+      new TextEncoder().encode(
+        JSON.stringify([
+          {
+            ...movie,
+            written: bytes.length,
+            state: "complete",
+            etag: null,
+            fileName: "Arrival (2016).mkv",
+          },
+          {
+            ...movie,
+            versionId: "deleted-by-hand",
+            written: bytes.length,
+            state: "complete",
+            etag: null,
+            fileName: "Gone.mkv",
+          },
+        ]),
+      ),
+    );
+    const store = folderStore(new FakeDir(), folder);
+    await store.restore();
+    expect(get(store).records).toEqual([
+      expect.objectContaining({
+        versionId: movie.versionId,
+        state: "complete",
+        fileName: "Arrival (2016).mkv",
+      }),
+    ]);
+    expect(
+      new TextDecoder().decode(
+        await (await store.file(movie.versionId)).arrayBuffer(),
+      ),
+    ).toBe(new TextDecoder().decode(bytes));
+
+    await store.release();
+    expect(get(store).records).toEqual([]);
+    expect(folder.files.get("Arrival (2016).mkv")).toEqual(bytes);
+  });
+});
 
 describe("downloads across tabs", () => {
   const otherBytes = Uint8Array.from({ length: 64 }, (_, i) => 200 - i);

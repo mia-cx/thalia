@@ -1,6 +1,13 @@
 import { type Readable, writable } from "svelte/store";
 import type { ItemDetail } from "../browse.ts";
 import { artworkFolder, offlineArtwork } from "./artwork.ts";
+import {
+  copyInto,
+  fileNameFor,
+  freeName,
+  readManifest,
+  writeManifest,
+} from "./folder.ts";
 
 export type DownloadState =
   | "queued"
@@ -24,20 +31,25 @@ export type DownloadRecord = {
   subtitles: DownloadSubtitle[];
   /** The Item as its page showed it at download time, which offline pages draw from; null on older records. */
   detail: ItemDetail | null;
+  /** The file's name in the linked folder on disk; null while it is in browser storage. */
+  fileName: string | null;
 };
 /** A stored subtitle file of the Item, as the item detail lists it. */
 export type ItemSubtitle = ItemDetail["subtitles"][number];
 export type DownloadSubtitle = Omit<ItemSubtitle, "url"> & { name: string };
 export type DownloadInput = Omit<
   DownloadRecord,
-  "written" | "state" | "etag" | "subtitles"
+  "written" | "state" | "etag" | "subtitles" | "fileName"
 > & { subtitles?: readonly ItemSubtitle[] };
 export type DownloadsSnapshot = {
   ready: boolean;
   /** OPFS refused or threw: downloads are unusable here. */
   unavailable: boolean;
   records: DownloadRecord[];
+  /** Version ids whose file is being moved between browser storage and the folder. */
+  moving: string[];
   persisted: boolean | undefined;
+  /** Browser storage only: files in the linked folder use none of it. */
   storage: { usage: number; quota: number; downloads: number } | undefined;
 };
 export type DownloadsDeps = {
@@ -49,6 +61,8 @@ export type DownloadsDeps = {
   locks?: Pick<LockManager, "request">;
   /** Carries index-change, progress and control messages between tabs. */
   channel?: Pick<BroadcastChannel, "postMessage" | "addEventListener">;
+  /** The linked folder on disk, when one is linked and the browser grants access now. */
+  folder?: () => Promise<FileSystemDirectoryHandle | undefined>;
 };
 
 /** One Version's file in browser storage, written in place. */
@@ -68,9 +82,15 @@ export type Downloads = Readable<DownloadsSnapshot> & {
   pause(versionId: string): Promise<void>;
   resume(versionId: string): Promise<void>;
   remove(versionId: string): Promise<void>;
+  /** Moves a finished download's file into the linked folder or back into browser storage. */
+  move(versionId: string, to: "folder" | "browser"): Promise<void>;
+  /** Lists the downloads a newly linked or newly allowed folder already holds. */
+  adopt(): Promise<void>;
+  /** Drops the folder's downloads from the list after the folder is unlinked; the files stay on disk. */
+  release(): Promise<void>;
   /**
-   * A download's file read in place, with no copy: the media by its Version
-   * id, a saved subtitle by its `name`.
+   * A download's file read in place, with no copy, wherever it is kept: the
+   * media by its Version id, a saved subtitle by its `name`.
    */
   file(name: string): Promise<File>;
 };
@@ -92,6 +112,29 @@ type ChannelMessage =
     }
   | { type: "pause" | "remove"; versionId: string };
 
+/** Reads stored records, skipping malformed entries and filling fields older records lack. */
+function parseRecords(parsed: unknown): DownloadRecord[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter(
+      (entry): entry is DownloadRecord =>
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as DownloadRecord).versionId === "string" &&
+        typeof (entry as DownloadRecord).itemId === "string",
+    )
+    .map((entry) => ({
+      ...entry,
+      etag: typeof entry.etag === "string" ? entry.etag : null,
+      subtitles: Array.isArray(entry.subtitles) ? entry.subtitles : [],
+      detail:
+        typeof entry.detail === "object" && entry.detail !== null
+          ? entry.detail
+          : null,
+      fileName: typeof entry.fileName === "string" ? entry.fileName : null,
+    }));
+}
+
 /**
  * One OPFS-backed download queue: each Version's file lands under `downloads/`
  * named by its id, and `downloads/index.json` holds the records shared by all
@@ -105,10 +148,12 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     ready: false,
     unavailable: false,
     records: [],
+    moving: [],
     persisted: undefined,
     storage: undefined,
   });
   const records: DownloadRecord[] = [];
+  const moving = new Set<string>();
   let ready = false;
   let unavailable = false;
   let persisted: boolean | undefined;
@@ -135,12 +180,17 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       ready,
       unavailable,
       records: records.map((record) => ({ ...record })),
+      moving: [...moving],
       persisted,
       storage: estimated
         ? {
             usage,
             quota,
-            downloads: records.reduce((sum, record) => sum + record.written, 0),
+            downloads: records.reduce(
+              (sum, record) =>
+                record.fileName === null ? sum + record.written : sum,
+              0,
+            ),
           }
         : undefined,
     });
@@ -184,30 +234,13 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
   async function readIndex(): Promise<DownloadRecord[]> {
     try {
       const handle = await (await directory()).getFileHandle("index.json");
-      const parsed: unknown = JSON.parse(await (await handle.getFile()).text());
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .filter(
-          (entry): entry is DownloadRecord =>
-            typeof entry === "object" &&
-            entry !== null &&
-            typeof (entry as DownloadRecord).versionId === "string" &&
-            typeof (entry as DownloadRecord).itemId === "string",
-        )
-        .map((entry) => ({
-          ...entry,
-          etag: typeof entry.etag === "string" ? entry.etag : null,
-          subtitles: Array.isArray(entry.subtitles) ? entry.subtitles : [],
-          detail:
-            typeof entry.detail === "object" && entry.detail !== null
-              ? entry.detail
-              : null,
-        }));
+      return parseRecords(JSON.parse(await (await handle.getFile()).text()));
     } catch {
       return [];
     }
   }
 
+  /** Writes the index, and mirrors the folder's records into its manifest when the folder is at hand. */
   async function writeIndex(stored: DownloadRecord[]): Promise<void> {
     const handle = await (await directory()).getFileHandle("index.json", {
       create: true,
@@ -215,6 +248,16 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     const writable = await handle.createWritable();
     await writable.write(JSON.stringify(stored));
     await writable.close();
+    try {
+      const folder = await deps.folder?.();
+      if (folder !== undefined)
+        await writeManifest(
+          folder,
+          stored.filter((record) => record.fileName !== null),
+        );
+    } catch {
+      // The index stays the truth; the manifest catches up on the next write.
+    }
   }
 
   const upsertRecord = (stored: DownloadRecord[], record: DownloadRecord) => {
@@ -375,6 +418,12 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
           return;
         }
         for (const record of await readIndex()) {
+          if (record.fileName !== null) {
+            // A move cut off after its index write can leave the old copy.
+            await dir.removeEntry(record.versionId).catch(() => {});
+            records.push({ ...record });
+            continue;
+          }
           try {
             record.written = (
               await (await dir.getFileHandle(record.versionId)).getFile()
@@ -397,8 +446,130 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
         await refreshEstimate();
         ready = true;
         notify();
+        await adoptFolder();
       })();
     return restorePromise;
+  }
+
+  /**
+   * Adds the downloads the linked folder's manifest lists and the index
+   * lacks, such as those from an earlier session, when their files are
+   * there whole.
+   */
+  async function adoptFolder(): Promise<void> {
+    const folder = await deps.folder?.().catch(() => undefined);
+    if (folder === undefined) return;
+    const found: DownloadRecord[] = [];
+    for (const entry of parseRecords(await readManifest(folder))) {
+      if (entry.fileName === null) continue;
+      try {
+        const file = await (
+          await folder.getFileHandle(entry.fileName)
+        ).getFile();
+        if (file.size !== entry.bytes) continue;
+      } catch {
+        continue;
+      }
+      found.push({ ...entry, written: entry.bytes, state: "complete" });
+    }
+    if (found.length === 0) return;
+    await updateIndex((stored) => [
+      ...stored,
+      ...found.filter(
+        (entry) =>
+          !stored.some((record) => record.versionId === entry.versionId),
+      ),
+    ]);
+  }
+
+  async function adopt(): Promise<void> {
+    await restore();
+    await adoptFolder();
+  }
+
+  async function release(): Promise<void> {
+    await restore();
+    await updateIndex((stored) =>
+      stored.filter((record) => record.fileName === null),
+    );
+  }
+
+  /** A download's file, from the linked folder or browser storage; saved subtitles stay in browser storage. */
+  async function file(name: string): Promise<File> {
+    await restore();
+    const fileName =
+      records.find((entry) => entry.versionId === name)?.fileName ?? null;
+    if (fileName === null)
+      return (await (await directory()).getFileHandle(name)).getFile();
+    const folder = await deps.folder?.();
+    if (folder === undefined)
+      throw new Error("The download folder needs access.");
+    return (await folder.getFileHandle(fileName)).getFile();
+  }
+
+  /**
+   * Copies a finished download's file to the other place, records the new
+   * place, then deletes the old copy, under its Version lock so no transfer
+   * or other move touches it meanwhile. A failed copy keeps the original.
+   */
+  async function move(versionId: string, to: "folder" | "browser") {
+    await restore();
+    const record = records.find((entry) => entry.versionId === versionId);
+    if (
+      record === undefined ||
+      record.state !== "complete" ||
+      (record.fileName === null) === (to === "browser") ||
+      moving.has(versionId)
+    )
+      return;
+    const folder = await deps.folder?.();
+    if (folder === undefined)
+      throw new Error("The download folder needs access.");
+    const dir = await directory();
+    moving.add(versionId);
+    notify();
+    try {
+      await locked(fileLock(versionId), async () => {
+        if (to === "folder") {
+          const name = await freeName(folder, fileNameFor(record));
+          await copyInto(
+            await (await dir.getFileHandle(versionId)).getFile(),
+            folder,
+            name,
+          );
+          await setFileName(versionId, name);
+          await dir.removeEntry(versionId);
+        } else {
+          const name = record.fileName ?? "";
+          await copyInto(
+            await (await folder.getFileHandle(name)).getFile(),
+            dir,
+            versionId,
+          );
+          await setFileName(versionId, null);
+          await folder.removeEntry(name);
+        }
+      });
+    } finally {
+      moving.delete(versionId);
+      await refreshEstimate();
+      notify();
+    }
+  }
+
+  async function setFileName(versionId: string, fileName: string | null) {
+    await updateIndex((stored) =>
+      stored.map((entry) =>
+        entry.versionId === versionId ? { ...entry, fileName } : entry,
+      ),
+    );
+    // updateIndex swallows a failed write, and the old copy may only go once
+    // the index points at the new one.
+    if (
+      records.find((entry) => entry.versionId === versionId)?.fileName !==
+      fileName
+    )
+      throw new Error("Couldn't record where the download moved.");
   }
 
   /** Queues a new record; the first download also asks the browser to keep it. */
@@ -421,7 +592,14 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       added = true;
       return [
         ...stored,
-        { ...input, subtitles, written: 0, state: "queued", etag: null },
+        {
+          ...input,
+          subtitles,
+          written: 0,
+          state: "queued",
+          etag: null,
+          fileName: null,
+        },
       ];
     });
     if (added) void pump();
@@ -481,6 +659,10 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
       if (!entry.skipped) postProgress(record);
       if (!entry.remove && !entry.skipped)
         await updateIndex((stored) => upsertRecord(stored, record));
+      // Downloads land in browser storage, where they resume in place, and
+      // a finished one goes on to the linked folder.
+      if (record.state === "complete" && !entry.remove && !entry.skipped)
+        await move(record.versionId, "folder").catch(() => {});
       void pump();
     })();
     return entry.done;
@@ -737,14 +919,18 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     }
     // The index may have changed while the transfer's `done` was awaited.
     const index = find();
-    if (index < 0) return;
+    if (index < 0 || moving.has(versionId)) return;
+    const fileName = records[index]?.fileName ?? null;
+    const place = fileName === null ? await directory() : await deps.folder?.();
+    if (place === undefined)
+      throw new Error("The download folder needs access.");
     const [removed] = records.splice(index, 1);
-    for (const name of [
-      versionId,
-      ...(removed?.subtitles.map((track) => track.name) ?? []),
-    ]) {
+    try {
+      await place.removeEntry(fileName ?? versionId);
+    } catch {}
+    for (const track of removed?.subtitles ?? []) {
       try {
-        await (await directory()).removeEntry(name);
+        await (await directory()).removeEntry(track.name);
       } catch {}
     }
     notify();
@@ -760,10 +946,6 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     notify();
   }
 
-  async function file(name: string): Promise<File> {
-    return (await (await directory()).getFileHandle(name)).getFile();
-  }
-
   return {
     subscribe: store.subscribe,
     restore,
@@ -771,6 +953,9 @@ export function createDownloads(deps: DownloadsDeps): Downloads {
     pause,
     resume,
     remove,
+    move,
+    adopt,
+    release,
     file,
   };
 }
