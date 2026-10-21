@@ -176,3 +176,73 @@ export async function waitForScan(
     throw error;
   }
 }
+
+/** One whole-Library scan as `libraries.scanRuns` and `scan.progress` carry it. */
+export type ScanRun = Awaited<
+  ReturnType<ThaliaClient["libraries"]["scanRuns"]>
+>[number];
+
+const runCount = new Intl.NumberFormat();
+const runInstant = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+/** A span such as `45s`, `3m` or `1h 5m`. */
+function span(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds));
+  if (whole < 60) return `${whole}s`;
+  const minutes = Math.round(whole / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const rest = minutes % 60;
+  return rest === 0
+    ? `${Math.floor(minutes / 60)}h`
+    : `${Math.floor(minutes / 60)}h ${rest}m`;
+}
+
+/** What a run changed, such as `12 new · 3 changed · 0 removed · 2 unmatched`. */
+export function runChanges(run: ScanRun): string {
+  return [
+    `${runCount.format(run.added)} new`,
+    `${runCount.format(run.changed)} changed`,
+    `${runCount.format(run.removed)} removed`,
+    `${runCount.format(run.unmatched)} unmatched`,
+  ].join(" · ");
+}
+
+/**
+ * A running scan's progress: the share done (null until the walk found
+ * anything), and files checked of the total with the speed and time left,
+ * which wait until some files are checked.
+ */
+export function runProgress(
+  run: ScanRun,
+  now: number,
+): { fraction: number | null; line: string } {
+  const files = `${runCount.format(run.checked)} of ${runCount.format(run.total)} files`;
+  if (run.total === 0) return { fraction: null, line: "Looking for files" };
+  const elapsed = (now - Date.parse(run.startedAt)) / 1000;
+  if (run.checked === 0 || elapsed <= 0) return { fraction: 0, line: files };
+  const rate = run.checked / elapsed;
+  const left = (run.total - run.checked) / rate;
+  return {
+    fraction: run.checked / run.total,
+    line: [
+      files,
+      `${runCount.format(Math.round(rate * 10) / 10)} a second`,
+      `${span(left)} left`,
+    ].join(" · "),
+  };
+}
+
+/** A finished run's summary line: when it started and how long it took, or how it ended. */
+export function runSummary(run: ScanRun): string {
+  const started = runInstant.format(new Date(run.startedAt));
+  if (run.state === "interrupted") return `Scan on ${started} was interrupted`;
+  if (run.state === "failed") return `Scan on ${started} failed`;
+  if (run.finishedAt === null) return `Scanned ${started}`;
+  const took = (Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000;
+  return `Scanned ${started} in ${span(took)}`;
+}

@@ -3,6 +3,8 @@ import type { ScanReader, ScanStatus } from "./scan.ts";
 import {
   failurePath,
   failureReason,
+  runChanges,
+  runProgress,
   type ScanProgress,
   scanPhase,
   scanProgress,
@@ -302,5 +304,67 @@ describe("scanStartedAt", () => {
   test("answers null without a run", () => {
     expect(scanStartedAt(undefined)).toBeNull();
     expect(scanStartedAt(status({ completed: 2 }))).toBeNull();
+  });
+});
+
+describe("scan run lines", () => {
+  const run = {
+    id: "01a15cd0-0000-7000-8000-000000000000",
+    libraryId: "01a15cd0-0000-7000-8000-000000000001",
+    state: "running" as const,
+    total: 0,
+    checked: 0,
+    added: 12,
+    changed: 3,
+    removed: 0,
+    unmatched: 2,
+    currentFolder: "Heat (1995)",
+    error: null,
+    startedAt: "2026-10-21T10:00:00.000Z",
+    finishedAt: null,
+  };
+  const at = (seconds: number) => Date.parse(run.startedAt) + seconds * 1000;
+
+  test("progress waits for files, then derives speed and time left", () => {
+    for (const [total, checked, seconds, expected] of [
+      // The walk hasn't found anything yet: no bar width, no estimate.
+      [0, 0, 5, { fraction: null, line: "Looking for files" }],
+      // Found files but checked none: no speed to estimate from.
+      [400, 0, 5, { fraction: 0, line: "0 of 400 files" }],
+      [
+        400,
+        100,
+        25,
+        { fraction: 0.25, line: "100 of 400 files · 4 a second · 1m left" },
+      ],
+      [
+        3000,
+        1200,
+        30,
+        {
+          fraction: 0.4,
+          line: "1,200 of 3,000 files · 40 a second · 45s left",
+        },
+      ],
+      [
+        1000,
+        10,
+        100,
+        {
+          fraction: 0.01,
+          line: "10 of 1,000 files · 0.1 a second · 2h 45m left",
+        },
+      ],
+    ] as const) {
+      expect(runProgress({ ...run, total, checked }, at(seconds))).toEqual(
+        expected,
+      );
+    }
+  });
+
+  test("changes always name all four counts", () => {
+    expect(runChanges(run)).toBe(
+      "12 new · 3 changed · 0 removed · 2 unmatched",
+    );
   });
 });
