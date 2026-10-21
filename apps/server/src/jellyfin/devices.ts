@@ -1,4 +1,4 @@
-import { listItemViews, listVersionViews } from "../api/views.ts";
+import { getItemView, listVersionViews } from "../api/views.ts";
 import { activeSessions, updateDevice } from "../auth/devices.ts";
 import { AuthError } from "../auth/errors.ts";
 import {
@@ -8,6 +8,7 @@ import {
 import { listPlaybackActivity } from "../playback/activity.ts";
 import { readServerId } from "../server-id.ts";
 import { json, noContent, type Route } from "./http.ts";
+import { resolvePairs } from "./ids.ts";
 import { baseItemDto } from "./items.ts";
 import { defaultValue, openapi } from "./openapi.ts";
 import { parseGuid, requiredGuid, ticksPerSecond, toGuid } from "./request.ts";
@@ -151,14 +152,6 @@ export const deviceRoutes: Route[] = [
               const play = plays.find(
                 (play) => play.credentialId === session.id,
               );
-              const nowPlaying =
-                play === undefined
-                  ? undefined
-                  : (
-                      await listItemViews(db, session.userId, {
-                        ids: [play.itemId],
-                      })
-                    ).items[0];
               const state =
                 play === undefined
                   ? null
@@ -181,6 +174,14 @@ export const deviceRoutes: Route[] = [
                   : (
                       await listVersionViews(db, session.userId, play.itemId)
                     ).find((version) => version.id === play.versionId);
+              // The play is of the Item in the Library holding its Version.
+              const nowPlaying =
+                play === undefined || version === undefined
+                  ? undefined
+                  : await getItemView(db, session.userId, {
+                      itemId: play.itemId,
+                      libraryId: version.libraryId,
+                    });
               const audioIndex = play?.decision?.selection.audio;
               const subtitleIndex = play?.decision?.selection.subtitle;
               const selectedAudio =
@@ -211,14 +212,14 @@ export const deviceRoutes: Route[] = [
                 typeof viewing.itemId === "string"
                   ? viewing.itemId
                   : undefined;
-              const viewed =
+              const [viewedPair] =
                 viewedId === undefined
+                  ? []
+                  : await resolvePairs(db, [viewedId]);
+              const viewed =
+                viewedPair === undefined
                   ? undefined
-                  : (
-                      await listItemViews(db, session.userId, {
-                        ids: [viewedId],
-                      })
-                    ).items[0];
+                  : await getItemView(db, session.userId, viewedPair);
               return {
                 ...(defaultValue(
                   openapi.components.schemas.SessionInfoDto ?? {},

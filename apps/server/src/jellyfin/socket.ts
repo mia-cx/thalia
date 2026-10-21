@@ -44,6 +44,7 @@ async function toMessage(db: Database, caller: Caller, event: Event) {
       });
     }
     case "user-data.changed": {
+      // Marks belong to the Item: every Library's Jellyfin item changed.
       const { items } = await listItemViews(db, caller.user.id, {
         ids: event.itemIds,
       });

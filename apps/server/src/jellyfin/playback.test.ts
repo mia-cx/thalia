@@ -93,7 +93,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
       ) => {
         const response = await send(
           new Request(
-            `http://thalia.test/Items/${toGuid(movie.itemId)}/PlaybackInfo`,
+            `http://thalia.test/Items/${movie.jellyfinId}/PlaybackInfo`,
             {
               method: "POST",
               headers: {
@@ -109,7 +109,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
 
       // Infuse sends its header as X-Emby-Authorization.
       const infuseToken = await jellyfinLogin(send, infuse);
-      const sourceUrl = `/Items/${toGuid(movie.itemId)}`;
+      const sourceUrl = `/Items/${movie.jellyfinId}`;
       const discovery = await send(
         new Request(`http://thalia.test${sourceUrl}/PlaybackInfo`, {
           headers: { "X-Emby-Token": infuseToken },
@@ -122,8 +122,8 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
       for (const path of [
         `${sourceUrl}/File`,
         `${sourceUrl}/Download`,
-        `/Videos/${toGuid(movie.itemId)}/stream`,
-        `/Videos/${toGuid(movie.itemId)}/stream.mkv`,
+        `/Videos/${movie.jellyfinId}/stream`,
+        `/Videos/${movie.jellyfinId}/stream.mkv`,
       ]) {
         const file = await send(
           new Request(`http://thalia.test${path}`, {
@@ -141,7 +141,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
       }
       const head = await send(
         new Request(
-          `http://thalia.test/Videos/${toGuid(movie.itemId)}/stream.mkv`,
+          `http://thalia.test/Videos/${movie.jellyfinId}/stream.mkv`,
           { method: "HEAD", headers: { "X-Emby-Token": infuseToken } },
         ),
       );
@@ -174,7 +174,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
         "http://thalia.test",
       );
       expect(usableUrl.searchParams.get("token")).toBeTruthy();
-      usableUrl.pathname = `/Videos/${toGuid(movie.itemId)}/stream`;
+      usableUrl.pathname = `/Videos/${movie.jellyfinId}/stream`;
       const crossUserFile = await send(new Request(usableUrl));
       expect(crossUserFile.status).toBe(200);
       expect((await crossUserFile.arrayBuffer()).byteLength).toBeGreaterThan(0);
@@ -184,7 +184,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
         infuseToken,
         {
           DeviceProfile: deviceProfiles.infuse,
-          MediaSourceId: toGuid(movie.itemId),
+          MediaSourceId: movie.jellyfinId,
         },
       );
       expect(direct.status).toBe(200);
@@ -235,7 +235,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
         hlsSource?.TranscodingUrl ?? "",
         "http://thalia.test",
       );
-      expect(url.pathname).toBe(`/videos/${toGuid(movie.itemId)}/master.m3u8`);
+      expect(url.pathname).toBe(`/videos/${movie.jellyfinId}/master.m3u8`);
       expect(url.searchParams.get("PlaySessionId")).toBe(
         hlsInfo.PlaySessionId ?? "",
       );
@@ -248,7 +248,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
       );
       expect(subtitle?.DeliveryMethod).toBe("Hls");
       expect(subtitle?.DeliveryUrl).toStartWith(
-        `/videos/${toGuid(movie.itemId)}/${toGuid(movie.versionId)}/Subtitles/2/Stream.vtt?`,
+        `/videos/${movie.jellyfinId}/${toGuid(movie.versionId)}/Subtitles/2/Stream.vtt?`,
       );
 
       // Findroid's empty profile plans nothing, and still gets its source.
@@ -282,7 +282,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
       expect(unknown.status).toBe(404);
       const anonymous = await send(
         new Request(
-          `http://thalia.test/Items/${toGuid(movie.itemId)}/PlaybackInfo`,
+          `http://thalia.test/Items/${movie.jellyfinId}/PlaybackInfo`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -294,7 +294,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
 
       // The detail lists every Version as a source before anything is planned.
       const detail = await send(
-        new Request(`http://thalia.test/Items/${toGuid(movie.itemId)}`, {
+        new Request(`http://thalia.test/Items/${movie.jellyfinId}`, {
           headers: { authorization: `${findroid}, Token="${findroidToken}"` },
         }),
       );
@@ -327,11 +327,11 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
       };
       const token = await jellyfinLogin(send, infuse);
       const paths = [
-        `/Items/${toGuid(movie.itemId)}/File`,
-        `/Videos/${toGuid(movie.itemId)}/stream`,
-        `/Videos/${toGuid(movie.itemId)}/stream.mkv`,
+        `/Items/${movie.jellyfinId}/File`,
+        `/Videos/${movie.jellyfinId}/stream`,
+        `/Videos/${movie.jellyfinId}/stream.mkv`,
       ];
-      const download = `/Items/${toGuid(movie.itemId)}/Download`;
+      const download = `/Items/${movie.jellyfinId}/Download`;
       const get = (path: string) =>
         send(
           new Request(`http://thalia.test${path}`, {
@@ -366,7 +366,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
       if (!downloadRule) throw new Error("Fixture Access rule missing.");
       expect((await get(download)).status).toBe(403);
       expect(
-        await (await get(`/Items/${toGuid(movie.itemId)}`)).json(),
+        await (await get(`/Items/${movie.jellyfinId}`)).json(),
       ).toMatchObject({ CanDownload: false });
       await setPermissionOverride(db, admin.id, viewer.id, "download", false);
       await db
@@ -377,7 +377,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
       expect(allowed.status).toBe(200);
       await allowed.body?.cancel();
       expect(
-        await (await get(`/Items/${toGuid(movie.itemId)}`)).json(),
+        await (await get(`/Items/${movie.jellyfinId}`)).json(),
       ).toMatchObject({ CanDownload: true });
       await db.insert(accessRules).values({
         userId: viewer.id,
@@ -406,7 +406,7 @@ describe.skipIf(!databaseUrl)("jellyfin PlaybackInfo", () => {
       const playbackInfo = async (query: string, body: object) => {
         const response = await send(
           new Request(
-            `http://thalia.test/Items/${toGuid(movie.itemId)}/PlaybackInfo${query}`,
+            `http://thalia.test/Items/${movie.jellyfinId}/PlaybackInfo${query}`,
             {
               method: "POST",
               headers: {

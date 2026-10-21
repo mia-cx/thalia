@@ -32,6 +32,7 @@ import { storeArtworkOriginal } from "../metadata/artwork-store.ts";
 import { subtitleReference } from "../subtitles/service.ts";
 import { coverageSummary, neutralAdapters } from "./coverage.ts";
 import { createJellyfinHandler } from "./http.ts";
+import { itemGuid } from "./ids.ts";
 import {
   type ApiOperation,
   accessOf,
@@ -105,8 +106,11 @@ async function fixtureOf(
   operation: ApiOperation,
   root: string,
   mediaId: string,
+  mediaLibraryId: string,
 ): Promise<Fixture> {
   const id = operation.operationId;
+  // Routes take the Jellyfin item: the media Item in its Library.
+  const mediaGuid = itemGuid(mediaId, mediaLibraryId);
   if (operation.tags.includes("Subtitle")) {
     const remoteId = subtitleReference({
       itemId: mediaId,
@@ -123,11 +127,15 @@ async function fixtureOf(
       ].includes(id)
     )
       return {
-        parameters: { itemId: mediaId, language: "eng", subtitleId: remoteId },
+        parameters: {
+          itemId: mediaGuid,
+          language: "eng",
+          subtitleId: remoteId,
+        },
       };
     if (id === "UploadSubtitle")
       return {
-        parameters: { itemId: mediaId },
+        parameters: { itemId: mediaGuid },
         body: {
           Language: "en",
           Format: "srt",
@@ -157,12 +165,12 @@ async function fixtureOf(
         throw new Error(`Missing subtitle fixture for ${id}`);
       return {
         parameters: {
-          itemId: mediaId,
-          mediaSourceId: mediaId,
+          itemId: mediaGuid,
+          mediaSourceId: mediaGuid,
           index: String(index),
           segmentLength: "1",
-          routeItemId: mediaId,
-          routeMediaSourceId: mediaId,
+          routeItemId: mediaGuid,
+          routeMediaSourceId: mediaGuid,
           routeIndex: String(index),
           routeFormat: "vtt",
           routeStartPositionTicks: "0",
@@ -183,7 +191,7 @@ async function fixtureOf(
     ].includes(id)
   )
     return {
-      parameters: { itemId: mediaId, container: "mkv" },
+      parameters: { itemId: mediaGuid, container: "mkv" },
       body: { DeviceProfile: deviceProfiles.infuse },
     };
   if (
@@ -195,7 +203,7 @@ async function fixtureOf(
   )
     return {
       body: {
-        ItemId: mediaId,
+        ItemId: mediaGuid,
         PositionTicks: 0,
         CanSeek: true,
         IsPaused: false,
@@ -235,7 +243,7 @@ async function fixtureOf(
     return {
       parameters: {
         sessionId: session.session.id,
-        itemId: mediaId,
+        itemId: mediaGuid,
         itemType: "Movie",
         itemName: "Coverage",
       },
@@ -269,7 +277,7 @@ async function fixtureOf(
     );
     return {
       parameters: {
-        itemId: item.id,
+        itemId: itemGuid(item.id, library.id),
         imageType: "Primary",
         imageIndex: "0",
         tag: image.id.replaceAll("-", ""),
@@ -309,7 +317,7 @@ async function fixtureOf(
     });
     return {
       parameters: {
-        itemId: item.id,
+        itemId: itemGuid(item.id, library.id),
         type: "Primary",
         imageUrl: "https://image.example/fixture.png",
       },
@@ -380,7 +388,10 @@ async function fixtureOf(
       extension: {},
     });
     return {
-      parameters: { itemId: item.id, ids: item.id },
+      parameters: {
+        itemId: itemGuid(item.id, library.id),
+        ids: itemGuid(item.id, library.id),
+      },
       body: {
         Name: "Coverage edited",
         Overview: "Edited through Jellyfin",
@@ -591,10 +602,11 @@ describe.skipIf(!databaseUrl)("official Jellyfin operation coverage", () => {
               operation,
               root,
               media.itemId,
+              mediaLibrary.id,
             );
             fixture.parameters = {
-              itemId: seeded.matrix.id,
-              seriesId: seeded.show.id,
+              itemId: itemGuid(seeded.matrix.id, seeded.films.id),
+              seriesId: itemGuid(seeded.show.id, seeded.tv.id),
               genreName: "Science Fiction",
               year: "1999",
               name: "Keanu Reeves",

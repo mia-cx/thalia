@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { getItemView, listItemViews } from "../api/views.ts";
+import { getItemView } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
 import type { JsonObject, JsonValue } from "../db/schema/common.ts";
 import {
@@ -23,6 +23,7 @@ import {
 } from "../metadata/edit.ts";
 import { refreshItem } from "../metadata/jobs.ts";
 import { json, noContent, type Route, type UserContext } from "./http.ts";
+import { resolvePair, resolvePairs } from "./ids.ts";
 import { providerIdsDto } from "./items.ts";
 import { defaultValue, openapi } from "./openapi.ts";
 import { requiredGuid, toGuid } from "./request.ts";
@@ -363,7 +364,11 @@ const innerRoutes: Extract<Route, { anonymous?: false }>[] = [
     method: "POST",
     path: "/Items/{itemId}/Refresh",
     handle: async ({ db, caller, params }) => {
-      await refreshItem(db, caller.user.id, requiredGuid(params.itemId));
+      await refreshItem(
+        db,
+        caller.user.id,
+        (await resolvePair(db, params.itemId)).itemId,
+      );
       return noContent();
     },
   },
@@ -382,8 +387,14 @@ const innerRoutes: Extract<Route, { anonymous?: false }>[] = [
         });
       else {
         const edit = metadataEdit(dto);
-        if (await getItemView(context.db, context.caller.user.id, id))
-          await editItemMetadata(context.db, context.caller.user.id, id, edit);
+        const [pair] = await resolvePairs(context.db, [id]);
+        if (pair !== undefined)
+          await editItemMetadata(
+            context.db,
+            context.caller.user.id,
+            pair.itemId,
+            edit,
+          );
         else
           await editContributorMetadata(
             context.db,
@@ -404,7 +415,7 @@ const innerRoutes: Extract<Route, { anonymous?: false }>[] = [
     path: "/Items/{itemId}",
     handle: async ({ db, caller, params }) => {
       await removeCatalogueItems(db, caller.user.id, [
-        requiredGuid(params.itemId),
+        (await resolvePair(db, params.itemId)).itemId,
       ]);
       return noContent();
     },
@@ -413,10 +424,13 @@ const innerRoutes: Extract<Route, { anonymous?: false }>[] = [
     method: "DELETE",
     path: "/Items",
     handle: async ({ db, caller, query }) => {
+      const ids = query.list("ids").map(requiredGuid);
+      const pairs = await resolvePairs(db, ids);
+      if (pairs.length !== ids.length) throw new AuthError("NOT_FOUND");
       await removeCatalogueItems(
         db,
         caller.user.id,
-        query.list("ids").map(requiredGuid),
+        pairs.map((pair) => pair.itemId),
       );
       return noContent();
     },
@@ -438,11 +452,11 @@ const innerRoutes: Extract<Route, { anonymous?: false }>[] = [
       const library = (await listLibraries(db, caller.user.id)).find(
         (row) => row.id === id,
       );
-      const [item] = (
-        await listItemViews(db, caller.user.id, {
-          ids: [id],
-        })
-      ).items;
+      const [pair] = await resolvePairs(db, [id]);
+      const item =
+        pair === undefined
+          ? undefined
+          : await getItemView(db, caller.user.id, pair);
       const person =
         item === undefined && library === undefined
           ? await readContributorMetadata(db, caller.user.id, id)

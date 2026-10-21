@@ -6,6 +6,7 @@ import { runQueuedKeyframeIndexes } from "../db/testing.ts";
 import { scanDirectory } from "../libraries/scan.ts";
 import { createLibrary } from "../libraries/service.ts";
 import fixture from "./fixtures/openapi-10.11.11.json";
+import { itemGuid } from "./ids.ts";
 
 /**
  * Migrates, creates an admin and a `viewer` (password `viewer-pass`), adds a
@@ -30,14 +31,21 @@ export async function seedMovies(
     medium: "movies",
     roots: [root],
   });
-  const movies = new Map<string, { itemId: string; versionId: string }>();
+  const movies = new Map<
+    string,
+    { itemId: string; versionId: string; jellyfinId: string }
+  >();
   for (const title of titles) {
     const scanned = await scanDirectory(db, library.id, `${title} (2026)`);
     await runQueuedKeyframeIndexes(db);
     const versionId = scanned.versionIds[0];
     if (scanned.itemId === null || versionId === undefined)
       throw new Error(`Expected one Item and Version in ${title}.`);
-    movies.set(title, { itemId: scanned.itemId, versionId });
+    movies.set(title, {
+      itemId: scanned.itemId,
+      versionId,
+      jellyfinId: itemGuid(scanned.itemId, library.id),
+    });
   }
   return { admin, viewer, library, movies };
 }

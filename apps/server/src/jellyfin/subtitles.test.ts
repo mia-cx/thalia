@@ -79,7 +79,7 @@ async function fixture(db: Database, root: string) {
     );
   return {
     ...movie,
-    id: toGuid(movie.itemId),
+    id: movie.jellyfinId,
     source: toGuid(movie.versionId),
     send,
     call,

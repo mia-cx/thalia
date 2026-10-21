@@ -197,6 +197,13 @@
       "when": 1792193364488,
       "tag": "0027_server_items",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792560370684,
+      "tag": "0028_jellyfin_items",
+      "breakpoints": true
     }
   ]
 }

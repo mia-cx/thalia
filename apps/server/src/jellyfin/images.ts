@@ -20,7 +20,8 @@ import {
   type Route,
   type UserContext,
 } from "./http.ts";
-import { readQuery, requiredGuid, toGuid } from "./request.ts";
+import { resolvePair } from "./ids.ts";
+import { readQuery, toGuid } from "./request.ts";
 
 const artworkTypes = new Map<string, Parameters<typeof uploadItemImage>[3]>([
   ["primary", "poster"],
@@ -53,10 +54,10 @@ export function imageRoutes(
 ): Route[] {
   const handle = async (context: RequestContext) => {
     const { db, request, params, query, client } = context;
-    const itemId = requiredGuid(params.id);
     const type = imageType(params.type);
     if (type === undefined || indexOf(context) !== 0)
       throw new AuthError("NOT_FOUND");
+    const { itemId } = await resolvePair(db, params.id);
     const artworkId = await selectedArtworkId(db, itemId, type);
     if (artworkId === undefined) throw new AuthError("NOT_FOUND");
     const sizes = readQuery(
@@ -116,7 +117,7 @@ export function imageRoutes(
   };
   const write = async (context: UserContext) => {
     const { db, caller, params, request } = context;
-    const id = requiredGuid(params.id);
+    const { itemId: id } = await resolvePair(db, params.id);
     const type = imageType(params.type);
     // The core has one selected original for each of its four image kinds.
     if (type === undefined || indexOf(context) !== 0) return noContent();
@@ -154,7 +155,13 @@ export function imageRoutes(
       handle: async ({ db, caller, params }) =>
         json(
           (
-            await listItemImages(db, caller.user.id, requiredGuid(params.id))
+            await listItemImages(
+              db,
+              caller.user.id,
+              (
+                await resolvePair(db, params.id)
+              ).itemId,
+            )
           ).map((image) => ({
             ImageType: imageTypes[image.type],
             ImageIndex: 0,

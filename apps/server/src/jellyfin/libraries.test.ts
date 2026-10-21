@@ -15,6 +15,7 @@ import {
 } from "../libraries/service.ts";
 import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
 import { createJellyfinHandler } from "./http.ts";
+import { itemGuid } from "./ids.ts";
 import { requiredGuid } from "./request.ts";
 import { jellyfinRoutes } from "./routes.ts";
 import { jellyfinLogin } from "./testing.ts";
@@ -25,6 +26,7 @@ describe.skipIf(!databaseUrl)("Jellyfin library administration", () => {
       const root = await mkdtemp(join(tmpdir(), "jellyfin-library-"));
       try {
         const seed = await seedBrowse(db);
+        const matrix = itemGuid(seed.matrix.id, seed.films.id);
         for (const library of [seed.films, seed.tv, seed.hidden])
           await updateLibrary(db, seed.admin.id, library.id, {
             roots: [
@@ -107,16 +109,16 @@ describe.skipIf(!databaseUrl)("Jellyfin library administration", () => {
         expect(
           await call(`/Items/${library.ItemId}/MetadataEditor`),
         ).toMatchObject({ ContentType: "movies" });
-        const original = (await call(`/Items/${seed.matrix.id}`)) as {
+        const original = (await call(`/Items/${matrix}`)) as {
           ProviderIds: Record<string, string>;
         };
-        const editor = (await call(
-          `/Items/${seed.matrix.id}/MetadataEditor`,
-        )) as { ExternalIdInfos: { Key: string }[] };
+        const editor = (await call(`/Items/${matrix}/MetadataEditor`)) as {
+          ExternalIdInfos: { Key: string }[];
+        };
         for (const info of editor.ExternalIdInfos)
           expect(original.ProviderIds[info.Key]).toBeDefined();
 
-        await call(`/Items/${seed.matrix.id}`, "POST", {
+        await call(`/Items/${matrix}`, "POST", {
           Name: "Edited Matrix",
           Overview: "Manual description",
           ProductionYear: "2003",
@@ -135,7 +137,7 @@ describe.skipIf(!databaseUrl)("Jellyfin library administration", () => {
           ProviderIds: {},
           People: [{ Name: "Example Actor", Type: "Actor", Role: "Hero" }],
         });
-        const detail = (await call(`/Items/${seed.matrix.id}`)) as {
+        const detail = (await call(`/Items/${matrix}`)) as {
           People: { Id: string }[];
         };
         expect(detail).toMatchObject({
@@ -170,8 +172,8 @@ describe.skipIf(!databaseUrl)("Jellyfin library administration", () => {
         expect(await call(`/Items/${person.Id}`)).toMatchObject({
           ProviderIds: {},
         });
-        await call(`/Items/${seed.matrix.id}`, "POST", { ProductionYear: "" });
-        expect(await call(`/Items/${seed.matrix.id}`)).not.toHaveProperty(
+        await call(`/Items/${matrix}`, "POST", { ProductionYear: "" });
+        expect(await call(`/Items/${matrix}`)).not.toHaveProperty(
           "ProductionYear",
         );
         for (const body of [
@@ -181,7 +183,7 @@ describe.skipIf(!databaseUrl)("Jellyfin library administration", () => {
           expect(
             (
               await handle(
-                new Request(`http://thalia.test/Items/${seed.matrix.id}`, {
+                new Request(`http://thalia.test/Items/${matrix}`, {
                   method: "POST",
                   headers: {
                     "X-Emby-Token": token,
@@ -211,7 +213,9 @@ describe.skipIf(!databaseUrl)("Jellyfin library administration", () => {
           .from(files)
           .where(eq(files.libraryId, showLibrary.id));
         if (originalFile === undefined) throw new Error("Missing scanned file");
-        const episode = (await call(`/Items/${originalFile.itemId}`)) as {
+        const episode = (await call(
+          `/Items/${itemGuid(originalFile.itemId, showLibrary.id)}`,
+        )) as {
           SeasonId: string;
         };
         const seasonId = requiredGuid(episode.SeasonId);
@@ -297,26 +301,28 @@ describe.skipIf(!databaseUrl)("Jellyfin library administration", () => {
           bytes: 6n,
           modifiedAt: new Date(),
         });
-        await call(`/Items/${item.id}`, "DELETE");
+        const removed = itemGuid(item.id, managed.id);
+        await call(`/Items/${removed}`, "DELETE");
         expect(await Bun.file(sourcePath).text()).toBe("source");
         expect(
           (
             await handle(
-              new Request(`http://thalia.test/Items/${item.id}`, {
+              new Request(`http://thalia.test/Items/${removed}`, {
                 headers: { "X-Emby-Token": token },
               }),
               "127.0.0.1",
             )
           )?.status,
         ).toBe(404);
+        const episodeOne = itemGuid(seed.episodeOne.id, seed.tv.id);
         await call(
-          `/Items?ids=${seed.show.id},${seed.episodeOne.id}`,
+          `/Items?ids=${itemGuid(seed.show.id, seed.tv.id)},${episodeOne}`,
           "DELETE",
         );
         expect(
           (
             await handle(
-              new Request(`http://thalia.test/Items/${seed.episodeOne.id}`, {
+              new Request(`http://thalia.test/Items/${episodeOne}`, {
                 headers: { "X-Emby-Token": token },
               }),
               "127.0.0.1",

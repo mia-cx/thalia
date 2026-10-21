@@ -79,7 +79,7 @@ describe.skipIf(!databaseUrl)("jellyfin streaming", () => {
           const base = `http://127.0.0.1:${thalia.apiServer?.port}`;
           const send = (request: Request) =>
             fetch(new URL(new URL(request.url).pathname, base), request);
-          const itemGuid = toGuid(movie.itemId);
+          const itemGuid = movie.jellyfinId;
           const playbackInfo = async (
             headers: Record<string, string>,
             profile: object,
@@ -242,7 +242,7 @@ describe.skipIf(!databaseUrl)("jellyfin streaming", () => {
           const base = `http://127.0.0.1:${thalia.apiServer?.port}`;
           const send = (request: Request) =>
             fetch(new URL(new URL(request.url).pathname, base), request);
-          const itemGuid = toGuid(movie.itemId);
+          const itemGuid = movie.jellyfinId;
           const token = await jellyfinLogin(send, mp4Client);
           const info = await fetch(`${base}/Items/${itemGuid}/PlaybackInfo`, {
             method: "POST",
