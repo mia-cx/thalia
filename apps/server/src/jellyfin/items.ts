@@ -19,6 +19,7 @@ import { continueWatching } from "../playback/marks.ts";
 import { readServerId } from "../server-id.ts";
 import { facetId, personType } from "./facets.ts";
 import { json, type Route, type UserContext } from "./http.ts";
+import { itemGuid, resolveFolder, resolvePair, resolvePairs } from "./ids.ts";
 import { mediaSource } from "./media.ts";
 import {
   parseGuid,
@@ -82,8 +83,8 @@ export function userData(view: ItemView) {
     IsFavorite: marks.favourite,
     LastPlayedDate: marks.playedAt?.toISOString(),
     Played: marks.completed,
-    Key: toGuid(view.id),
-    ItemId: toGuid(view.id),
+    Key: itemGuid(view.id, view.libraryId),
+    ItemId: itemGuid(view.id, view.libraryId),
   };
 }
 
@@ -92,10 +93,11 @@ export function baseItemDto(view: ItemView, serverId: string) {
   const playable = playableKinds.has(view.kind);
   const show = view.show;
   const showBackdrop = show?.artwork.backdrop ?? null;
+  const guid = (itemId: string) => itemGuid(itemId, view.libraryId);
   return {
     Name: view.title,
     ServerId: toGuid(serverId),
-    Id: toGuid(view.id),
+    Id: guid(view.id),
     DateCreated: view.addedAt.toISOString(),
     CanDelete: false,
     SortName: view.title,
@@ -119,14 +121,15 @@ export function baseItemDto(view: ItemView, serverId: string) {
     ProviderIds: providerIdsDto(view.providerIds),
     IsFolder: !playable,
     // Roots sit in their library's view, as Jellyfin's CollectionFolder.
-    ParentId: toGuid(view.parentId ?? view.libraryId),
+    ParentId:
+      view.parentId === null ? toGuid(view.libraryId) : guid(view.parentId),
     Type: itemTypes[view.kind],
     SeriesName: show?.title,
-    SeriesId: show === null ? undefined : toGuid(show.id),
-    SeasonId: view.seasonId === null ? undefined : toGuid(view.seasonId),
+    SeriesId: show === null ? undefined : guid(show.id),
+    SeasonId: view.seasonId === null ? undefined : guid(view.seasonId),
     SeriesPrimaryImageTag: tag(show?.artwork.poster ?? null),
     ParentBackdropItemId:
-      show === null || showBackdrop === null ? undefined : toGuid(show.id),
+      show === null || showBackdrop === null ? undefined : guid(show.id),
     ParentBackdropImageTags:
       showBackdrop === null ? undefined : [toGuid(showBackdrop)],
     UserData: userData(view),
@@ -187,10 +190,13 @@ async function playableFields(
     { externalSubtitles: false },
   );
   for (const view of playable) {
-    const sources = (versions.get(view.id) ?? []).map((version) =>
-      mediaSource(view.id, version),
-    );
-    detail.set(view.id, {
+    // A Jellyfin item's sources are the Item's Versions in its Library.
+    const sources = (versions.get(view.id) ?? [])
+      .filter((version) => version.libraryId === view.libraryId)
+      .map((version) =>
+        mediaSource(itemGuid(view.id, view.libraryId), version),
+      );
+    detail.set(itemGuid(view.id, view.libraryId), {
       ...(fields.has("path") ? { Path: sources[0]?.Path } : {}),
       ...(fields.has("mediasources")
         ? {
@@ -227,7 +233,7 @@ export async function itemDtos(context: UserContext, views: ItemView[]) {
     ...baseItemDto(view, serverId),
     CanDownload:
       playableKinds.has(view.kind) && canDownload.get(view.libraryId) === true,
-    ...media.get(view.id),
+    ...media.get(itemGuid(view.id, view.libraryId)),
   }));
 }
 
@@ -351,10 +357,8 @@ export async function browseSelection({
   query,
 }: UserContext): Promise<ItemViewQuery> {
   const parent = query.get("parentId");
-  const parentId = parent === undefined ? undefined : requiredGuid(parent);
-  const library = (await viewableLibraries(db, caller.user.id)).find(
-    (row) => row.id === parentId,
-  );
+  const folder =
+    parent === undefined ? undefined : await resolveFolder(db, parent);
   const genreIds = new Set(
     query.list("genreIds").map((value) => toGuid(requiredGuid(value))),
   );
@@ -379,9 +383,11 @@ export async function browseSelection({
     return parsed.toISOString().slice(0, 10);
   };
   return {
-    libraryIds: library === undefined ? undefined : [library.id],
-    ancestorId: library === undefined ? parentId : undefined,
-    ids: query.list("ids").length ? guids(query.list("ids")) : undefined,
+    libraryIds: folder === undefined ? undefined : [folder.libraryId],
+    ancestorId: folder?.itemId,
+    pairs: query.list("ids").length
+      ? await resolvePairs(db, query.list("ids"))
+      : undefined,
     kinds: kindsOf(query),
     search: query.get("searchTerm"),
     genres: genres.length || genreIds.size ? genres : undefined,
@@ -399,7 +405,9 @@ export async function browseSelection({
     contributorRoles: query
       .list("personTypes")
       .map((role) => role.toLowerCase().replaceAll(/[^a-z]/g, "")),
-    excludeIds: guids(query.list("excludeItemIds")),
+    excludeIds: (await resolvePairs(db, query.list("excludeItemIds"))).map(
+      (pair) => pair.itemId,
+    ),
     premiereAfter: date("minPremiereDate"),
     premiereBefore: date("maxPremiereDate"),
     indexNumber: query.integer("indexNumber"),
@@ -443,16 +451,24 @@ export async function viewsResult(context: UserContext, query: ItemViewQuery) {
   );
 }
 
-// Shelves hand back ordered ids; the views keep that order, are narrowed, then paged.
+// Shelves hand back ordered Item ids; the views keep that order, are narrowed, then paged.
+// An Item in several Libraries appears once, in the first of them.
 async function shelfResult(
   context: UserContext,
   ids: string[],
   select: (views: ItemView[]) => ItemView[] = (views) => views,
+  libraryIds?: readonly string[],
 ) {
   const { db, caller, query } = context;
   const kinds = kindsOf(query);
-  const found = await listItemViews(db, caller.user.id, { ids, kinds });
-  const byId = new Map(found.items.map((view) => [view.id, view]));
+  const found = await listItemViews(db, caller.user.id, {
+    ids,
+    kinds,
+    libraryIds,
+  });
+  const byId = new Map<string, ItemView>();
+  for (const view of found.items)
+    if (!byId.has(view.id)) byId.set(view.id, view);
   const views = select(ids.flatMap((id) => byId.get(id) ?? []));
   const page = pageOf(query);
   return json(
@@ -489,30 +505,31 @@ export const browseRoutes: Route[] = [
     handle: async (context) => {
       const { db, caller, query } = context;
       const parent = query.get("parentId");
-      const parentId = parent === undefined ? undefined : requiredGuid(parent);
+      const folder =
+        parent === undefined ? undefined : await resolveFolder(db, parent);
       const recursive = query.flag("recursive") ?? false;
-      const libraries = await viewableLibraries(db, caller.user.id);
-      const library = libraries.find((candidate) => candidate.id === parentId);
       const ids = query.list("ids");
       const kinds = kindsOf(query);
       // Without a parent, a flat listing is the user's root folder: the libraries.
       // Findroid lists libraries this way. No Item kind is a library folder.
-      if (parentId === undefined && !recursive && ids.length === 0)
+      if (folder === undefined && !recursive && ids.length === 0)
         return librariesResult(
           db,
-          kinds === undefined ? libraries : [],
+          kinds === undefined
+            ? await viewableLibraries(db, caller.user.id)
+            : [],
           pageOf(query),
         );
       if (kinds?.length === 0)
         return json(queryResult([], 0, pageOf(query).offset));
+      // A folder lists what its Library holds: an Item's children, or a Library's roots.
       return viewsResult(context, {
         ...(await browseSelection(context)),
-        ...(library !== undefined
-          ? { libraryIds: [library.id], parentId: recursive ? undefined : null }
+        ...(folder === undefined
+          ? {}
           : recursive
-            ? { ancestorId: parentId }
-            : { parentId }),
-        ids: ids.length === 0 ? undefined : guids(ids),
+            ? { ancestorId: folder.itemId }
+            : { ancestorId: undefined, parentId: folder.itemId ?? null }),
         kinds,
         search: query.get("searchTerm"),
         // Swiftfin's letter picker: a letter, or `NameLessThan=A` for "#".
@@ -529,14 +546,18 @@ export const browseRoutes: Route[] = [
     path: "/Items/{id}",
     handle: async ({ db, caller, params }) => {
       const id = requiredGuid(params.id);
-      const [libraries, view, serverId] = await Promise.all([
+      const [libraries, [pair], serverId] = await Promise.all([
         viewableLibraries(db, caller.user.id),
-        getItemView(db, caller.user.id, id),
+        resolvePairs(db, [id]),
         readServerId(db),
       ]);
       const library = libraries.find((candidate) => candidate.id === id);
       if (library !== undefined) return json(libraryDto(library, serverId));
-      if (view === undefined) {
+      const view =
+        pair === undefined
+          ? undefined
+          : await getItemView(db, caller.user.id, pair);
+      if (pair === undefined || view === undefined) {
         const person = (await listContributorCredits(db, caller.user.id)).find(
           (person) => person.id === id,
         );
@@ -573,7 +594,9 @@ export const browseRoutes: Route[] = [
             id: view.id,
           })),
         People: (
-          await listContributorCredits(db, caller.user.id, { ids: [id] })
+          await listContributorCredits(db, caller.user.id, {
+            ids: [view.id],
+          })
         ).map((person) => ({
           Id: toGuid(person.id),
           Name: person.name,
@@ -583,9 +606,9 @@ export const browseRoutes: Route[] = [
       };
       if (!playableKinds.has(view.kind)) return json(dto);
       // Swiftfin and Infuse pick a Version from the detail before they play.
-      const sources = (await listVersionViews(db, caller.user.id, id)).map(
-        (version) => mediaSource(id, version),
-      );
+      const sources = (
+        await listVersionViews(db, caller.user.id, pair.itemId, pair.libraryId)
+      ).map((version) => mediaSource(id, version));
       return json({
         ...dto,
         Path: sources[0]?.Path,
@@ -614,14 +637,17 @@ export const browseRoutes: Route[] = [
     handle: async (context) => {
       const { db, caller, query } = context;
       const series = query.get("seriesId");
-      const showId = series === undefined ? undefined : requiredGuid(series);
+      const show =
+        series === undefined ? undefined : await resolvePair(db, series);
+      const showId = show?.itemId;
       const resumable = query.flag("enableResumable") ?? true;
       const ids = await nextUp(db, caller.user.id);
       // A named Show with no finished episode offers its first one, specials
       // aside. Once one is finished, only the shelf's pick after it counts.
-      if (showId !== undefined) {
+      if (show !== undefined) {
         const episodes = await listItemViews(db, caller.user.id, {
-          ancestorId: showId,
+          ancestorId: show.itemId,
+          libraryIds: [show.libraryId],
           kinds: ["episode"],
           sort: [{ by: "number" }],
         });
@@ -629,38 +655,53 @@ export const browseRoutes: Route[] = [
         const first = episodes.items.find((view) => view.seasonNumber !== 0);
         if (!started && first !== undefined) ids.push(first.id);
       }
-      return shelfResult(context, ids, (views) => {
-        const seen = new Set<string>();
-        return views.filter((view) => {
-          const show = view.show?.id;
-          if (show === undefined || seen.has(show)) return false;
-          if (showId !== undefined && show !== showId) return false;
-          seen.add(show);
-          // Jellyfin leaves a started episode to Resume rather than skip past it.
-          return resumable || view.marks.positionSeconds === 0;
-        });
+      return shelfResult(
+        context,
+        ids,
+        (views) => {
+          const seen = new Set<string>();
+          return views.filter((view) => {
+            const show = view.show?.id;
+            if (show === undefined || seen.has(show)) return false;
+            if (showId !== undefined && show !== showId) return false;
+            seen.add(show);
+            // Jellyfin leaves a started episode to Resume rather than skip past it.
+            return resumable || view.marks.positionSeconds === 0;
+          });
+        },
+        show === undefined ? undefined : [show.libraryId],
+      );
+    },
+  },
+  // A show lists only the Seasons and Episodes its Library holds.
+  {
+    method: "GET",
+    path: "/Shows/{id}/Seasons",
+    handle: async (context) => {
+      const show = await resolvePair(context.db, context.params.id);
+      return showViews(context, {
+        parentId: show.itemId,
+        libraryIds: [show.libraryId],
+        kinds: ["season"],
       });
     },
   },
   {
     method: "GET",
-    path: "/Shows/{id}/Seasons",
-    handle: (context) =>
-      showViews(context, {
-        parentId: requiredGuid(context.params.id),
-        kinds: ["season"],
-      }),
-  },
-  {
-    method: "GET",
     path: "/Shows/{id}/Episodes",
-    handle: (context) => {
-      const season = context.query.get("seasonId");
+    handle: async (context) => {
+      const { db, query, params } = context;
+      const show = await resolvePair(db, params.id);
+      const season = query.get("seasonId");
       return showViews(context, {
-        ancestorId: requiredGuid(context.params.id),
-        parentId: season === undefined ? undefined : requiredGuid(season),
+        ancestorId: show.itemId,
+        libraryIds: [show.libraryId],
+        parentId:
+          season === undefined
+            ? undefined
+            : (await resolvePair(db, season)).itemId,
         kinds: ["episode"],
-        seasonNumber: context.query.integer("season"),
+        seasonNumber: query.integer("season"),
       });
     },
   },

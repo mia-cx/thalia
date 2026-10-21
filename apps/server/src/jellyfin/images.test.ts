@@ -12,6 +12,7 @@ import { insertLibraries } from "../libraries/testing.ts";
 import { createArtworkHandler } from "../metadata/artwork-http.ts";
 import { storeArtworkOriginal } from "../metadata/artwork-store.ts";
 import { createJellyfinHandler } from "./http.ts";
+import { itemGuid } from "./ids.ts";
 import { toGuid } from "./request.ts";
 import { jellyfinRoutes } from "./routes.ts";
 import { fixturePng as png } from "./testing.ts";
@@ -74,7 +75,7 @@ describe.skipIf(!databaseUrl)("jellyfin images", () => {
           if (response === undefined) throw new Error(`${path} unrouted`);
           return response;
         };
-        const images = `/Items/${toGuid(movie.id)}/Images`;
+        const images = `/Items/${itemGuid(movie.id, library.id)}/Images`;
 
         // Findroid builds image URLs with only a tag and no token.
         const anonymous = await send(

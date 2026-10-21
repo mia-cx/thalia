@@ -11,6 +11,7 @@ import {
 } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { createJellyfinHandler } from "./http.ts";
+import { itemGuid } from "./ids.ts";
 import { toGuid } from "./request.ts";
 import { jellyfinRoutes } from "./routes.ts";
 import { jellyfinLogin } from "./testing.ts";
@@ -237,11 +238,13 @@ describe.skipIf(!databaseUrl)("Jellyfin browse facets", () => {
         "127.0.0.1",
       );
       expect(denied?.status).toBe(403);
-      expect(await call(`/Items/${toGuid(seed.matrix.id)}`)).toMatchObject({
+      expect(
+        await call(`/Items/${itemGuid(seed.matrix.id, seed.films.id)}`),
+      ).toMatchObject({
         People: [{ Name: "Keanu Reeves", Role: "Neo", Type: "Actor" }],
       });
       const ancestors = (await call(
-        `/Items/${toGuid(seed.episodeOne.id)}/Ancestors`,
+        `/Items/${itemGuid(seed.episodeOne.id, seed.tv.id)}/Ancestors`,
       )) as { Name: string }[];
       expect(ancestors.map((item) => item.Name)).toEqual([
         "Season 1",

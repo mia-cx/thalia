@@ -50,7 +50,8 @@ Operations marked `RequiresElevation` or `FirstTimeSetupOrElevated` require an a
 
 ## Mapping
 
-- A Jellyfin GUID is the Thalia UUID without dashes, for Items and users alike, so no mapping table exists.
+- A Jellyfin item is an Item in one Library (ADR 0016). Its GUID is a UUIDv5 of the Item id and Library id under a fixed namespace, so it survives rescans. Its media sources are the Item's Versions in that Library, and a show lists only the Seasons and Episodes that Library holds. Marks belong to the Item, so they read the same through every Library, and `UserDataChanged` names each Library's id. A hash cannot be read back, so `jellyfin_items` records each pair and an unknown id first records any pairs not yet there.
+- Libraries, users, sessions and Versions keep their Thalia UUID without dashes as their GUID.
 - A client's DeviceProfile becomes the playback engine's client profile through one table. An unknown codec string counts as unsupported.
 - Thalia serves a real transcode URL in Jellyfin's `master.m3u8` shape, and clients follow it as given. A DeviceProfile with an `http` MP4 TranscodingProfile gets a progressive `stream.mp4` TranscodingUrl instead; `hls`-only profiles keep `master.m3u8`.
 - PlaybackInfo takes `AudioStreamIndex` and `SubtitleStreamIndex` from the body or the query and plans the session with them; `SubtitleStreamIndex=-1` turns subtitles off. Both indexes stay on the transcode URL, and `DefaultAudioStreamIndex` and `DefaultSubtitleStreamIndex` name the session's choice.

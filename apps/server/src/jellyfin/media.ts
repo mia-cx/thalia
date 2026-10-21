@@ -139,7 +139,8 @@ function mediaStream(
  * plus transcoding, transcode alone, each served over HLS or progressively
  * with its TranscodingUrl.
  * An unplanned source, as `/Items/{id}` lists them, claims every method;
- * clients ask PlaybackInfo before they play it.
+ * clients ask PlaybackInfo before they play it. `itemId` is the Jellyfin
+ * item id its URLs carry.
  */
 export function mediaSource(
   itemId: string,

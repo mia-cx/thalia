@@ -13,6 +13,7 @@ import {
 import { subtitleFormats } from "../subtitles/store.ts";
 import { webvttEvents } from "../transcoder/subtitles.ts";
 import { json, noContent, type RequestContext, type Route } from "./http.ts";
+import { resolvePair } from "./ids.ts";
 import { mediaUserId } from "./playback.ts";
 import { readQuery, requiredGuid, ticksPerSecond } from "./request.ts";
 import { readDto } from "./schema.ts";
@@ -29,9 +30,12 @@ function textResponse(text: string, format: keyof typeof contentTypes) {
   });
 }
 
-function streamParameters({ params, query }: RequestContext) {
-  const itemId = requiredGuid(query.get("itemId") ?? params.itemId);
-  const sourceId = requiredGuid(query.get("mediaSourceId") ?? params.sourceId);
+async function streamParameters({ db, params, query }: RequestContext) {
+  const id = requiredGuid(query.get("itemId") ?? params.itemId);
+  const { itemId } = await resolvePair(db, id);
+  const source = requiredGuid(query.get("mediaSourceId") ?? params.sourceId);
+  // A source named by the Jellyfin item's own id is its first Version.
+  const sourceId = source === id ? itemId : source;
   const index = readQuery(
     new URLSearchParams({ index: query.get("index") ?? params.index ?? "" }),
   ).count("index");
@@ -42,7 +46,7 @@ function streamParameters({ params, query }: RequestContext) {
 /** Subtitle management and delivery use core providers, asset roots, and conversion. */
 export function subtitleRoutes(options: SubtitleProviderOptions = {}): Route[] {
   const stream = async (context: RequestContext) => {
-    const { itemId, sourceId, index } = streamParameters(context);
+    const { itemId, sourceId, index } = await streamParameters(context);
     const { query, params } = context;
     const requested = (
       query.get("format") ??
@@ -107,7 +111,7 @@ export function subtitleRoutes(options: SubtitleProviderOptions = {}): Route[] {
       path: "/Videos/{itemId}/{sourceId}/Subtitles/{index}/subtitles.m3u8",
       anonymous: true,
       handle: async (context) => {
-        const { itemId, sourceId, index } = streamParameters(context);
+        const { itemId, sourceId, index } = await streamParameters(context);
         const userId = await mediaUserId(context, itemId);
         const source = await subtitleSource(
           context.db,
@@ -191,7 +195,7 @@ export function subtitleRoutes(options: SubtitleProviderOptions = {}): Route[] {
         await uploadSubtitle(
           db,
           caller.user.id,
-          requiredGuid(params.itemId),
+          (await resolvePair(db, params.itemId)).itemId,
           {
             language: String(dto.Language),
             format,
@@ -214,7 +218,7 @@ export function subtitleRoutes(options: SubtitleProviderOptions = {}): Route[] {
         await deleteSubtitle(
           db,
           caller.user.id,
-          requiredGuid(params.itemId),
+          (await resolvePair(db, params.itemId)).itemId,
           index,
         );
         return noContent();
@@ -229,7 +233,9 @@ export function subtitleRoutes(options: SubtitleProviderOptions = {}): Route[] {
             await searchSubtitleCandidates(
               db,
               caller.user.id,
-              requiredGuid(params.itemId),
+              (
+                await resolvePair(db, params.itemId)
+              ).itemId,
               params.language ?? "",
               options,
             )
@@ -255,7 +261,7 @@ export function subtitleRoutes(options: SubtitleProviderOptions = {}): Route[] {
         await installSubtitleCandidate(
           db,
           caller.user.id,
-          requiredGuid(params.itemId),
+          (await resolvePair(db, params.itemId)).itemId,
           params.subtitleId ?? "",
           options,
         );

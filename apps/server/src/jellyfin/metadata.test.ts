@@ -16,6 +16,7 @@ import { createArtworkHandler } from "../metadata/artwork-http.ts";
 import { queueProviderFetch, registerMetadataJobs } from "../metadata/jobs.ts";
 import { removeProviderKey, setProviderKey } from "../providers/keys.ts";
 import { createJellyfinHandler } from "./http.ts";
+import { itemGuid } from "./ids.ts";
 import { jellyfinRoutes } from "./routes.ts";
 import { fixturePng, jellyfinLogin } from "./testing.ts";
 
@@ -24,6 +25,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
     withDatabase((db) =>
       withVideoFixture(async (root) => {
         const seed = await seedBrowse(db);
+        const matrix = itemGuid(seed.matrix.id, seed.films.id);
         for (const library of [seed.films, seed.tv, seed.hidden])
           await updateLibrary(db, seed.admin.id, library.id, {
             roots: [{ id: library.rootId, path: join(root, library.id) }],
@@ -116,7 +118,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
           "POST",
           {
             searchInfo: { name: "Corrected Matrix", year: 1999 },
-            itemId: seed.matrix.id,
+            itemId: matrix,
           },
           viewer,
         );
@@ -144,13 +146,12 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(pinned.status).toBe(200);
         expect(await pinned.json()).toEqual(results);
         expect(
-          (await call(`/Items/${seed.matrix.id}/RemoteImages/Providers`))
-            .status,
+          (await call(`/Items/${matrix}/RemoteImages/Providers`)).status,
         ).toBe(200);
         expect(
           (
             await call(
-              `/Items/${seed.secret.id}/RemoteImages`,
+              `/Items/${itemGuid(seed.secret.id, seed.hidden.id)}/RemoteImages`,
               "GET",
               undefined,
               viewer,
@@ -160,7 +161,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(
           (
             await call(
-              `/Items/${seed.matrix.id}/RemoteImages/Download?type=Primary&imageUrl=https%3A%2F%2Fimage.example%2Foriginal.png`,
+              `/Items/${matrix}/RemoteImages/Download?type=Primary&imageUrl=https%3A%2F%2Fimage.example%2Foriginal.png`,
               "POST",
             )
           ).status,
@@ -175,7 +176,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(
           (
             await call(
-              `/Items/${seed.matrix.id}/RemoteImages/Download?type=Logo&imageUrl=https%3A%2F%2Fimage.example%2Flogo.png`,
+              `/Items/${matrix}/RemoteImages/Download?type=Logo&imageUrl=https%3A%2F%2Fimage.example%2Flogo.png`,
               "POST",
             )
           ).status,
@@ -190,7 +191,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(
           (
             await call(
-              `/Items/RemoteSearch/Apply/${seed.matrix.id}?replaceAllImages=false`,
+              `/Items/RemoteSearch/Apply/${matrix}?replaceAllImages=false`,
               "POST",
               results[0],
             )
@@ -206,9 +207,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(
           await db.select().from(artwork).where(eq(artwork.id, logo.id)),
         ).toHaveLength(1);
-        expect(
-          await (await call(`/Items/${seed.matrix.id}`)).json(),
-        ).toMatchObject({
+        expect(await (await call(`/Items/${matrix}`)).json()).toMatchObject({
           Name: "Corrected Matrix",
           Overview: "Provider description",
           Genres: ["Action"],
@@ -216,9 +215,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
           People: [{ Name: "Remote Actor", Role: "Lead" }],
         });
         const images = await (
-          await call(
-            `/Items/${seed.matrix.id}/RemoteImages?type=Primary&limit=1`,
-          )
+          await call(`/Items/${matrix}/RemoteImages?type=Primary&limit=1`)
         ).json();
         expect(images).toMatchObject({
           TotalRecordCount: 2,
@@ -233,7 +230,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(
           (
             await call(
-              `/Items/RemoteSearch/Apply/${seed.matrix.id}?replaceAllImages=true`,
+              `/Items/RemoteSearch/Apply/${matrix}?replaceAllImages=true`,
               "POST",
               results[0],
             )
@@ -265,7 +262,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(
           (
             await call(
-              `/Items/RemoteSearch/Apply/${seed.matrix.id}?replaceAllImages=false`,
+              `/Items/RemoteSearch/Apply/${matrix}?replaceAllImages=false`,
               "POST",
               results[0],
             )
@@ -280,7 +277,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(
           (
             await call(
-              `/Items/RemoteSearch/Apply/${seed.matrix.id}?replaceAllImages=true`,
+              `/Items/RemoteSearch/Apply/${matrix}?replaceAllImages=true`,
               "POST",
               results[0],
             )
@@ -300,7 +297,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(
           (
             await call(
-              `/Items/${seed.matrix.id}/RemoteImages/Download?type=Primary&imageUrl=https%3A%2F%2Fimage.example%2Fkept.png`,
+              `/Items/${matrix}/RemoteImages/Download?type=Primary&imageUrl=https%3A%2F%2Fimage.example%2Fkept.png`,
               "POST",
             )
           ).status,
@@ -320,7 +317,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
           expect(
             (
               await call(
-                `/Items/RemoteSearch/Apply/${seed.matrix.id}?replaceAllImages=false`,
+                `/Items/RemoteSearch/Apply/${matrix}?replaceAllImages=false`,
                 "POST",
                 results[0],
               )
@@ -345,7 +342,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         expect(
           (
             await call(
-              `/Items/RemoteSearch/Apply/${seed.matrix.id}`,
+              `/Items/RemoteSearch/Apply/${matrix}`,
               "POST",
               results[0],
               viewer,
@@ -466,7 +463,7 @@ describe.skipIf(!databaseUrl)("Jellyfin remote metadata", () => {
         await queueProviderFetch(db, seed.show.id);
         const response = await send(
           new Request(
-            `http://thalia.test/Items/RemoteSearch/Apply/${seed.show.id}?replaceAllImages=false`,
+            `http://thalia.test/Items/RemoteSearch/Apply/${itemGuid(seed.show.id, seed.tv.id)}?replaceAllImages=false`,
             {
               method: "POST",
               headers: {

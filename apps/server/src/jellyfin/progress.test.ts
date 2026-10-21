@@ -9,6 +9,7 @@ import { createArtworkHandler } from "../metadata/artwork-http.ts";
 import { continueWatching } from "../playback/marks.ts";
 import { resumeProgress } from "../playback/progress.ts";
 import { createJellyfinHandler } from "./http.ts";
+import { itemGuid } from "./ids.ts";
 import { toGuid } from "./request.ts";
 import { jellyfinRoutes } from "./routes.ts";
 import { contractErrors, jellyfinLogin } from "./testing.ts";
@@ -58,7 +59,7 @@ describe.skipIf(!databaseUrl)("jellyfin progress and marks", () => {
         durationSeconds: 7000,
       });
       const call = await client(db, findroid);
-      const item = toGuid(s.arrival.id);
+      const item = itemGuid(s.arrival.id, s.films.id);
 
       // Findroid's bodies, with no PlaySessionId at all.
       const state = {
@@ -108,8 +109,8 @@ describe.skipIf(!databaseUrl)("jellyfin progress and marks", () => {
       const start = {
         QueueableMediaTypes: "Video,Audio",
         CanSeek: true,
-        ItemId: toGuid(s.matrix.id),
-        MediaSourceId: toGuid(s.matrix.id),
+        ItemId: itemGuid(s.matrix.id, s.films.id),
+        MediaSourceId: itemGuid(s.matrix.id, s.films.id),
         PlayMethod: "DirectPlay",
         VolumeLevel: 100,
         PositionTicks: 0,
@@ -132,13 +133,13 @@ describe.skipIf(!databaseUrl)("jellyfin progress and marks", () => {
       const after = await continueWatching(db, s.viewer.id, {});
       expect(after.items.map((entry) => entry.item.id)).toEqual([s.arrival.id]);
       const detail = (await (
-        await kodiCall("GET", `/Items/${toGuid(s.matrix.id)}`)
+        await kodiCall("GET", `/Items/${itemGuid(s.matrix.id, s.films.id)}`)
       ).json()) as { UserData: object };
       expect(detail.UserData).toMatchObject({ Played: true, PlayCount: 1 });
 
       // A report on an Item the caller cannot see fails like a missing one.
       const hidden = await call("POST", "/Sessions/Playing", {
-        ItemId: toGuid(s.secret.id),
+        ItemId: itemGuid(s.secret.id, s.hidden.id),
       });
       expect(hidden.status).toBe(403);
     }));
@@ -146,7 +147,7 @@ describe.skipIf(!databaseUrl)("jellyfin progress and marks", () => {
   test("reports stay on their own device and a stopped play counts once", () =>
     withDatabase(async (db) => {
       const s = await seedBrowse(db);
-      const item = toGuid(s.matrix.id);
+      const item = itemGuid(s.matrix.id, s.films.id);
       const states = async () =>
         (
           await db
@@ -277,7 +278,7 @@ describe.skipIf(!databaseUrl)("jellyfin progress and marks", () => {
         })),
       );
       const call = await client(db, findroid);
-      const show = toGuid(s.show.id);
+      const show = itemGuid(s.show.id, s.tv.id);
       const episodes = async () =>
         (
           (await (await call("GET", `/Shows/${show}/Episodes`)).json()) as {
@@ -305,7 +306,7 @@ describe.skipIf(!databaseUrl)("jellyfin progress and marks", () => {
         ["Half Loop", false],
       ]);
 
-      const matrix = toGuid(s.matrix.id);
+      const matrix = itemGuid(s.matrix.id, s.films.id);
       const [selected] = await db
         .select({ id: versions.id })
         .from(versions)
@@ -420,7 +421,7 @@ describe.skipIf(!databaseUrl)("jellyfin progress and marks", () => {
 
       const denied = await call(
         "POST",
-        `/UserFavoriteItems/${toGuid(s.secret.id)}`,
+        `/UserFavoriteItems/${itemGuid(s.secret.id, s.hidden.id)}`,
       );
       expect(denied.status).toBe(403);
     }));

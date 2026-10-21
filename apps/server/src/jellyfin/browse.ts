@@ -13,6 +13,7 @@ import { readAccount, readClientPreference } from "../auth/profile.ts";
 import { readServerId } from "../server-id.ts";
 import { facetId } from "./facets.ts";
 import { json, type Route, type UserContext } from "./http.ts";
+import { resolvePair } from "./ids.ts";
 import {
   baseItemDto,
   browseSelection,
@@ -130,7 +131,9 @@ async function people(context: UserContext, identities = false) {
     {
       ...query,
       kinds: identities ? undefined : query.kinds,
-      ids: itemId === undefined ? query.ids : [requiredGuid(itemId)],
+      ...(itemId === undefined
+        ? {}
+        : { pairs: [await resolvePair(context.db, itemId)] }),
     },
   );
   const includes = context.query
@@ -269,16 +272,15 @@ export const additionalBrowseRoutes: Route[] = [
         | Awaited<ReturnType<typeof itemDtos>>[number]
         | ReturnType<typeof libraryDto>
       )[] = [];
-      let item = await getItemView(
-        db,
-        caller.user.id,
-        requiredGuid(params.itemId),
-      );
+      const { libraryId, ...pair } = await resolvePair(db, params.itemId);
+      let item = await getItemView(db, caller.user.id, { ...pair, libraryId });
       if (item === undefined) throw new AuthError("NOT_FOUND");
-      const libraryId = item.libraryId;
       const ancestors: ItemView[] = [];
       while (item?.parentId != null) {
-        item = await getItemView(db, caller.user.id, item.parentId);
+        item = await getItemView(db, caller.user.id, {
+          itemId: item.parentId,
+          libraryId,
+        });
         if (item !== undefined) ancestors.push(item);
       }
       result.push(...(await itemDtos(context, ancestors)));
@@ -300,18 +302,18 @@ export const additionalBrowseRoutes: Route[] = [
       method: "GET",
       path,
       handle: async (context) => {
-        const id = requiredGuid(context.params.itemId);
+        const pair = await resolvePair(context.db, context.params.itemId);
         const baseline = await getItemView(
           context.db,
           context.caller.user.id,
-          id,
+          pair,
         );
         if (baseline === undefined) throw new AuthError("NOT_FOUND");
         return viewsResult(context, {
           ...(await browseSelection(context)),
           kinds: [baseline.kind],
           genres: baseline.genres.length ? baseline.genres : undefined,
-          excludeIds: [id],
+          excludeIds: [pair.itemId],
           limit: context.query.count("limit") ?? 20,
         });
       },
@@ -491,7 +493,7 @@ export const additionalBrowseRoutes: Route[] = [
           MediaType,
           Series,
           Status,
-          ItemId: toGuid(item.id),
+          ItemId: Id,
           MatchedTerm: item.title,
           RunTimeTicks: Math.round(
             (item.durationSeconds ?? 0) * ticksPerSecond,

@@ -87,14 +87,21 @@ export async function loadVisibility(db: Queryable, userId: string) {
 
   const item = (
     itemId: SQLWrapper = sql.raw('"items"."id"'),
-    libraryIds?: readonly string[],
+    libraries?: readonly string[] | SQL,
   ): SQL<boolean> => {
-    if (libraryIds?.length === 0) return sql<boolean>`false`;
+    if (Array.isArray(libraries) && libraries.length === 0)
+      return sql<boolean>`false`;
+    const inLibraries =
+      libraries === undefined
+        ? sql``
+        : Array.isArray(libraries)
+          ? sql`and visible_version.library_id in (${uuids(libraries)})`
+          : sql`and visible_version.library_id = ${libraries}`;
     return sql<boolean>`exists (
       select 1 from item_ancestors visible_member
       join versions visible_version on visible_version.item_id = visible_member.descendant_id
       where visible_member.ancestor_id = ${itemId}
-        ${libraryIds === undefined ? sql`` : sql`and visible_version.library_id in (${uuids(libraryIds)})`}
+        ${inLibraries}
         and ${versionViewable("visible_version")}
     )`;
   };
@@ -122,7 +129,7 @@ export async function loadVisibility(db: Queryable, userId: string) {
   };
 
   return {
-    /** Holds when the Item or one below it has a Version the caller may view, in one of `libraryIds` when given. Lists show these. */
+    /** Holds when the Item or one below it has a Version the caller may view, in one of `libraries` (ids or a column) when given. Lists show these. */
     item,
     /**
      * Holds when the caller may view the Item itself, as the single-Item check

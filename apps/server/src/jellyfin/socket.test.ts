@@ -6,6 +6,7 @@ import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { runScanJob } from "../libraries/jobs.ts";
 import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
+import { itemGuid } from "./ids.ts";
 import { toGuid } from "./request.ts";
 import { contractErrors, jellyfinLogin, seedMovies } from "./testing.ts";
 
@@ -124,7 +125,7 @@ describe.skipIf(!databaseUrl)("jellyfin socket", () => {
           });
 
         const favourite = await fetch(
-          `${base}/UserFavoriteItems/${toGuid(itemId)}`,
+          `${base}/UserFavoriteItems/${itemGuid(itemId, library.id)}`,
           {
             method: "POST",
             headers: { authorization: `${androidTv}, Token="${viewerToken}"` },
@@ -140,13 +141,13 @@ describe.skipIf(!databaseUrl)("jellyfin socket", () => {
           contractErrors("UserItemDataDto", changed.UserDataList[0]),
         ).toEqual([]);
         expect(changed.UserDataList[0]).toMatchObject({
-          ItemId: toGuid(itemId),
+          ItemId: itemGuid(itemId, library.id),
           IsFavorite: true,
         });
 
         // Events arrive in order, so the admin's own mark proves the
         // viewer's never reached it.
-        await fetch(`${base}/UserPlayedItems/${toGuid(itemId)}`, {
+        await fetch(`${base}/UserPlayedItems/${itemGuid(itemId, library.id)}`, {
           method: "POST",
           headers: { authorization: `${swiftfin}, Token="${adminToken}"` },
         });

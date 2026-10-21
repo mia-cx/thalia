@@ -35,7 +35,6 @@ import {
   streams,
   versions,
 } from "../db/schema/index.ts";
-import { homeLibraryId } from "../libraries/membership.ts";
 import { listSubtitles, type StoredSubtitle } from "../subtitles/store.ts";
 
 type ItemKind = (typeof items.kind.enumValues)[number];
@@ -49,9 +48,14 @@ export type ItemViewSort =
   | "number"
   | "played";
 
-/** Which Items to list and how. Every filter narrows the libraries the caller may view. */
+/** One Item as it sits in one Library: the Library holds a Version on or below it. */
+export type ItemPair = { readonly itemId: string; readonly libraryId: string };
+
+/** Which Item pairs to list and how. Every filter narrows what the caller can see. */
 export type ItemViewQuery = {
   readonly libraryIds?: readonly string[];
+  /** Exactly these pairs, where the caller can see them. */
+  readonly pairs?: readonly ItemPair[];
   /** Direct children of an Item; null lists the library roots. */
   readonly parentId?: string | null;
   /** Every descendant of an Item, at any depth. */
@@ -122,10 +126,18 @@ function streamLanguages(
       and ${inArray(streams.language, [...languages])})`;
 }
 
+// Translation layers show one Item once per Library holding a Version on or below it.
+const memberLibraries = sql`lateral (
+  select distinct member_version.library_id from item_ancestors member
+  join versions member_version on member_version.item_id = member.descendant_id
+  where member.ancestor_id = "items"."id"
+) as pair`;
+const pairLibrary = sql<string>`pair.library_id`;
+
 const viewFields = (visibility: Visibility) => ({
   id: items.id,
   kind: items.kind,
-  libraryId: sql<string>`${homeLibraryId()}`.as("library_id"),
+  libraryId: sql<string>`${pairLibrary}`.as("library_id"),
   parentId: items.parentId,
   title: items.title,
   year: items.year,
@@ -149,16 +161,18 @@ const viewFields = (visibility: Visibility) => ({
   backdrop: selectedArtwork("items", "backdrop").as("backdrop"),
   logo: selectedArtwork("items", "logo").as("logo"),
   thumb: selectedArtwork("items", "thumb").as("thumb"),
-  // The first imported Version in label order, as the detail screen lists them.
+  // The Library's first imported Version in label order, as its sources list them.
   durationSeconds: sql<number | null>`(
     select ${versions.durationSeconds} from ${versions}
     where ${versions.itemId} = ${items.id} and ${versions.origin} = 'imported'
+      and ${versions.libraryId} = ${pairLibrary}
     order by ${versions.label}, ${versions.id}
     limit 1
   )`.as("duration_seconds"),
   childCount: sql<number>`(
     select count(*)::int from ${items} as child
-    where child.parent_id = ${items.id} and ${visibility.item(sql.raw("child.id"))}
+    where child.parent_id = ${items.id}
+      and ${visibility.item(sql.raw("child.id"), pairLibrary)}
   )`.as("child_count"),
   viewable: visibility.viewable().as("viewable"),
   providerIds: sql<Record<string, string>>`(
@@ -196,13 +210,28 @@ function orderOf(sort: ItemViewQuery["sort"]): SQL[] {
       ),
     ),
     asc(items.id),
+    asc(pairLibrary),
   ];
 }
 
 function filtersOf(visibility: Visibility, query: ItemViewQuery) {
-  const { parentId, ancestorId, kinds, ids, search } = query;
+  const { parentId, ancestorId, kinds, ids, search, pairs } = query;
   return and(
-    visibility.item(undefined, query.libraryIds),
+    visibility.item(undefined, pairLibrary),
+    query.libraryIds === undefined
+      ? undefined
+      : inArray(pairLibrary, [...query.libraryIds]),
+    pairs === undefined
+      ? undefined
+      : pairs.length
+        ? sql`(${items.id}, ${pairLibrary}) in (${sql.join(
+            pairs.map(
+              ({ itemId, libraryId }) =>
+                sql`(${itemId}::uuid, ${libraryId}::uuid)`,
+            ),
+            sql`, `,
+          )})`
+        : sql`false`,
     parentId === undefined
       ? undefined
       : parentId === null
@@ -289,9 +318,10 @@ function filtersOf(visibility: Visibility, query: ItemViewQuery) {
   );
 }
 
-// Every join adds at most one row per Item, so a count over the same joins stays exact.
+// One row per Item and member Library; every other join adds at most one, so a count over the same joins stays exact.
 function withJoins<T extends PgSelect>(query: T, userId: string) {
   return query
+    .innerJoin(memberLibraries, sql`true`)
     .leftJoin(movies, eq(movies.itemId, items.id))
     .leftJoin(shows, eq(shows.itemId, items.id))
     .leftJoin(ownSeason, eq(ownSeason.itemId, items.id))
@@ -385,21 +415,30 @@ function toView(row: ViewRow) {
   };
 }
 
-/** One Item as a translation layer shows it: medium fields, selected artwork, provider ids and the caller's marks. */
+/**
+ * One Item in one Library as a translation layer shows it: medium fields,
+ * selected artwork, provider ids and the caller's marks, which belong to the
+ * Item and so read the same in every Library. `libraryId` is the pair's
+ * Library, and `childCount` and `durationSeconds` count only what it holds.
+ */
 export type ItemView = ReturnType<typeof toView>;
 
-/** Reads one visible Item, if only as a container; a hidden Item reads as absent in translation layers. */
+/** Reads one Item in one Library the caller can see, if only as a container; anything else reads as absent. */
 export async function getItemView(
   db: Database,
   userId: string,
-  itemId: string,
+  { itemId, libraryId }: ItemPair,
 ) {
   const visibility = await loadVisibility(db, userId);
   const [view] = await selectViews(
     db,
     userId,
     visibility,
-    and(eq(items.id, itemId), visibility.opens()),
+    and(
+      eq(items.id, itemId),
+      sql`${pairLibrary} = ${libraryId}::uuid`,
+      visibility.item(undefined, pairLibrary),
+    ),
     {},
   );
   return view ? toView(view) : undefined;
@@ -416,14 +455,15 @@ export async function listItemViews(
 ): Promise<{ items: ItemView[]; total: number }> {
   const visibility = await loadVisibility(db, userId);
   const where = filtersOf(visibility, query);
-  const matching = db
-    .$with("member_items")
-    .as(
-      withJoins(
-        db.select({ id: items.id }).from(items).$dynamic(),
-        userId,
-      ).where(where),
-    );
+  const matching = db.$with("member_items").as(
+    withJoins(
+      db
+        .select({ id: items.id, libraryId: pairLibrary.as("library_id") })
+        .from(items)
+        .$dynamic(),
+      userId,
+    ).where(where),
+  );
   const total = db
     .select({ total: count().as("total") })
     .from(matching)
@@ -432,7 +472,7 @@ export async function listItemViews(
     db,
     userId,
     visibility,
-    inArray(items.id, db.select({ id: matching.id }).from(matching)),
+    sql`(${items.id}, ${pairLibrary}) in (select ${matching.id}, ${matching.libraryId} from ${matching})`,
     query,
   ).as("catalogue_page");
   // The count survives an empty/out-of-range page; both sides share one filtered CTE and one statement.
@@ -451,14 +491,19 @@ export async function listItemViews(
  * Lists the imported video Versions of an Item the user may view, in label
  * order, each with its one File and that File's Streams in index order. A
  * Version split over several Files is left out, since playback cannot open it.
+ * Given a Library, only that Library's Versions.
  */
 export async function listVersionViews(
   db: Database,
   userId: string,
   itemId: string,
+  libraryId?: string,
 ) {
-  if (!(await getItemView(db, userId, itemId))) return [];
-  return (await loadVersionViews(db, userId, [itemId], true)).get(itemId) ?? [];
+  const all =
+    (await loadVersionViews(db, userId, [itemId], true)).get(itemId) ?? [];
+  return libraryId === undefined
+    ? all
+    : all.filter((version) => version.libraryId === libraryId);
 }
 
 /**

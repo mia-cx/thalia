@@ -29,7 +29,7 @@ import {
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { deleteItemSubtree } from "../db/tree.ts";
 import { startThalia } from "../index.ts";
-import { toGuid } from "../jellyfin/request.ts";
+import { itemGuid } from "../jellyfin/ids.ts";
 import { insertLibraries } from "../libraries/testing.ts";
 import { storeArtworkOriginal } from "../metadata/artwork-store.ts";
 import { editItemMetadata } from "../metadata/edit.ts";
@@ -270,13 +270,19 @@ describe.skipIf(!databaseUrl)("single-Item Access rules", () => {
           [`/api/artwork/${image.id}?width=32`, "GET"],
           [`/api/artwork/${versionImage.id}?width=32`, "GET"],
           [`/api/subtitles/${item.id}/en.srt`, "GET"],
-          [`/Items/${toGuid(item.id)}/Download`, "GET"],
+          [`/Items/${itemGuid(item.id, fx.library.id)}/Download`, "GET"],
         ] as const)
           expect(
             (await request(base, fx.token, path, method, body)).status,
           ).toBe(403);
         expect(
-          (await request(base, fx.token, `/Items/${toGuid(item.id)}`)).status,
+          (
+            await request(
+              base,
+              fx.token,
+              `/Items/${itemGuid(item.id, fx.library.id)}`,
+            )
+          ).status,
         ).toBe(404);
         await expect(
           subtitleSource(db, fx.viewer.id, item.id, version.id, 0),
@@ -325,13 +331,18 @@ describe.skipIf(!databaseUrl)("single-Item Access rules", () => {
           await request(
             base,
             fx.token,
-            `/Items/${toGuid(chosen.item.id)}/Download`,
+            `/Items/${itemGuid(chosen.item.id, fx.library.id)}/Download`,
           )
         ).text(),
       ).toBe("media fixture");
       expect(
-        (await request(base, fx.token, `/Items/${toGuid(chosen.item.id)}`))
-          .status,
+        (
+          await request(
+            base,
+            fx.token,
+            `/Items/${itemGuid(chosen.item.id, fx.library.id)}`,
+          )
+        ).status,
       ).toBe(200);
       // The show and Season 1 open as containers; see "Item rules in lists".
       for (const item of [
@@ -343,11 +354,22 @@ describe.skipIf(!databaseUrl)("single-Item Access rules", () => {
           (await request(base, fx.token, `/api/items/${item.id}`)).status,
         ).toBe(403);
         expect(
-          (await request(base, fx.token, `/Items/${toGuid(item.id)}`)).status,
+          (
+            await request(
+              base,
+              fx.token,
+              `/Items/${itemGuid(item.id, fx.library.id)}`,
+            )
+          ).status,
         ).toBe(404);
         expect(
-          (await request(base, fx.token, `/Items/${toGuid(item.id)}/Download`))
-            .status,
+          (
+            await request(
+              base,
+              fx.token,
+              `/Items/${itemGuid(item.id, fx.library.id)}/Download`,
+            )
+          ).status,
         ).toBe(403);
       }
       // Revocation applies to an already issued playback token and its session.

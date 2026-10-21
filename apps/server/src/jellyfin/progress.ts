@@ -1,4 +1,4 @@
-import { getItemView } from "../api/views.ts";
+import { getItemView, type ItemPair } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
 import {
   readClientPreference,
@@ -19,6 +19,7 @@ import {
 } from "../playback/progress.ts";
 import { browseAsUser } from "./browse.ts";
 import { json, noContent, type Route, type UserContext } from "./http.ts";
+import { resolvePair } from "./ids.ts";
 import { userData } from "./items.ts";
 import {
   parseGuid,
@@ -42,7 +43,8 @@ const optionalGuid = (text: string | undefined) =>
  */
 async function readReport({ db, request, caller }: UserContext) {
   const body = await readBody(request);
-  const itemId = requiredGuid(body.optionalString("ItemId"));
+  const id = requiredGuid(body.optionalString("ItemId"));
+  const { itemId } = await resolvePair(db, id);
   const sourceId = optionalGuid(body.optionalString("MediaSourceId"));
   const session = await resolvePlaySession(db, caller, {
     itemId,
@@ -50,7 +52,7 @@ async function readReport({ db, request, caller }: UserContext) {
       body.optionalString("PlaySessionId") ?? body.optionalString("SessionId"),
     ),
     // A Jellyfin item's first source shares the item's id.
-    versionId: sourceId === itemId ? undefined : sourceId,
+    versionId: sourceId === id ? undefined : sourceId,
   });
   const ticks = body.number("PositionTicks");
   const duration = session.durationSeconds ?? Infinity;
@@ -141,8 +143,9 @@ function reportRoute(
   };
 }
 
-async function userDataOf({ db, caller }: UserContext, itemId: string) {
-  const view = await getItemView(db, caller.user.id, itemId);
+// Marks belong to the Item, so they read the same through every Library.
+async function userDataOf({ db, caller }: UserContext, pair: ItemPair) {
+  const view = await getItemView(db, caller.user.id, pair);
   if (view === undefined) throw new AuthError("NOT_FOUND");
   return json(userData(view));
 }
@@ -156,9 +159,9 @@ function markRoute(
     method,
     path,
     handle: async (context) => {
-      const itemId = requiredGuid(context.params.id);
-      await mark(context, itemId);
-      return userDataOf(context, itemId);
+      const pair = await resolvePair(context.db, context.params.id);
+      await mark(context, pair.itemId);
+      return userDataOf(context, pair);
     },
   };
 }
@@ -201,15 +204,16 @@ export const progressRoutes: Route[] = (
     {
       method: "GET",
       path: "/UserItems/{id}/UserData",
-      handle: (context) => userDataOf(context, requiredGuid(context.params.id)),
+      handle: async (context) =>
+        userDataOf(context, await resolvePair(context.db, context.params.id)),
     },
     {
       method: "POST",
       path: "/UserItems/{id}/UserData",
       handle: async (context) => {
         const value = await readDto(context.request, "UpdateUserItemDataDto");
-        const itemId = requiredGuid(context.params.id);
-        await updateItemState(context.db, context.caller.user.id, itemId, {
+        const pair = await resolvePair(context.db, context.params.id);
+        await updateItemState(context.db, context.caller.user.id, pair.itemId, {
           positionSeconds:
             typeof value.PlaybackPositionTicks === "number"
               ? value.PlaybackPositionTicks / ticksPerSecond
@@ -229,7 +233,7 @@ export const progressRoutes: Route[] = (
           rating: typeof value.Rating === "number" ? value.Rating : undefined,
           liked: typeof value.Likes === "boolean" ? value.Likes : undefined,
         });
-        return userDataOf(context, itemId);
+        return userDataOf(context, pair);
       },
     },
     markRoute(

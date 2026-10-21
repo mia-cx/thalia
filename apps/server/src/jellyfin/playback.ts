@@ -1,16 +1,17 @@
 import { eq } from "drizzle-orm";
 import type { createHlsHandler } from "../api/hls.ts";
-import { listVersionViews } from "../api/views.ts";
+import { type ItemPair, listVersionViews } from "../api/views.ts";
 import { AuthError } from "../auth/errors.ts";
 import { requirePermission } from "../auth/permissions.ts";
 import { verifyPlaybackToken } from "../auth/playback-tokens.ts";
 import { authenticate } from "../auth/sessions.ts";
-import { items, sessionRegistry } from "../db/schema/index.ts";
+import { sessionRegistry } from "../db/schema/index.ts";
 import { serveVersionFile } from "../playback/direct.ts";
 import { planPlayback } from "../playback/planning.ts";
 import { parseHlsName } from "../playback/playlists.ts";
 import { browseAsUser, browseUser } from "./browse.ts";
 import { json, noTimeouts, type RequestContext, type Route } from "./http.ts";
+import { resolvePair } from "./ids.ts";
 import { mediaSource, type PlannedSource } from "./media.ts";
 import { readDeviceProfile } from "./profile.ts";
 import {
@@ -56,17 +57,33 @@ export async function mediaUserId(
   return claims.userId;
 }
 
-/** The Version a media URL names: its source id, or the Item's first Version for the Item's own id. */
+/** A media URL's Jellyfin item: the id it carries and the Item and Library that id names. */
+type Target = ItemPair & { id: string };
+
+async function targetOf(context: RequestContext, text: string | undefined) {
+  const id = requiredGuid(text);
+  return { id, ...(await resolvePair(context.db, id)) };
+}
+
+/**
+ * The Version a media URL names among the Item's Versions in its Library: its
+ * source id, or the first Version for the Jellyfin item's own id.
+ */
 async function versionOf(
   context: RequestContext,
   userId: string,
-  itemId: string,
+  target: Target,
   source: string | undefined,
 ) {
-  const versions = await listVersionViews(context.db, userId, itemId);
-  const sourceId = source === undefined ? itemId : requiredGuid(source);
+  const versions = await listVersionViews(
+    context.db,
+    userId,
+    target.itemId,
+    target.libraryId,
+  );
+  const sourceId = source === undefined ? target.id : requiredGuid(source);
   const version =
-    sourceId === itemId
+    sourceId === target.id
       ? versions[0]
       : versions.find((candidate) => candidate.id === sourceId);
   if (version === undefined) throw new AuthError("NOT_FOUND");
@@ -76,8 +93,9 @@ async function versionOf(
 async function directStream(
   hls: HlsHandler,
   context: RequestContext,
-  itemId: string,
+  target: Target,
 ) {
+  const { itemId } = target;
   // A progressive plan's TranscodingUrl is `stream.mp4` on this same route: a
   // non-static request naming a session whose decision is progressive forwards
   // to the first-party stream route through the shared handler. `static=true`
@@ -119,7 +137,7 @@ async function directStream(
   const version = await versionOf(
     context,
     userId,
-    itemId,
+    target,
     context.query.get("mediaSourceId"),
   );
   return serveVersionFile(context.db, userId, itemId, version.id);
@@ -163,12 +181,17 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
       {
         method: "GET",
         path: "/Items/{id}/PlaybackInfo",
-        handle: async ({ db, caller, params }) => {
-          const itemId = requiredGuid(params.id);
+        handle: async (context) => {
+          const target = await targetOf(context, context.params.id);
           return json({
             MediaSources: (
-              await listVersionViews(db, caller.user.id, itemId)
-            ).map((version) => mediaSource(itemId, version)),
+              await listVersionViews(
+                context.db,
+                context.caller.user.id,
+                target.itemId,
+                target.libraryId,
+              )
+            ).map((version) => mediaSource(target.id, version)),
           });
         },
       },
@@ -177,17 +200,23 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
         path: "/Items/{id}/PlaybackInfo",
         handle: async (context) => {
           const { db, request, query, params, caller, peerAddress } = context;
-          const itemId = requiredGuid(params.id);
+          const target = await targetOf(context, params.id);
+          const { itemId } = target;
           const body = await readBody(request, maxPlaybackInfoBytes);
           const subject = await browseUser(context);
-          const versions = await listVersionViews(db, subject.id, itemId);
+          const versions = await listVersionViews(
+            db,
+            subject.id,
+            itemId,
+            target.libraryId,
+          );
           // A Jellyfin item's first source shares the item's id.
           const requested =
             body.optionalString("MediaSourceId") ?? query.get("mediaSourceId");
           const sourceId =
             requested === undefined ? undefined : parseGuid(requested);
           const version =
-            sourceId === undefined || sourceId === itemId
+            sourceId === undefined || sourceId === target.id
               ? versions[0]
               : versions.find((candidate) => candidate.id === sourceId);
           if (version === undefined) throw new AuthError("NOT_FOUND");
@@ -284,7 +313,7 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
               throw error;
           }
           return json({
-            MediaSources: [mediaSource(itemId, version, planned)],
+            MediaSources: [mediaSource(target.id, version, planned)],
             PlaySessionId:
               sessionId === undefined ? undefined : toGuid(sessionId),
           });
@@ -294,13 +323,13 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
         method: "GET",
         path: "/Videos/{id}/{name}",
         anonymous: true,
-        handle: (context) => {
-          const itemId = requiredGuid(context.params.id);
+        handle: async (context) => {
+          const target = await targetOf(context, context.params.id);
           const name = context.params.name ?? "";
           // `stream`, or `stream.mkv` as jellyfin-web and Kodi spell it.
           return /^stream(\.[a-z0-9]+)?$/i.test(name)
-            ? directStream(hls, context, itemId)
-            : sessionHls(hls, context, itemId, undefined, name);
+            ? directStream(hls, context, target)
+            : sessionHls(hls, context, target.itemId, undefined, name);
         },
       },
       ...["/Videos/{id}/stream", "/Videos/{id}/stream.{container}"].flatMap(
@@ -310,15 +339,23 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
               method: "GET",
               path,
               anonymous: true,
-              handle: (context) =>
-                directStream(hls, context, requiredGuid(context.params.id)),
+              handle: async (context) =>
+                directStream(
+                  hls,
+                  context,
+                  await targetOf(context, context.params.id),
+                ),
             },
             {
               method: "HEAD",
               path,
               anonymous: true,
-              handle: (context) =>
-                directStream(hls, context, requiredGuid(context.params.id)),
+              handle: async (context) =>
+                directStream(
+                  hls,
+                  context,
+                  await targetOf(context, context.params.id),
+                ),
             },
           ] satisfies Route[],
       ),
@@ -327,24 +364,19 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
           method: "GET",
           path: `/Items/{id}/${kind}`,
           handle: async (context) => {
-            const itemId = requiredGuid(context.params.id);
-            if (kind === "Download") {
-              const [item] = await context.db
-                .select({ id: items.id })
-                .from(items)
-                .where(eq(items.id, itemId));
-              if (!item) throw new AuthError("NOT_FOUND");
+            const target = await targetOf(context, context.params.id);
+            const { itemId } = target;
+            if (kind === "Download")
               await requirePermission(
                 context.db,
                 context.caller.user.id,
                 "download",
                 { type: "item", id: itemId },
               );
-            }
             const version = await versionOf(
               context,
               context.caller.user.id,
-              itemId,
+              target,
               undefined,
             );
             const response = await serveVersionFile(
@@ -356,7 +388,7 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
             if (kind === "Download" && response.ok)
               response.headers.set(
                 "content-disposition",
-                `attachment; filename="${toGuid(itemId)}.${version.file.container ?? "mkv"}"`,
+                `attachment; filename="${toGuid(target.id)}.${version.file.container ?? "mkv"}"`,
               );
             return response;
           },
@@ -382,11 +414,11 @@ export function playbackRoutes(hls: HlsHandler): Route[] {
         method: "GET",
         path: "/Videos/{id}/{variant}/{name}",
         anonymous: true,
-        handle: (context) =>
+        handle: async (context) =>
           sessionHls(
             hls,
             context,
-            requiredGuid(context.params.id),
+            (await resolvePair(context.db, context.params.id)).itemId,
             context.params.variant,
             context.params.name ?? "",
           ),

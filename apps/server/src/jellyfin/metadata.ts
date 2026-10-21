@@ -10,6 +10,7 @@ import {
 } from "../metadata/lookup.ts";
 import type { MetadataProviderOptions } from "../metadata/providers.ts";
 import { json, noContent, type Route } from "./http.ts";
+import { resolvePair, resolvePairs } from "./ids.ts";
 import { providerIdsDto } from "./items.ts";
 import { requiredGuid } from "./request.ts";
 import { readDto } from "./schema.ts";
@@ -52,9 +53,11 @@ export function metadataLookupRoutes(
             raw !== null && typeof raw === "object" && !Array.isArray(raw)
               ? raw
               : {};
+          // Clients send the empty GUID for a search not tied to an Item.
           const itemId =
-            typeof dto.ItemId === "string"
-              ? requiredGuid(dto.ItemId)
+            typeof dto.ItemId === "string" &&
+            requiredGuid(dto.ItemId) !== "00000000-0000-0000-0000-000000000000"
+              ? (await resolvePair(db, dto.ItemId)).itemId
               : undefined;
           const results = await searchRemoteMetadata(
             db,
@@ -64,10 +67,7 @@ export function metadataLookupRoutes(
               title: typeof search.Name === "string" ? search.Name : "",
               year: typeof search.Year === "number" ? search.Year : undefined,
               providerIds: identifierMap(search.ProviderIds),
-              itemId:
-                itemId === "00000000-0000-0000-0000-000000000000"
-                  ? undefined
-                  : itemId,
+              itemId,
               providerName:
                 typeof dto.SearchProviderName === "string" &&
                 dto.SearchProviderName
@@ -95,7 +95,11 @@ export function metadataLookupRoutes(
       path: "/Items/{itemId}/ExternalIdInfos",
       handle: async ({ db, caller, params }) => {
         const id = requiredGuid(params.itemId);
-        const item = await getItemView(db, caller.user.id, id);
+        const [pair] = await resolvePairs(db, [id]);
+        const item =
+          pair === undefined
+            ? undefined
+            : await getItemView(db, caller.user.id, pair);
         const person =
           item === undefined
             ? (await listContributorCredits(db, caller.user.id)).find(
@@ -117,7 +121,7 @@ export function metadataLookupRoutes(
         await selectRemoteMetadata(
           db,
           caller.user.id,
-          requiredGuid(params.itemId),
+          (await resolvePair(db, params.itemId)).itemId,
           {
             providerIds: identifierMap(dto.ProviderIds),
             providerName:
@@ -138,7 +142,7 @@ export function metadataLookupRoutes(
         const remote = await remoteArtwork(
           db,
           caller.user.id,
-          requiredGuid(params.itemId),
+          (await resolvePair(db, params.itemId)).itemId,
           query.get("providerName"),
           options,
         );
@@ -173,7 +177,9 @@ export function metadataLookupRoutes(
             await remoteMetadataProviders(
               db,
               caller.user.id,
-              requiredGuid(params.itemId),
+              (
+                await resolvePair(db, params.itemId)
+              ).itemId,
               options,
             )
           ).map((provider) => ({
@@ -203,7 +209,7 @@ export function metadataLookupRoutes(
         await downloadRemoteArtwork(
           db,
           caller.user.id,
-          requiredGuid(params.itemId),
+          (await resolvePair(db, params.itemId)).itemId,
           { type, url: url.href },
           options.request,
         );

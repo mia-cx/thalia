@@ -16,6 +16,7 @@ import { createVideoFixture } from "../mediums/video-common/fixtures.ts";
 import { createArtworkHandler } from "../metadata/artwork-http.ts";
 import { writeSubtitle } from "../subtitles/store.ts";
 import { createJellyfinHandler } from "./http.ts";
+import { itemGuid } from "./ids.ts";
 import { toGuid } from "./request.ts";
 import { jellyfinRoutes } from "./routes.ts";
 import { contractErrors, jellyfinLogin, seedMovies } from "./testing.ts";
@@ -100,7 +101,7 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
       expect(grid).toMatchObject({ TotalRecordCount: 3, StartIndex: 0 });
 
       const matrix = await get<Dto>(
-        `/Items/${guid(s.matrix.id)}?userId=${userId}`,
+        `/Items/${itemGuid(s.matrix.id, s.films.id)}?userId=${userId}`,
       );
       expect(contractErrors("BaseItemDto", matrix)).toEqual([]);
       expect(contractErrors("UserItemDataDto", matrix.UserData)).toEqual([]);
@@ -116,7 +117,7 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
           PlaybackPositionTicks: 6_000_000_000,
           Played: false,
           IsFavorite: false,
-          ItemId: guid(s.matrix.id),
+          ItemId: itemGuid(s.matrix.id, s.films.id),
         },
       });
 
@@ -137,28 +138,30 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
       });
 
       const seasons = await get(
-        `/Shows/${guid(s.show.id)}/Seasons?userId=${userId}`,
+        `/Shows/${itemGuid(s.show.id, s.tv.id)}/Seasons?userId=${userId}`,
       );
       expect(conforms(seasons)).toEqual(["Season 1"]);
       expect(seasons.Items.map((item) => item.IndexNumber)).toEqual([1]);
       const episodes = await get(
-        `/Shows/${guid(s.show.id)}/Episodes?seasonId=${guid(s.seasonOne.id)}&userId=${userId}`,
+        `/Shows/${itemGuid(s.show.id, s.tv.id)}/Episodes?seasonId=${itemGuid(s.seasonOne.id, s.tv.id)}&userId=${userId}`,
       );
       expect(conforms(episodes)).toEqual(["Good News About Hell", "Half Loop"]);
       expect(episodes.Items[0]).toMatchObject({
         Type: "Episode",
         IndexNumber: 1,
         ParentIndexNumber: 1,
-        SeriesId: guid(s.show.id),
+        SeriesId: itemGuid(s.show.id, s.tv.id),
         SeriesName: "Severance",
-        SeasonId: guid(s.seasonOne.id),
+        SeasonId: itemGuid(s.seasonOne.id, s.tv.id),
         SeriesPrimaryImageTag: guid(s.showPoster.id),
         UserData: { Played: true, PlayCount: 1 },
       });
 
       const resume = await get("/UserItems/Resume?mediaTypes=Video&limit=10");
       expect(conforms(resume)).toEqual(["The Matrix"]);
-      const next = await get(`/Shows/NextUp?seriesId=${guid(s.show.id)}`);
+      const next = await get(
+        `/Shows/NextUp?seriesId=${itemGuid(s.show.id, s.tv.id)}`,
+      );
       expect(conforms(next)).toEqual(["Half Loop"]);
       const favourites = await get(
         "/Items?filters=IsFavorite&recursive=true&includeItemTypes=Movie,Series",
@@ -168,7 +171,10 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
       expect(conforms(found)).toEqual(["The Matrix"]);
 
       // The Private library is denied to the viewer, so it and its Items read as absent.
-      const denied = await send(`/Items/${guid(s.secret.id)}`, signedIn);
+      const denied = await send(
+        `/Items/${itemGuid(s.secret.id, s.hidden.id)}`,
+        signedIn,
+      );
       expect(denied.status).toBe(404);
       const hidden = await get(
         `/Items?parentId=${guid(s.hidden.id)}&recursive=true`,
@@ -191,9 +197,10 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
       const allowed = await movieList();
       expect(allowed.Items.length).toBeGreaterThan(0);
       for (const item of allowed.Items) expect(item.CanDownload).toBe(true);
-      expect((await get<Dto>(`/Items/${guid(s.matrix.id)}`)).CanDownload).toBe(
-        true,
-      );
+      expect(
+        (await get<Dto>(`/Items/${itemGuid(s.matrix.id, s.films.id)}`))
+          .CanDownload,
+      ).toBe(true);
       const series = await get(
         `/Items?parentId=${guid(s.tv.id)}&includeItemTypes=Series&recursive=true`,
       );
@@ -212,9 +219,10 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
       );
       for (const item of (await movieList()).Items)
         expect(item.CanDownload).toBe(false);
-      expect((await get<Dto>(`/Items/${guid(s.matrix.id)}`)).CanDownload).toBe(
-        false,
-      );
+      expect(
+        (await get<Dto>(`/Items/${itemGuid(s.matrix.id, s.films.id)}`))
+          .CanDownload,
+      ).toBe(false);
       expect((await me()).Policy.EnableContentDownloading).toBe(false);
     }));
 
@@ -256,7 +264,7 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
         positionSeconds: 30,
         playedAt: new Date(),
       });
-      const nextUp = `/Shows/NextUp?seriesId=${guid(s.show.id)}`;
+      const nextUp = `/Shows/NextUp?seriesId=${itemGuid(s.show.id, s.tv.id)}`;
       expect(conforms(await get(nextUp))).toEqual(["Half Loop"]);
       expect(conforms(await get(`${nextUp}&enableResumable=false`))).toEqual(
         [],
@@ -429,7 +437,9 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
           "Example S01E02.mkv",
         ]);
         playable(
-          await get(`/Shows/${guid(show.id)}/Episodes?${episodeFields}`),
+          await get(
+            `/Shows/${itemGuid(show.id, tv.id)}/Episodes?${episodeFields}`,
+          ),
           ["Example S01E01.mkv", "Example S01E02.mkv"],
         );
 
@@ -444,7 +454,7 @@ describe.skipIf(!databaseUrl)("jellyfin browse", () => {
         }
         // The detail route always carries them — and the stored track.
         const detail = (await send(
-          `/Items/${guid(atmos.itemId)}`,
+          `/Items/${itemGuid(atmos.itemId, seed.library.id)}`,
           `${infuse}, Token="${token}"`,
         )) as unknown as Dto;
         expect(detail.Path).toMatch(/Atmos\.mkv$/);
