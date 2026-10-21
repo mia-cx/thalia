@@ -14,7 +14,12 @@ import {
 import type { AccessObject } from "./access.ts";
 import { server } from "./access.ts";
 import { AuthError, postgresCode } from "./errors.ts";
-import { itemAccessChain, requireAdmin } from "./permissions.ts";
+import {
+  type Explanation,
+  explainPermission,
+  itemAccessChain,
+  requireAdmin,
+} from "./permissions.ts";
 
 /** The user or Group named by an Access rule. */
 export type AccessSubject = { type: "user" | "group"; id: string };
@@ -235,6 +240,39 @@ export async function rulesOnObject(
       sortWithinObject(rules.filter((rule) => sameObject(rule, parent))),
     ),
   };
+}
+
+/** Explains a user's check as an admin: the real check's answer, its reason, and the deciding rule with names. */
+export async function explainAccess(
+  db: Database,
+  actorId: string,
+  input: { userId: string; object: AccessObject; action: Action },
+): Promise<{
+  allowed: boolean;
+  reason: Explanation["reason"];
+  rule: Rule | null;
+}> {
+  if (
+    input.object.type !== "server" &&
+    (serverOnlyActions as readonly Action[]).includes(input.action)
+  )
+    throw new AuthError("INVALID_INPUT");
+  await requireAdmin(db, actorId);
+  const [user] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.id, input.userId));
+  if (!user) throw new AuthError("NOT_FOUND");
+  const { allowed, reason, rule } = await explainPermission(
+    db,
+    input.userId,
+    input.action,
+    input.object,
+  );
+  const [named] = rule
+    ? await selectRules(db, eq(accessRules.id, rule.id))
+    : [];
+  return { allowed, reason, rule: named ?? null };
 }
 
 /** Lists every Access rule naming a user or Group, as an admin. */

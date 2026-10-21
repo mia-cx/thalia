@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import {
+  explainAccess,
   removeRule,
   rulesForSubject,
   rulesOnObject,
@@ -21,7 +22,10 @@ const ruleFields = {
   ),
   action: Schema.Literal(...actions),
 };
-const validObject = ({ object, action }: typeof RuleKey.Type) =>
+const validObject = ({
+  object,
+  action,
+}: Pick<typeof RuleKey.Type, "object" | "action">) =>
   object.type === "server" ||
   !(serverOnlyActions as readonly string[]).includes(action);
 const RuleKey = Schema.Struct(ruleFields);
@@ -60,7 +64,7 @@ const Rule = Schema.Struct({
   allowed: Schema.Boolean,
 });
 
-/** Admin-only Access rule writes, shared by RPC and REST. */
+/** Admin-only Access rule reads, writes and check explanations, shared by RPC and REST. */
 export const accessProcedures = {
   setRule: authenticatedMutation
     .route({ method: "PUT", path: "/access/rules" })
@@ -110,6 +114,34 @@ export const accessProcedures = {
         await runApi(
           fromHost(() =>
             rulesOnObject(context.db, context.caller.user.id, input.object),
+          ),
+        ),
+    ),
+  explain: authenticated
+    .route({ method: "GET", path: "/access/explain" })
+    .input(
+      Schema.standardSchemaV1(
+        Schema.Struct({
+          userId: Schema.UUID,
+          object: ruleFields.object,
+          action: ruleFields.action,
+        }).pipe(Schema.filter(validObject, validation)),
+      ),
+    )
+    .output(
+      Schema.standardSchemaV1(
+        Schema.Struct({
+          allowed: Schema.Boolean,
+          reason: Schema.Literal("admin", "disabled", "view", "rule", "unset"),
+          rule: Schema.NullOr(Rule),
+        }),
+      ),
+    )
+    .handler(
+      async ({ context, input }) =>
+        await runApi(
+          fromHost(() =>
+            explainAccess(context.db, context.caller.user.id, input),
           ),
         ),
     ),

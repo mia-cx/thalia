@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import { createThaliaClient } from "../../../web/src/lib/api.ts";
 import { server } from "../auth/access.ts";
+import { ids, resolverCases } from "../auth/access-cases.ts";
 import { createLocalUser, setupAdmin } from "../auth/accounts.ts";
 import {
   checkPermission,
@@ -10,7 +12,7 @@ import {
 } from "../auth/permissions.ts";
 import { createApiKey } from "../auth/sessions.ts";
 import { insertItem, insertItems } from "../db/item-fixtures.ts";
-import { accessRules, serverOnlyActions } from "../db/schema/index.ts";
+import { accessRules, serverOnlyActions, users } from "../db/schema/index.ts";
 import { databaseUrl, withDatabase } from "../db/testing.ts";
 import { startThalia } from "../index.ts";
 import { insertLibraries } from "../libraries/testing.ts";
@@ -471,6 +473,160 @@ describe.skipIf(!databaseUrl)("Access rule reads", () => {
         ).rejects.toMatchObject({ code: "NOT_FOUND" });
       } finally {
         await fx.server.stop();
+      }
+    }));
+});
+
+describe.skipIf(!databaseUrl)("Access check explanations", () => {
+  // Proves the admin explanation and the enforced check give one answer for every resolver case.
+  test("explain matches the real check over the resolver's case table", () =>
+    withDatabase(async (db, url) => {
+      const admin = await setupAdmin(db, {
+        username: "admin",
+        password: "admin-pass",
+      });
+      const viewer = await createLocalUser(db, admin.id, {
+        username: "viewer",
+        password: "viewer-pass",
+      });
+      const [group, other, stranger] = await Promise.all(
+        ["group", "other", "stranger"].map((name) =>
+          createGroup(db, admin.id, { name, permissions: [] }),
+        ),
+      );
+      if (!group || !other || !stranger) throw new Error("Missing Groups.");
+      await setUserGroups(db, admin.id, viewer.id, [group.id, other.id]);
+      const [library] = await insertLibraries(db, {
+        name: "Movies",
+        medium: "movies",
+        rootPath: "/srv/movies",
+      });
+      if (!library) throw new Error("Missing Library.");
+      const [item, otherItem] = await Promise.all(
+        ["Movie", "Other movie"].map((title) =>
+          insertItem(db, {
+            withVersion: true,
+            libraryId: library.id,
+            kind: "movie",
+            title,
+            canonicalFolder: title,
+            extension: {},
+          }),
+        ),
+      );
+      if (!item || !otherItem) throw new Error("Missing Items.");
+      const real: Record<string, string> = {
+        [ids.user]: viewer.id,
+        [ids.group]: group.id,
+        [ids.other]: other.id,
+        [ids.stranger]: stranger.id,
+        [ids.library]: library.id,
+        [ids.item]: item.id,
+        [ids.otherItem]: otherItem.id,
+      };
+      const map = (id: string | null) => (id === null ? null : real[id]);
+      const { token } = await createApiKey(db, admin.id, "admin");
+      const api = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const client = createThaliaClient({
+          origin: `http://127.0.0.1:${api.apiServer?.port}`,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        const object = { type: "item" as const, id: item.id };
+        for (const row of resolverCases) {
+          await db.delete(accessRules);
+          const rules = row.rules.map((rule) => ({
+            userId: map(rule.userId),
+            groupId: map(rule.groupId),
+            libraryId: map(rule.libraryId),
+            itemId: map(rule.itemId),
+            action: rule.action,
+            allowed: rule.allowed,
+          }));
+          if (rules.length) await db.insert(accessRules).values(rules);
+          const winner = row.winner === null ? undefined : rules[row.winner];
+          const explanation = await client.access.explain({
+            userId: viewer.id,
+            object,
+            action: row.action,
+          });
+          expect(
+            await checkPermission(db, viewer.id, row.action, object),
+            row.name,
+          ).toBe(row.allowed);
+          expect(explanation, row.name).toMatchObject({
+            allowed: row.allowed,
+            reason: row.reason,
+            rule:
+              winner === undefined
+                ? null
+                : {
+                    subject: { id: winner.userId ?? winner.groupId },
+                    object: winner.itemId
+                      ? { type: "item", id: winner.itemId }
+                      : winner.libraryId
+                        ? { type: "library", id: winner.libraryId }
+                        : { type: "server" },
+                    action: winner.action,
+                    allowed: winner.allowed,
+                  },
+          });
+        }
+      } finally {
+        await api.stop();
+      }
+    }));
+
+  test("explain names the admins bypass and disabled accounts, and only admins may ask", () =>
+    withDatabase(async (db, url) => {
+      const admin = await setupAdmin(db, {
+        username: "admin",
+        password: "admin-pass",
+      });
+      const viewer = await createLocalUser(db, admin.id, {
+        username: "viewer",
+        password: "viewer-pass",
+      });
+      const { token } = await createApiKey(db, admin.id, "admin");
+      const { token: viewerToken } = await createApiKey(
+        db,
+        viewer.id,
+        "viewer",
+      );
+      const api = await startThalia("api", { databaseUrl: url, port: 0 });
+      try {
+        const origin = `http://127.0.0.1:${api.apiServer?.port}`;
+        const client = createThaliaClient({
+          origin,
+          headers: { authorization: `Bearer ${token}` },
+        });
+        const viewerClient = createThaliaClient({
+          origin,
+          headers: { authorization: `Bearer ${viewerToken}` },
+        });
+        const check = { object: server, action: "server:manage" } as const;
+        expect(
+          await client.access.explain({ ...check, userId: admin.id }),
+        ).toEqual({ allowed: true, reason: "admin", rule: null });
+        await expect(
+          viewerClient.access.explain({ ...check, userId: viewer.id }),
+        ).rejects.toMatchObject({ code: "FORBIDDEN" });
+        await db
+          .update(users)
+          .set({ disabledAt: new Date() })
+          .where(eq(users.id, viewer.id));
+        expect(
+          await client.access.explain({
+            object: server,
+            action: "view",
+            userId: viewer.id,
+          }),
+        ).toEqual({ allowed: false, reason: "disabled", rule: null });
+        await expect(
+          client.access.explain({ ...check, userId: Bun.randomUUIDv7() }),
+        ).rejects.toMatchObject({ code: "NOT_FOUND" });
+      } finally {
+        await api.stop();
       }
     }));
 });
